@@ -133,6 +133,7 @@ const localStore = {
   guests: JSON.parse(localStorage.getItem("has_guests") || "[]"),
   anmeldungen: JSON.parse(localStorage.getItem("has_anmeldungen") || "[]"),
   nachrichten: JSON.parse(localStorage.getItem("has_nachrichten") || "[]"),
+  roomOffer: JSON.parse(localStorage.getItem("has_roomOffer") || "null"),
 };
 function saveLocal(key, value) { localStorage.setItem(`has_${key}`, JSON.stringify(value)); }
 
@@ -255,6 +256,7 @@ const auth = {
     renderHausFeatures();
     renderGuestsList();
     renderNachrichten();
+    renderRoomOffer();
     populateSchadenZustaendigSelect();
   }
 };
@@ -2961,21 +2963,30 @@ function renderNachrichten() {
   list.innerHTML = sorted.map(n => {
     const when = fmtDateTime(n.createdAt);
     const mail = n.email ? `<a href="mailto:${escapeHtml(n.email)}" class="nachricht-mail">${escapeHtml(n.email)}</a>` : "";
+    const isBewerbung = n.type === "bewerbung";
+    const extras = [];
+    if (isBewerbung && n.alter) extras.push(`<span>🎂 ${escapeHtml(n.alter)} Jahre</span>`);
+    if (isBewerbung && n.einzug) extras.push(`<span>📅 Einzug: ${escapeHtml(n.einzug)}</span>`);
+    const mailSubject = isBewerbung ? "Re: Deine Bewerbung fürs Haus am See" : "Re: Haus am See";
     return `
-      <article class="nachricht-card ${n.read ? 'is-read' : 'is-unread'}">
+      <article class="nachricht-card ${n.read ? 'is-read' : 'is-unread'} ${isBewerbung ? 'is-bewerbung' : ''}">
         <div class="nachricht-head">
           <div class="nachricht-from">
             <strong>${escapeHtml(n.name || "Unbekannt")}</strong>
             ${mail}
           </div>
-          <span class="nachricht-time">${when}</span>
+          <div class="nachricht-head-right">
+            ${isBewerbung ? `<span class="nachricht-badge">🚪 Bewerbung</span>` : ""}
+            <span class="nachricht-time">${when}</span>
+          </div>
         </div>
+        ${extras.length ? `<div class="nachricht-extras">${extras.join("")}</div>` : ""}
         <p class="nachricht-body">${escapeHtml(n.message || "")}</p>
         <div class="nachricht-actions">
           <button class="mini-btn" data-id="${n.id}" data-action="toggle-read">
             ${n.read ? "Als ungelesen markieren" : "Als gelesen markieren"}
           </button>
-          ${n.email ? `<a class="mini-btn" href="mailto:${escapeHtml(n.email)}?subject=${encodeURIComponent('Re: Haus am See')}">↩️ Antworten</a>` : ""}
+          ${n.email ? `<a class="mini-btn" href="mailto:${escapeHtml(n.email)}?subject=${encodeURIComponent(mailSubject)}">↩️ Antworten</a>` : ""}
           <button class="mini-btn danger" data-id="${n.id}" data-action="delete">Löschen</button>
         </div>
       </article>
@@ -3028,10 +3039,15 @@ $("kontaktForm")?.addEventListener("submit", async (e) => {
   const email = $("kontaktEmail").value.trim();
   const message = $("kontaktMessage").value.trim();
   if (!name || !message) return;
+  const isBewerbung = !!$("kontaktIsBewerbung")?.checked && !!roomOfferCache?.active;
+  const alter = $("kontaktAlter")?.value.trim() || "";
+  const einzug = $("kontaktEinzug")?.value.trim() || "";
   const entry = {
     name,
     email,
     message,
+    type: isBewerbung ? "bewerbung" : "nachricht",
+    ...(isBewerbung ? { alter, einzug } : {}),
     read: false,
     createdAt: Date.now(),
   };
@@ -3055,7 +3071,185 @@ $("kontaktForm")?.addEventListener("submit", async (e) => {
   }
   e.target.reset();
   if (submitBtn) submitBtn.disabled = false;
-  showToast("Danke! Nachricht ist raus. 💌", "success");
+  updateBewerbungVisibility();
+  showToast(isBewerbung ? "Danke! Bewerbung ist raus. 🚪" : "Danke! Nachricht ist raus. 💌", "success");
+});
+
+/* ==========================================================================
+   Zimmer frei · Hero-Kachel + WG-Admin + Bewerbung via Kontaktformular
+   ========================================================================== */
+
+let roomOfferCache = null;
+
+function renderRoomOffer() {
+  const section = $("zimmer");
+  if (!section) return;
+  const ro = roomOfferCache || {};
+  const active = !!ro.active;
+
+  section.classList.toggle("hidden", !active);
+  if (!active) return;
+
+  $("roomOfferTitle").textContent = ro.title?.trim() || "Wir suchen eine:n neue:n Mitbewohner:in";
+  const desc = ro.description?.trim() || "Melde dich einfach über das Kontaktformular – wir freuen uns von dir zu hören.";
+  $("roomOfferDesc").textContent = desc;
+
+  const facts = [];
+  if (ro.miete) facts.push({ icon: "💰", label: "Miete", value: ro.miete });
+  if (ro.groesse) facts.push({ icon: "📐", label: "Grösse", value: ro.groesse });
+  if (ro.freiAb) facts.push({ icon: "📅", label: "Frei ab", value: ro.freiAb });
+  $("roomOfferFacts").innerHTML = facts
+    .map(f => `<li><span>${f.icon}</span><strong>${escapeHtml(f.label)}:</strong> ${escapeHtml(f.value)}</li>`)
+    .join("");
+
+  const photos = Array.isArray(ro.photos) ? ro.photos : [];
+  const photoEl = $("roomOfferPhotos");
+  if (!photos.length) {
+    photoEl.innerHTML = `<div class="room-offer-photo-placeholder">📸 Noch keine Fotos hinzugefügt</div>`;
+  } else {
+    photoEl.innerHTML = photos.map((src, i) => `
+      <div class="room-offer-photo" data-idx="${i}"><img src="${escapeHtml(src)}" alt="Zimmer-Foto ${i + 1}" loading="lazy" /></div>
+    `).join("");
+    photoEl.querySelectorAll(".room-offer-photo").forEach(el => {
+      el.addEventListener("click", () => {
+        const idx = Number(el.dataset.idx);
+        openLightbox({ src: photos[idx], caption: "Zimmer-Foto" });
+      });
+    });
+  }
+
+  renderRoomAdminPhotos();
+  populateRoomForm();
+}
+
+function populateRoomForm() {
+  const ro = roomOfferCache || {};
+  if ($("roomActive")) $("roomActive").checked = !!ro.active;
+  if ($("roomTitle")) $("roomTitle").value = ro.title || "";
+  if ($("roomDesc")) $("roomDesc").value = ro.description || "";
+  if ($("roomMiete")) $("roomMiete").value = ro.miete || "";
+  if ($("roomGroesse")) $("roomGroesse").value = ro.groesse || "";
+  if ($("roomFreiAb")) $("roomFreiAb").value = ro.freiAb || "";
+}
+
+function renderRoomAdminPhotos() {
+  const wrap = $("roomAdminPhotos");
+  if (!wrap) return;
+  const photos = Array.isArray(roomOfferCache?.photos) ? roomOfferCache.photos : [];
+  if (!photos.length) {
+    wrap.innerHTML = `<p class="form-note">Noch keine Fotos hochgeladen.</p>`;
+    return;
+  }
+  wrap.innerHTML = photos.map((src, i) => `
+    <div class="room-admin-photo">
+      <img src="${escapeHtml(src)}" alt="Zimmer-Foto ${i + 1}" loading="lazy" />
+      <button type="button" class="mini-btn danger" data-idx="${i}" data-action="remove-room-photo">Entfernen</button>
+    </div>
+  `).join("");
+  wrap.querySelectorAll("[data-action='remove-room-photo']").forEach(btn => {
+    btn.addEventListener("click", () => removeRoomPhoto(Number(btn.dataset.idx)));
+  });
+}
+
+async function saveRoomOffer(partial) {
+  const current = roomOfferCache || {};
+  const next = { ...current, ...partial, updatedAt: Date.now(), updatedBy: auth.member || "" };
+  if (firebaseReady) {
+    try { await setDoc(doc(db, "config", "roomOffer"), next, { merge: true }); }
+    catch (e) { console.error(e); showToast("Speichern fehlgeschlagen.", "error"); return false; }
+  } else {
+    localStore.roomOffer = next;
+    roomOfferCache = next;
+    saveLocal("roomOffer", next);
+    renderRoomOffer();
+  }
+  return true;
+}
+
+async function removeRoomPhoto(idx) {
+  if (!requireMember("Fotos verwalten")) return;
+  const photos = [...(roomOfferCache?.photos || [])];
+  if (idx < 0 || idx >= photos.length) return;
+  photos.splice(idx, 1);
+  if (await saveRoomOffer({ photos })) showToast("Foto entfernt.", "success");
+}
+
+$("roomForm")?.addEventListener("submit", async (e) => {
+  e.preventDefault();
+  if (!requireMember("Zimmer-Angebot speichern")) return;
+  const payload = {
+    active: $("roomActive").checked,
+    title: $("roomTitle").value.trim(),
+    description: $("roomDesc").value.trim(),
+    miete: $("roomMiete").value.trim(),
+    groesse: $("roomGroesse").value.trim(),
+    freiAb: $("roomFreiAb").value.trim(),
+  };
+  if (await saveRoomOffer(payload)) showToast("Gespeichert. ✨", "success");
+});
+
+$("roomPhotos")?.addEventListener("change", async (e) => {
+  if (!requireMember("Fotos hochladen")) return;
+  const files = Array.from(e.target.files || []);
+  if (!files.length) return;
+  const current = [...(roomOfferCache?.photos || [])];
+  const slotsLeft = Math.max(0, 6 - current.length);
+  const toProcess = files.slice(0, slotsLeft);
+  if (!toProcess.length) {
+    showToast("Maximal 6 Fotos – bitte zuerst welche entfernen.", "error");
+    e.target.value = "";
+    return;
+  }
+  try {
+    for (const file of toProcess) {
+      const dataUrl = await resizeImage(file, 1200);
+      current.push(dataUrl);
+    }
+    await saveRoomOffer({ photos: current });
+    showToast(`${toProcess.length} Foto${toProcess.length > 1 ? "s" : ""} hinzugefügt.`, "success");
+  } catch (err) {
+    console.error(err);
+    showToast("Upload fehlgeschlagen.", "error");
+  }
+  e.target.value = "";
+});
+
+/* --- Bewerbungs-Modus im Kontaktformular --- */
+
+function updateBewerbungVisibility() {
+  const toggle = $("bewerbungToggle");
+  const cb = $("kontaktIsBewerbung");
+  const bewerbungFields = document.querySelectorAll(".bewerbung-only");
+  const heading = $("kontaktHeading");
+  const intro = $("kontaktIntro");
+  const message = $("kontaktMessage");
+  const active = !!roomOfferCache?.active;
+
+  if (toggle) toggle.hidden = !active;
+  if (!active && cb) cb.checked = false;
+
+  const isBewerbung = !!(cb && cb.checked);
+  bewerbungFields.forEach(el => el.classList.toggle("hidden", !isBewerbung));
+
+  if (heading) heading.textContent = isBewerbung ? "🚪 Bewerbung fürs Zimmer" : "✉️ Schreib uns";
+  if (intro) intro.textContent = isBewerbung
+    ? "Erzähl uns kurz von dir – wer du bist, was du machst, wie du wohnst. Wir melden uns zurück."
+    : "Fragen zu Events, Ideen oder einfach mal Hallo sagen? Wir lesen alles – versprochen.";
+  if (message) {
+    message.placeholder = isBewerbung
+      ? "Ein paar Zeilen zu dir, deinem Alltag, Hobbys, was dir in einer WG wichtig ist…"
+      : "Was möchtest du uns mitteilen?";
+  }
+}
+
+$("kontaktIsBewerbung")?.addEventListener("change", updateBewerbungVisibility);
+
+$("roomApplyBtn")?.addEventListener("click", () => {
+  const cb = $("kontaktIsBewerbung");
+  if (cb) cb.checked = true;
+  updateBewerbungVisibility();
+  document.getElementById("kontakt")?.scrollIntoView({ behavior: "smooth", block: "start" });
+  setTimeout(() => $("kontaktName")?.focus(), 500);
 });
 
 /* ==========================================================================
@@ -3224,6 +3418,7 @@ function setupListeners() {
     guestsCache = localStore.guests;
     anmeldungenCache = localStore.anmeldungen;
     nachrichtenCache = localStore.nachrichten;
+    roomOfferCache = localStore.roomOffer || null;
     renderEvents();
     renderPutzplan();
     renderTermine();
@@ -3237,6 +3432,8 @@ function setupListeners() {
     renderHausFeatures();
     renderGuestsList();
     renderNachrichten();
+    renderRoomOffer();
+    updateBewerbungVisibility();
     return;
   }
 
@@ -3322,6 +3519,12 @@ function setupListeners() {
     nachrichtenCache = snap.docs.map(d => ({ id: d.id, ...d.data() }));
     renderNachrichten();
   }, (err) => console.warn("nachrichten listener:", err.message));
+
+  onSnapshot(doc(db, "config", "roomOffer"), (snap) => {
+    roomOfferCache = snap.exists() ? snap.data() : null;
+    renderRoomOffer();
+    updateBewerbungVisibility();
+  }, (err) => console.warn("roomOffer listener:", err.message));
 }
 
 /* ==========================================================================

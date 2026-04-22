@@ -74,6 +74,25 @@
     </a>
   </section>
 
+  <!-- Zimmer frei (wird nur angezeigt, wenn aktiv) -->
+  <section id="zimmer" class="section room-offer hidden">
+    <div class="room-offer-card">
+      <div class="room-offer-media">
+        <div class="room-offer-photos" id="roomOfferPhotos"></div>
+      </div>
+      <div class="room-offer-body">
+        <span class="eyebrow">🚪 Zimmer frei</span>
+        <h2 id="roomOfferTitle">Wir suchen eine:n neue:n Mitbewohner:in</h2>
+        <p class="room-offer-desc" id="roomOfferDesc"></p>
+        <ul class="room-offer-facts" id="roomOfferFacts"></ul>
+        <div class="room-offer-cta">
+          <button class="btn btn-primary" id="roomApplyBtn">✉️ Jetzt bewerben</button>
+          <a class="btn btn-ghost" href="#kontakt">Fragen stellen</a>
+        </div>
+      </div>
+    </div>
+  </section>
+
   <!-- Haus -->
   <section id="haus" class="section">
     <div class="section-head">
@@ -304,6 +323,7 @@
       <div class="kalender-tabs" role="tablist">
         <button class="tab active" data-intern-tab="kandidaten">🏠 Kandidat:innen</button>
         <button class="tab" data-intern-tab="schaeden">🔧 Schäden</button>
+        <button class="tab" data-intern-tab="zimmer">🚪 Zimmer frei</button>
         <button class="tab" data-intern-tab="nachrichten">📬 Nachrichten <span class="badge" id="nachrichtenBadge" hidden>0</span></button>
         <button class="tab" data-intern-tab="einstellungen">⚙️ Einstellungen</button>
       </div>
@@ -454,6 +474,51 @@
           Nachrichten vom öffentlichen Kontaktformular. Nur wir sehen das hier.
         </p>
         <div class="nachrichten-list" id="nachrichtenList"></div>
+      </div>
+
+      <!-- Zimmer frei -->
+      <div class="kalender-panel hidden" id="ternTabZimmer">
+        <p class="section-lead" style="text-align:left;margin-top:0;">
+          Wenn wir jemand suchen: hier aktivieren und Details pflegen. Sobald aktiv, erscheint
+          ganz oben auf der Seite eine Kachel „Zimmer frei" mit Bewerbungs-Button.
+        </p>
+        <form id="roomForm" class="form-card">
+          <label class="toggle-row">
+            <input type="checkbox" id="roomActive" />
+            <span>Aktiv anzeigen (öffentlich sichtbar)</span>
+          </label>
+          <div class="field">
+            <label for="roomTitle">Titel</label>
+            <input id="roomTitle" placeholder="z. B. Helles Zimmer mit Seeblick" />
+          </div>
+          <div class="field">
+            <label for="roomDesc">Beschreibung</label>
+            <textarea id="roomDesc" rows="4" placeholder="Zimmergrösse, Einrichtung, Mitbewohner:innen, Vibe, was uns wichtig ist…"></textarea>
+          </div>
+          <div class="row">
+            <div class="field">
+              <label for="roomMiete">Miete (CHF / Monat)</label>
+              <input id="roomMiete" placeholder="z. B. 850 inkl. NK" />
+            </div>
+            <div class="field">
+              <label for="roomGroesse">Grösse</label>
+              <input id="roomGroesse" placeholder="z. B. 18 m²" />
+            </div>
+            <div class="field">
+              <label for="roomFreiAb">Frei ab</label>
+              <input id="roomFreiAb" placeholder="z. B. 01.06." />
+            </div>
+          </div>
+          <div class="field">
+            <label for="roomPhotos">Fotos hinzufügen (max. 6)</label>
+            <input id="roomPhotos" type="file" accept="image/*" multiple />
+            <p class="form-note">Werden automatisch verkleinert (max. 1200 px).</p>
+          </div>
+          <div class="room-admin-photos" id="roomAdminPhotos"></div>
+          <div class="form-actions">
+            <button type="submit" class="btn btn-primary">Speichern</button>
+          </div>
+        </form>
       </div>
     </div>
   </section>
@@ -655,9 +720,13 @@
         <p>S3/S5 bis Pfäffikon ZH, dann wenige Minuten zu Fuss zur Pilatusstrasse. Parkplätze gibt's vor dem Haus.</p>
       </div>
       <div class="info-card warm kontakt-form-card">
-        <h3>✉️ Schreib uns</h3>
-        <p>Fragen zu Events, Ideen oder einfach mal Hallo sagen? Wir lesen alles – versprochen.</p>
+        <h3 id="kontaktHeading">✉️ Schreib uns</h3>
+        <p id="kontaktIntro">Fragen zu Events, Ideen oder einfach mal Hallo sagen? Wir lesen alles – versprochen.</p>
         <form id="kontaktForm" class="kontakt-form">
+          <label class="toggle-row" id="bewerbungToggle" hidden>
+            <input type="checkbox" id="kontaktIsBewerbung" />
+            <span>🚪 Ich bewerbe mich für das freie Zimmer</span>
+          </label>
           <div class="row">
             <div class="field">
               <label for="kontaktName">Dein Name</label>
@@ -666,6 +735,16 @@
             <div class="field">
               <label for="kontaktEmail">E-Mail (optional)</label>
               <input id="kontaktEmail" type="email" autocomplete="email" placeholder="damit wir antworten können" />
+            </div>
+          </div>
+          <div class="row bewerbung-only hidden">
+            <div class="field">
+              <label for="kontaktAlter">Alter</label>
+              <input id="kontaktAlter" type="number" min="16" max="99" placeholder="z. B. 27" />
+            </div>
+            <div class="field">
+              <label for="kontaktEinzug">Wunsch-Einzug</label>
+              <input id="kontaktEinzug" placeholder="z. B. ab 01.06." />
             </div>
           </div>
           <div class="field">
