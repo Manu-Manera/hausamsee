@@ -861,6 +861,7 @@ a:hover { color: var(--terracotta); }
 }
 
 .event-edit,
+.event-rsvp-reset,
 .event-delete {
   background: none;
   border: 1px solid var(--card-border);
@@ -873,6 +874,7 @@ a:hover { color: var(--terracotta); }
 }
 
 .event-edit:hover { border-color: var(--terracotta); color: var(--terracotta); background: rgba(198, 122, 80, 0.08); }
+.event-rsvp-reset:hover { border-color: var(--sage); color: var(--sage); background: rgba(140, 164, 127, 0.1); }
 .event-delete:hover { border-color: var(--berry); color: var(--berry); background: rgba(178, 72, 72, 0.08); }
 
 /* ============================================
