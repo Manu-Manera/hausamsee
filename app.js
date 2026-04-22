@@ -286,11 +286,32 @@ function updateLoginChip() {
 
 function populateLoginMemberSelect() {
   const select = $("loginMember");
+  if (!select) return;
+  const previous = select.value;
   const adults = BEWOHNER.filter(b => !b.kid);
+  const now = Date.now();
+  const activeGuests = (guestsCache || []).filter(g => !g.expiresAt || g.expiresAt > now);
+
+  const memberOpts = adults
+    .map(b => `<option value="${escapeHtml(b.name)}">${b.emoji} ${b.name}</option>`)
+    .join("");
+
+  // Jeder Gast bekommt einen eigenen Eintrag mit Namen
+  const guestOpts = activeGuests
+    .map(g => `<option value="__guest__:${escapeHtml(g.id || g.name)}">🎟️ ${escapeHtml(g.name)} (Gast)</option>`)
+    .join("");
+
+  // Fallback: kein Gast angelegt → generische Option beibehalten, damit Bekannte noch reinkommen
+  const guestGroup = activeGuests.length
+    ? `<optgroup label="Gast-Zugänge">${guestOpts}</optgroup>`
+    : `<option value="__guest__">🎟️ Gast-Zugang (Passwort eingeben)</option>`;
+
   select.innerHTML =
-    `<option value="" disabled selected>Wähle dich aus…</option>` +
-    adults.map(b => `<option value="${b.name}">${b.emoji} ${b.name}</option>`).join("") +
-    `<option value="__guest__">🎟️ Gast-Zugang</option>`;
+    `<option value="" disabled ${previous ? "" : "selected"}>Wähle dich aus…</option>` +
+    `<optgroup label="Bewohner:innen">${memberOpts}</optgroup>` +
+    guestGroup;
+
+  if (previous) select.value = previous;
 }
 
 function populatePutzWhoSelect() {
@@ -327,38 +348,47 @@ $("loginForm")?.addEventListener("submit", async (e) => {
   const password = $("loginPassword").value;
   if (!selected) return;
 
-  const result = await verifyPassword(password);
-  if (!result.ok) {
-    const errorEl = $("loginError");
-    errorEl.textContent = result.reason === "expired"
-      ? "Dieser Gast-Zugang ist abgelaufen."
-      : "Falsches Passwort · versuch's nochmal.";
+  const errorEl = $("loginError");
+  const showError = (msg) => {
+    errorEl.textContent = msg;
     errorEl.classList.remove("hidden");
     $("loginPassword").value = "";
     $("loginPassword").focus();
+  };
+
+  // Fall 1: Konkreter Gast-Eintrag gewählt (mit ID/Namen)
+  if (selected.startsWith("__guest__:")) {
+    const key = selected.slice("__guest__:".length);
+    const guest = (guestsCache || []).find(g => g.id === key || g.name === key);
+    if (!guest) { showError("Gast-Zugang nicht gefunden."); return; }
+    const now = Date.now();
+    if (guest.expiresAt && guest.expiresAt < now) { showError("Dieser Gast-Zugang ist abgelaufen."); return; }
+    const hash = await sha256(password);
+    if (hash !== guest.hash) { showError("Falsches Passwort · versuch's nochmal."); return; }
+    auth.login(guest.name, { isGuest: true });
+    $("loginDialog").close();
     return;
   }
 
-  // User hat Gast-Option gewählt
+  // Fall 2: Generische Gast-Option (keine Gäste im Cache konfiguriert oder Fallback)
+  const result = await verifyPassword(password);
+  if (!result.ok) {
+    showError(result.reason === "expired"
+      ? "Dieser Gast-Zugang ist abgelaufen."
+      : "Falsches Passwort · versuch's nochmal.");
+    return;
+  }
+
   if (selected === "__guest__") {
-    if (result.kind !== "guest") {
-      const errorEl = $("loginError");
-      errorEl.textContent = "Das ist kein Gast-Passwort.";
-      errorEl.classList.remove("hidden");
-      $("loginPassword").focus();
-      return;
-    }
+    if (result.kind !== "guest") { showError("Das ist kein Gast-Passwort."); return; }
     auth.login(result.guestName, { isGuest: true });
     $("loginDialog").close();
     return;
   }
 
-  // WG-Mitglied gewählt → muss Member-Hash matchen
+  // Fall 3: WG-Mitglied gewählt → muss Member-Hash matchen
   if (result.kind !== "member") {
-    const errorEl = $("loginError");
-    errorEl.textContent = "Dieses Passwort ist nur für Gäste. Für Mitglieder bitte das WG-Passwort nutzen.";
-    errorEl.classList.remove("hidden");
-    $("loginPassword").focus();
+    showError("Dieses Passwort ist nur für Gäste. Für Mitglieder bitte das WG-Passwort nutzen.");
     return;
   }
   auth.login(selected, { isGuest: false });
@@ -3049,6 +3079,9 @@ $("guestForm")?.addEventListener("submit", async (e) => {
 });
 
 function renderGuestsList() {
+  // Login-Dropdown aktuell halten – bei jeder Gast-Änderung
+  populateLoginMemberSelect();
+
   const list = $("guestsList");
   if (!list) return;
   if (!guestsCache.length) {
