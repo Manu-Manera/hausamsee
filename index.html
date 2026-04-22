@@ -256,12 +256,12 @@
     </div>
     <div class="kalender-wrap">
       <div class="kalender-tabs" role="tablist">
-        <button class="tab active" data-tab="putzplan">🧹 Putzplan</button>
-        <button class="tab" data-tab="termine">📅 Termine</button>
-        <button class="tab" data-tab="anwesend">🏡 Anwesenheit</button>
+        <button class="tab" data-tab="putzplan" data-wg-only>🧹 Putzplan</button>
+        <button class="tab active" data-tab="termine">📅 Termine</button>
+        <button class="tab" data-tab="anwesend" data-wg-only>🏡 Anwesenheit</button>
       </div>
 
-      <div class="kalender-panel" id="tabPutzplan">
+      <div class="kalender-panel hidden" id="tabPutzplan" data-wg-only>
         <div class="putzplan-grid" id="putzplanGrid"></div>
         <details class="admin-toggle" data-wg-only>
           <summary>➕ Aufgabe hinzufügen</summary>
@@ -276,7 +276,7 @@
         </details>
       </div>
 
-      <div class="kalender-panel hidden" id="tabTermine">
+      <div class="kalender-panel" id="tabTermine">
         <div class="termine-list" id="termineList"></div>
         <details class="admin-toggle" data-wg-only>
           <summary>➕ Termin erstellen</summary>
@@ -301,7 +301,7 @@
         </details>
       </div>
 
-      <div class="kalender-panel hidden" id="tabAnwesend">
+      <div class="kalender-panel hidden" id="tabAnwesend" data-wg-only>
         <p class="section-lead" style="text-align:left;">Wer ist am kommenden Wochenende da?</p>
         <div class="anwesend-grid" id="anwesendGrid"></div>
         <p class="form-note" data-wg-only-hint>Nur WG-Mitglieder können ihren Status ändern.</p>

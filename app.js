@@ -258,6 +258,7 @@ const auth = {
     renderNachrichten();
     renderRoomOffer();
     populateSchadenZustaendigSelect();
+    syncKalenderTabs();
   }
 };
 
@@ -1325,14 +1326,35 @@ $("eventForm")?.addEventListener("submit", async (e) => {
    Kalender Tabs
    ========================================================================== */
 
-document.querySelectorAll(".kalender-tabs .tab").forEach(tab => {
+document.querySelectorAll("#kalender .kalender-tabs .tab").forEach(tab => {
   tab.addEventListener("click", () => {
-    document.querySelectorAll(".kalender-tabs .tab").forEach(t => t.classList.remove("active"));
-    tab.classList.add("active");
-    document.querySelectorAll(".kalender-panel").forEach(p => p.classList.add("hidden"));
-    $(`tab${tab.dataset.tab.charAt(0).toUpperCase() + tab.dataset.tab.slice(1)}`).classList.remove("hidden");
+    activateKalenderTab(tab.dataset.tab);
   });
 });
+
+function activateKalenderTab(key) {
+  if (!key) return;
+  const name = key.charAt(0).toUpperCase() + key.slice(1);
+  const panel = $(`tab${name}`);
+  if (!panel) return;
+  document.querySelectorAll("#kalender .kalender-tabs .tab").forEach(t => t.classList.remove("active"));
+  document.querySelector(`#kalender .kalender-tabs .tab[data-tab="${key}"]`)?.classList.add("active");
+  document.querySelectorAll("#kalender .kalender-panel").forEach(p => p.classList.add("hidden"));
+  panel.classList.remove("hidden");
+}
+
+function syncKalenderTabs() {
+  // Falls der aktive Tab nur für eingeloggte User sichtbar ist, aber niemand angemeldet ist,
+  // auf Termine umschalten, damit die Sektion nicht leer wirkt.
+  const activeTab = document.querySelector("#kalender .kalender-tabs .tab.active");
+  if (!activeTab) {
+    activateKalenderTab("termine");
+    return;
+  }
+  if (activeTab.hasAttribute("data-wg-only") && !auth.isAuthed) {
+    activateKalenderTab("termine");
+  }
+}
 
 /* ==========================================================================
    Putzplan
