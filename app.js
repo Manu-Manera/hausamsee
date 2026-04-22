@@ -852,7 +852,9 @@ function renderEventCard(ev, isPast) {
   const d = new Date(ev.date);
   const yes = (ev.rsvp?.yes || 0);
   const no = (ev.rsvp?.no || 0);
-  const userVote = localStorage.getItem(`rsvp_${ev.id}`);
+  const ownName = auth.member || localStorage.getItem("rsvp_name") || "";
+  const ownKey = sanitizeVoterKey(ownName);
+  const userVote = ownKey ? ev.rsvp?.voters?.[ownKey]?.vote : null;
   const fotos = eventfotosCache.filter(f => f.eventId === ev.id);
 
   const fotosBlock = auth.isAuthed ? `
@@ -1212,21 +1214,60 @@ async function deleteEventFoto(id) {
 
 let eventfotosCache = [];
 
+function sanitizeVoterKey(name) {
+  // Firestore Map-Keys: sicherer Weg – auf [a-z0-9_] reduzieren
+  return (name || "")
+    .trim()
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "") // Akzente entfernen
+    .replace(/ß/g, "ss")
+    .replace(/[^a-z0-9]+/g, "_")
+    .replace(/^_+|_+$/g, "")
+    .slice(0, 40);
+}
+
+function getRsvpName() {
+  if (auth.isAuthed) return auth.member;
+  const remembered = localStorage.getItem("rsvp_name") || "";
+  const input = prompt("Wie ist dein Name? (Pflicht, damit niemand doppelt abstimmt)", remembered);
+  if (input === null) return null; // abgebrochen
+  const name = input.trim();
+  if (!name) { showToast("Bitte Namen eingeben.", "error"); return null; }
+  if (name.length < 2) { showToast("Name zu kurz.", "error"); return null; }
+  localStorage.setItem("rsvp_name", name);
+  return name;
+}
+
 async function handleEventRsvp(eventId, vote) {
-  const previous = localStorage.getItem(`rsvp_${eventId}`);
+  const ev = eventsCache.find(e => e.id === eventId);
+  if (!ev) return;
+
+  const name = getRsvpName();
+  if (!name) return;
+
+  const key = sanitizeVoterKey(name);
+  if (!key) { showToast("Name enthält keine gültigen Zeichen.", "error"); return; }
+
+  const voters = ev.rsvp?.voters || {};
+  const previous = voters[key]?.vote;
   if (previous === vote) return;
+
   if (firebaseReady) {
     const updates = {};
     if (previous) updates[`rsvp.${previous}`] = increment(-1);
     updates[`rsvp.${vote}`] = increment(1);
+    updates[`rsvp.voters.${key}`] = { name, vote, at: Date.now() };
     try { await updateDoc(doc(db, "events", eventId), updates); }
-    catch (e) { console.error(e); }
+    catch (e) { console.error(e); showToast("Stimme konnte nicht gespeichert werden.", "error"); return; }
   } else {
     const idx = localStore.events.findIndex(e => e.id === eventId);
     if (idx >= 0) {
-      localStore.events[idx].rsvp = localStore.events[idx].rsvp || { yes: 0, no: 0 };
-      if (previous) localStore.events[idx].rsvp[previous] = Math.max(0, localStore.events[idx].rsvp[previous] - 1);
-      localStore.events[idx].rsvp[vote] = (localStore.events[idx].rsvp[vote] || 0) + 1;
+      const r = localStore.events[idx].rsvp = localStore.events[idx].rsvp || { yes: 0, no: 0, voters: {} };
+      r.voters = r.voters || {};
+      if (previous) r[previous] = Math.max(0, r[previous] - 1);
+      r[vote] = (r[vote] || 0) + 1;
+      r.voters[key] = { name, vote, at: Date.now() };
       eventsCache = localStore.events;
       saveLocal("events", localStore.events);
       renderEvents();
