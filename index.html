@@ -1,0 +1,343 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Haus am See · Pfäffikon ZH</title>
+  <meta name="description" content="Unsere WG am Pfäffikersee. Events, Besuche, Kalender und Eindrücke aus dem Haus am See." />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,400;0,9..144,600;0,9..144,700;1,9..144,400&family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="styles.css" />
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Ctext y='.9em' font-size='90'%3E🏡%3C/text%3E%3C/svg%3E" />
+</head>
+<body>
+  <!-- Fixed Navigation -->
+  <header class="nav">
+    <a href="#top" class="brand">
+      <span class="brand-mark">🏡</span>
+      <span class="brand-text">Haus am See</span>
+    </a>
+    <nav class="nav-links">
+      <a href="#haus">Haus</a>
+      <a href="#bewohner">Bewohner</a>
+      <a href="#galerie">Galerie</a>
+      <a href="#events">Events</a>
+      <a href="#besuch">Besuch</a>
+      <a href="#kalender">Kalender</a>
+      <a href="#gaestebuch">Gästebuch</a>
+      <a href="#kontakt">Kontakt</a>
+    </nav>
+    <button class="nav-toggle" aria-label="Menü öffnen">
+      <span></span><span></span><span></span>
+    </button>
+  </header>
+
+  <!-- Hero -->
+  <section id="top" class="hero">
+    <div class="hero-bg">
+      <div class="sun"></div>
+      <div class="water"></div>
+      <div class="mist"></div>
+    </div>
+    <div class="hero-content">
+      <span class="eyebrow">Pfäffikon ZH · direkt am See</span>
+      <h1>
+        <span class="serif-italic">Willkommen im</span>
+        <span class="big">Haus am See</span>
+      </h1>
+      <p class="lead">
+        Unser kleines Paradies mit Blick auf den Pfäffikersee. Ein Ort für lange Abende am Feuer,
+        spontane Brunches und Gäste, die zu Freunden werden.
+      </p>
+      <div class="hero-cta">
+        <a href="#besuch" class="btn btn-primary">Besuch anfragen</a>
+        <a href="#events" class="btn btn-ghost">Kommende Events</a>
+      </div>
+      <div class="hero-stats">
+        <div class="stat"><span class="stat-num" id="statBewohner">–</span><span class="stat-label">Bewohner:innen</span></div>
+        <div class="stat"><span class="stat-num" id="statEvents">–</span><span class="stat-label">Geplante Events</span></div>
+        <div class="stat"><span class="stat-num" id="statGaeste">–</span><span class="stat-label">Einträge im Gästebuch</span></div>
+      </div>
+    </div>
+    <a href="#haus" class="scroll-hint" aria-label="Nach unten scrollen">
+      <span>Entdecken</span>
+      <svg width="16" height="24" viewBox="0 0 16 24" fill="none"><path d="M8 2v20M2 16l6 6 6-6" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+    </a>
+  </section>
+
+  <!-- Haus -->
+  <section id="haus" class="section">
+    <div class="section-head">
+      <span class="eyebrow">Unser Zuhause</span>
+      <h2>Ein altes Haus mit viel Herz</h2>
+      <p class="section-lead">
+        Holzböden, die bei jedem Schritt leise knarzen. Eine Küche, in der immer was kocht.
+        Ein Garten, der im Sommer zum Open-Air-Wohnzimmer wird. Und vorne dran der See.
+      </p>
+    </div>
+    <div class="haus-grid">
+      <div class="haus-card warm">
+        <div class="card-icon">🌿</div>
+        <h3>Garten am Wasser</h3>
+        <p>Liegewiese, Feuerstelle, Hängematten und ein eigener Steg zum Springen, Schwimmen und Dösen.</p>
+      </div>
+      <div class="haus-card warm">
+        <div class="card-icon">🔥</div>
+        <h3>Wohnküche mit Kamin</h3>
+        <p>Das Herzstück. Hier wird gekocht, gespielt, gelacht und manchmal bis morgens geredet.</p>
+      </div>
+      <div class="haus-card warm">
+        <div class="card-icon">🛏️</div>
+        <h3>Gästezimmer</h3>
+        <p>Ein kleines Zimmer mit Doppelbett und Seeblick – perfekt für Besuche übers Wochenende.</p>
+      </div>
+      <div class="haus-card warm">
+        <div class="card-icon">🚣</div>
+        <h3>Boote & SUPs</h3>
+        <p>Zwei SUPs und ein Ruderboot warten darauf, dass jemand sie aufs Wasser bringt.</p>
+      </div>
+    </div>
+  </section>
+
+  <!-- Bewohner -->
+  <section id="bewohner" class="section soft">
+    <div class="section-head">
+      <span class="eyebrow">Die Truppe</span>
+      <h2>Wer hier wohnt</h2>
+      <p class="section-lead">Vier Menschen, viel zu viele Pflanzen, eine Katze und gelegentliche Gäste.</p>
+    </div>
+    <div class="bewohner-grid" id="bewohnerGrid">
+      <!-- Renderet aus JS -->
+    </div>
+  </section>
+
+  <!-- Galerie -->
+  <section id="galerie" class="section">
+    <div class="section-head">
+      <span class="eyebrow">Momente</span>
+      <h2>Aus dem Haus am See</h2>
+      <p class="section-lead">Kleine Eindrücke – von Sonnenaufgängen bis zu durchtanzten Nächten.</p>
+    </div>
+    <div class="gallery" id="gallery">
+      <!-- Renderet aus JS -->
+    </div>
+    <p class="gallery-hint">Eigene Fotos teilen? <a href="#kontakt">Schreib uns</a> – wir ergänzen sie gerne.</p>
+  </section>
+
+  <!-- Events -->
+  <section id="events" class="section soft">
+    <div class="section-head">
+      <span class="eyebrow">Kommt vorbei</span>
+      <h2>Events & Feste</h2>
+      <p class="section-lead">Bei uns ist öfter was los. Sag einfach Bescheid, ob du kommst.</p>
+    </div>
+    <div class="events-list" id="eventsList">
+      <div class="empty-state">Lade Events…</div>
+    </div>
+    <details class="admin-toggle">
+      <summary>➕ Event hinzufügen (für Bewohner:innen)</summary>
+      <form id="eventForm" class="form-card">
+        <div class="row">
+          <div class="field">
+            <label for="evTitle">Titel</label>
+            <input id="evTitle" required placeholder="z.B. Sommerfest am See" />
+          </div>
+          <div class="field">
+            <label for="evDate">Datum & Uhrzeit</label>
+            <input id="evDate" type="datetime-local" required />
+          </div>
+        </div>
+        <div class="field">
+          <label for="evDesc">Beschreibung</label>
+          <textarea id="evDesc" rows="3" placeholder="Was erwartet die Gäste?"></textarea>
+        </div>
+        <div class="row">
+          <div class="field">
+            <label for="evLocation">Ort</label>
+            <input id="evLocation" value="Haus am See, Pfäffikon ZH" />
+          </div>
+          <div class="field">
+            <label for="evEmoji">Emoji</label>
+            <input id="evEmoji" maxlength="4" placeholder="🔥" />
+          </div>
+        </div>
+        <button type="submit" class="btn btn-primary">Event speichern</button>
+      </form>
+    </details>
+  </section>
+
+  <!-- Besuch / Gästeanfrage -->
+  <section id="besuch" class="section">
+    <div class="section-head">
+      <span class="eyebrow">Zu Besuch</span>
+      <h2>Übernachten am See</h2>
+      <p class="section-lead">
+        Lust auf ein Wochenende am Wasser? Schick uns eine Anfrage – wir melden uns schnell zurück.
+      </p>
+    </div>
+    <div class="besuch-grid">
+      <div class="info-card warm">
+        <h3>Was dich erwartet</h3>
+        <ul class="check-list">
+          <li>Gästezimmer mit Doppelbett & Seeblick</li>
+          <li>Frühstück zusammen mit der WG</li>
+          <li>Zugang zu SUPs, Booten & Badesteg</li>
+          <li>Tipps für Ausflüge rund um den See</li>
+        </ul>
+        <p class="small">
+          Richtwert für's gemeinsame Essen & Strom: <strong>CHF 15/Nacht</strong> pro Person.
+          Keine Pflicht – nur eine Empfehlung.
+        </p>
+      </div>
+      <form id="besuchForm" class="form-card">
+        <div class="row">
+          <div class="field">
+            <label for="bName">Dein Name</label>
+            <input id="bName" required />
+          </div>
+          <div class="field">
+            <label for="bContact">E-Mail oder Handy</label>
+            <input id="bContact" required />
+          </div>
+        </div>
+        <div class="row">
+          <div class="field">
+            <label for="bFrom">Von</label>
+            <input id="bFrom" type="date" required />
+          </div>
+          <div class="field">
+            <label for="bTo">Bis</label>
+            <input id="bTo" type="date" required />
+          </div>
+          <div class="field">
+            <label for="bGuests">Anzahl Personen</label>
+            <input id="bGuests" type="number" min="1" max="6" value="1" required />
+          </div>
+        </div>
+        <div class="field">
+          <label for="bMessage">Kurze Nachricht (optional)</label>
+          <textarea id="bMessage" rows="3" placeholder="Wen kennst du aus der WG? Was habt ihr vor?"></textarea>
+        </div>
+        <button type="submit" class="btn btn-primary">Anfrage senden</button>
+        <p class="form-note">Wir melden uns meist innerhalb von 1–2 Tagen.</p>
+      </form>
+    </div>
+  </section>
+
+  <!-- Kalender / Putzplan -->
+  <section id="kalender" class="section soft">
+    <div class="section-head">
+      <span class="eyebrow">Intern</span>
+      <h2>WG-Kalender & Putzplan</h2>
+      <p class="section-lead">Wer ist wann da, wer macht was. Transparent für alle im Haus.</p>
+    </div>
+    <div class="kalender-wrap">
+      <div class="kalender-tabs">
+        <button class="tab active" data-tab="putzplan">🧹 Putzplan</button>
+        <button class="tab" data-tab="termine">📅 Termine</button>
+        <button class="tab" data-tab="anwesend">🏡 Anwesenheit</button>
+      </div>
+      <div class="kalender-panel" id="tabPutzplan">
+        <div class="putzplan-grid" id="putzplanGrid"></div>
+        <details class="admin-toggle">
+          <summary>➕ Aufgabe hinzufügen</summary>
+          <form id="putzForm" class="form-card inline">
+            <input id="putzTask" placeholder="Aufgabe (z.B. Küche putzen)" required />
+            <input id="putzWho" placeholder="Wer?" required />
+            <input id="putzWhen" type="date" required />
+            <button type="submit" class="btn btn-primary">Speichern</button>
+          </form>
+        </details>
+      </div>
+      <div class="kalender-panel hidden" id="tabTermine">
+        <div class="termine-list" id="termineList"></div>
+        <details class="admin-toggle">
+          <summary>➕ Termin hinzufügen</summary>
+          <form id="termineForm" class="form-card inline">
+            <input id="termTitle" placeholder="Was?" required />
+            <input id="termDate" type="datetime-local" required />
+            <input id="termNote" placeholder="Notiz (optional)" />
+            <button type="submit" class="btn btn-primary">Speichern</button>
+          </form>
+        </details>
+      </div>
+      <div class="kalender-panel hidden" id="tabAnwesend">
+        <p class="section-lead" style="text-align:left;">Wer ist am kommenden Wochenende da?</p>
+        <div class="anwesend-grid" id="anwesendGrid"></div>
+      </div>
+    </div>
+  </section>
+
+  <!-- Gästebuch -->
+  <section id="gaestebuch" class="section">
+    <div class="section-head">
+      <span class="eyebrow">Hinterlass was da</span>
+      <h2>Gästebuch</h2>
+      <p class="section-lead">Ein paar Zeilen nach einem Besuch? Immer gerne!</p>
+    </div>
+    <form id="gbForm" class="form-card centered">
+      <div class="row">
+        <div class="field">
+          <label for="gbName">Dein Name</label>
+          <input id="gbName" required />
+        </div>
+        <div class="field">
+          <label for="gbEmoji">Dein Emoji</label>
+          <input id="gbEmoji" maxlength="4" placeholder="🌊" />
+        </div>
+      </div>
+      <div class="field">
+        <label for="gbMessage">Deine Nachricht</label>
+        <textarea id="gbMessage" rows="3" required placeholder="Was ein Wochenende…"></textarea>
+      </div>
+      <button type="submit" class="btn btn-primary">Eintrag abschicken</button>
+    </form>
+    <div class="gb-list" id="gbList"></div>
+  </section>
+
+  <!-- Kontakt -->
+  <section id="kontakt" class="section soft">
+    <div class="section-head">
+      <span class="eyebrow">Hallo sagen</span>
+      <h2>So findest du uns</h2>
+    </div>
+    <div class="kontakt-grid">
+      <div class="info-card warm">
+        <h3>📍 Adresse</h3>
+        <p>Haus am See<br>Seestrasse<br>8330 Pfäffikon ZH</p>
+        <a class="btn btn-ghost" href="https://www.google.com/maps/search/?api=1&query=Pf%C3%A4ffikersee+Pf%C3%A4ffikon+ZH" target="_blank" rel="noopener">In Karten öffnen</a>
+      </div>
+      <div class="info-card warm">
+        <h3>✉️ Schreib uns</h3>
+        <p>Bei Fragen zu Besuchen, Events oder einfach so – wir freuen uns!</p>
+        <a class="btn btn-primary" href="mailto:hallo@example.com">E-Mail schreiben</a>
+      </div>
+      <div class="info-card warm">
+        <h3>🚆 Anreise</h3>
+        <p>S3/S5 bis Pfäffikon ZH, dann 10 Min. zu Fuss zum See. Kostenlose Parkplätze gibt's vor dem Haus.</p>
+      </div>
+    </div>
+    <div class="map-wrap">
+      <iframe
+        title="Karte Pfäffikersee"
+        src="https://www.openstreetmap.org/export/embed.html?bbox=8.77%2C47.34%2C8.82%2C47.37&layer=mapnik&marker=47.356%2C8.793"
+        loading="lazy"
+        referrerpolicy="no-referrer-when-downgrade"
+      ></iframe>
+    </div>
+  </section>
+
+  <footer class="footer">
+    <p>Haus am See · Pfäffikon ZH · mit Liebe gemacht 🌿</p>
+  </footer>
+
+  <!-- Lightbox -->
+  <dialog id="lightbox" class="lightbox">
+    <button class="lightbox-close" aria-label="Schliessen">×</button>
+    <img id="lightboxImg" alt="" />
+  </dialog>
+
+  <script type="module" src="app.js"></script>
+</body>
+</html>
