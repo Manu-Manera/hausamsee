@@ -251,7 +251,14 @@ a:hover { color: var(--terracotta); }
   .login-chip.logged-in {
     width: auto;
     padding: 8px 14px;
+    max-width: calc(100vw - 120px);
+    overflow: hidden;
+    text-overflow: ellipsis;
   }
+
+  body.wg-authed .brand { display: none; }
+  body.wg-authed .nav-auth { margin-right: auto; }
+  body.wg-authed .nav-toggle { margin-left: 0; }
 }
 
 /* ============================================
