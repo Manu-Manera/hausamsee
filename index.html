@@ -442,25 +442,137 @@
     <div class="section-head">
       <span class="eyebrow">Hinterlass was da</span>
       <h2>Gästebuch</h2>
-      <p class="section-lead">Ein paar Zeilen nach einem Besuch? Immer gerne!</p>
+      <p class="section-lead">Schreiben, zeichnen, GIF schicken, Sprachnachricht, Foto, Link – lebst dich aus!</p>
     </div>
-    <form id="gbForm" class="form-card centered">
-      <div class="row">
+
+    <div class="gb-composer form-card">
+      <div class="gb-identity">
         <div class="field">
           <label for="gbName">Dein Name</label>
-          <input id="gbName" required />
+          <input id="gbName" required autocomplete="off" />
+        </div>
+        <div class="field narrow">
+          <label for="gbEmoji">Emoji</label>
+          <input id="gbEmoji" maxlength="4" placeholder="🌊" autocomplete="off" />
+        </div>
+        <div class="field narrow">
+          <label for="gbColor">Farbe</label>
+          <input id="gbColor" type="color" value="#c67a50" />
+        </div>
+      </div>
+
+      <div class="gb-mode-tabs" role="tablist">
+        <button type="button" class="gb-mode active" data-mode="text">✏️ Text</button>
+        <button type="button" class="gb-mode" data-mode="draw">🎨 Zeichnen</button>
+        <button type="button" class="gb-mode" data-mode="photo">📷 Foto</button>
+        <button type="button" class="gb-mode" data-mode="gif">🎞️ GIF</button>
+        <button type="button" class="gb-mode" data-mode="voice">🎙️ Sprachnachricht</button>
+        <button type="button" class="gb-mode" data-mode="link">🔗 Link</button>
+      </div>
+
+      <!-- Text -->
+      <div class="gb-pane" data-pane="text">
+        <div class="field">
+          <label for="gbMessage">Deine Nachricht</label>
+          <textarea id="gbMessage" rows="3" placeholder="Was ein Wochenende…"></textarea>
+        </div>
+        <div class="gb-emoji-bar" aria-label="Quick-Emojis">
+          <button type="button" data-emoji-insert="🌊">🌊</button>
+          <button type="button" data-emoji-insert="🔥">🔥</button>
+          <button type="button" data-emoji-insert="🌅">🌅</button>
+          <button type="button" data-emoji-insert="🛶">🛶</button>
+          <button type="button" data-emoji-insert="🎉">🎉</button>
+          <button type="button" data-emoji-insert="💛">💛</button>
+          <button type="button" data-emoji-insert="🌿">🌿</button>
+          <button type="button" data-emoji-insert="✨">✨</button>
+          <button type="button" data-emoji-insert="🍕">🍕</button>
+          <button type="button" data-emoji-insert="🥂">🥂</button>
+          <button type="button" data-emoji-insert="🏕️">🏕️</button>
+          <button type="button" data-emoji-insert="🌙">🌙</button>
+        </div>
+      </div>
+
+      <!-- Zeichnen -->
+      <div class="gb-pane hidden" data-pane="draw">
+        <div class="draw-toolbar">
+          <div class="draw-colors" id="drawColors"></div>
+          <label class="draw-size">
+            <span>Pinsel</span>
+            <input type="range" id="drawSize" min="1" max="24" value="4" />
+          </label>
+          <button type="button" class="btn btn-ghost small" id="drawErase">🧽 Radierer</button>
+          <button type="button" class="btn btn-ghost small" id="drawClear">🗑 Leeren</button>
+        </div>
+        <canvas id="drawCanvas" class="draw-canvas" width="800" height="440" aria-label="Zeichenfläche"></canvas>
+        <p class="form-note">Mit Finger, Maus oder Stift malen – auf Mobile einfach tippen & ziehen.</p>
+      </div>
+
+      <!-- Foto -->
+      <div class="gb-pane hidden" data-pane="photo">
+        <button type="button" class="btn btn-ghost" id="gbPhotoPick">📷 Foto auswählen</button>
+        <div class="gb-photo-preview hidden" id="gbPhotoPreview">
+          <img id="gbPhotoImg" alt="Vorschau" />
+          <button type="button" class="mini-btn danger" id="gbPhotoClear">Entfernen</button>
         </div>
         <div class="field">
-          <label for="gbEmoji">Dein Emoji</label>
-          <input id="gbEmoji" maxlength="4" placeholder="🌊" />
+          <label for="gbPhotoCaption">Bildunterschrift (optional)</label>
+          <input id="gbPhotoCaption" placeholder="z. B. Sonnenuntergang vom Steg…" autocomplete="off" />
         </div>
       </div>
-      <div class="field">
-        <label for="gbMessage">Deine Nachricht</label>
-        <textarea id="gbMessage" rows="3" required placeholder="Was ein Wochenende…"></textarea>
+
+      <!-- GIF -->
+      <div class="gb-pane hidden" data-pane="gif">
+        <div class="gif-search-row">
+          <input id="gifSearch" type="search" placeholder="GIF suchen (Giphy) …" />
+          <button type="button" class="btn btn-ghost" id="gifSearchBtn">Suchen</button>
+        </div>
+        <div class="gif-results" id="gifResults"></div>
+        <details class="gif-manual">
+          <summary>Oder GIF per URL</summary>
+          <div class="field">
+            <label for="gifUrl">GIF-Link (Giphy, Tenor, direkter .gif-Link)</label>
+            <input id="gifUrl" type="url" placeholder="https://…gif" autocomplete="off" />
+            <button type="button" class="btn btn-ghost small" id="gifUrlPreview">Vorschau laden</button>
+          </div>
+        </details>
+        <div class="gb-gif-preview hidden" id="gbGifPreview">
+          <img id="gbGifImg" alt="GIF-Vorschau" />
+          <button type="button" class="mini-btn danger" id="gbGifClear">Entfernen</button>
+        </div>
       </div>
-      <button type="submit" class="btn btn-primary">Eintrag abschicken</button>
-    </form>
+
+      <!-- Sprachnachricht -->
+      <div class="gb-pane hidden" data-pane="voice">
+        <div class="voice-controls">
+          <button type="button" class="voice-record" id="voiceRecord">🎙️ Aufnahme starten</button>
+          <span class="voice-timer" id="voiceTimer">0:00</span>
+          <button type="button" class="mini-btn" id="voiceStop" disabled>⏹ Stopp</button>
+        </div>
+        <div class="voice-preview hidden" id="voicePreview">
+          <audio id="voicePlayer" controls></audio>
+          <button type="button" class="mini-btn danger" id="voiceClear">Neu aufnehmen</button>
+        </div>
+        <p class="form-note">Bis zu 90 Sekunden · Browser fragt nach Mikrofon-Zugriff. Funktioniert auf Handy & Desktop.</p>
+      </div>
+
+      <!-- Link -->
+      <div class="gb-pane hidden" data-pane="link">
+        <div class="field">
+          <label for="linkUrl">URL</label>
+          <input id="linkUrl" type="url" placeholder="https://…" autocomplete="off" />
+        </div>
+        <div class="field">
+          <label for="linkText">Beschreibung (optional)</label>
+          <input id="linkText" placeholder="Was verbirgt sich dahinter?" autocomplete="off" />
+        </div>
+      </div>
+
+      <div class="gb-submit-row">
+        <button type="button" class="btn btn-primary" id="gbSubmit">💌 Eintrag abschicken</button>
+        <span class="gb-status" id="gbStatus"></span>
+      </div>
+    </div>
+
     <div class="gb-list" id="gbList"></div>
   </section>
 

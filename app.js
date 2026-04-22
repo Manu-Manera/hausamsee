@@ -1298,50 +1298,540 @@ async function setAnwesend(name, status) {
 }
 
 /* ==========================================================================
-   Gästebuch
+   Gästebuch · kreativ (Text, Draw, Photo, GIF, Voice, Link)
    ========================================================================== */
 
+// Optional: Giphy-API-Key (leer = Suche deaktiviert, GIF per URL geht trotzdem)
+// Gratis-Key holen: https://developers.giphy.com/ → "Create an App"
+const GIPHY_API_KEY = "GlVGYHkr3WSBnllca54iNt0yFbjz7L65"; // Public Giphy Developer Sandbox
+const MAX_AUDIO_MESSAGE_BYTES = 900_000;
+const MAX_VOICE_SECONDS = 90;
+
 let gbCache = [];
+let gbMode = "text";
+let gbDrawData = null;        // Base64 PNG (wenn gezeichnet)
+let gbPhotoData = null;       // Base64 JPG (wenn Foto gewählt)
+let gbGifData = null;         // { url, title }
+let gbVoiceData = null;       // { audioSrc: dataUrl, duration: Sekunden }
+
+/* -------- Helpers -------- */
+
+function linkifyText(text) {
+  const escaped = escapeHtml(text);
+  return escaped.replace(/(https?:\/\/[^\s<]+)/g, url =>
+    `<a href="${url}" target="_blank" rel="noopener noreferrer">${url}</a>`
+  );
+}
+
+function guessLinkDomain(url) {
+  try { return new URL(url).hostname.replace(/^www\./, ""); }
+  catch { return url; }
+}
+
+/* -------- Rendering -------- */
 
 function renderGaestebuch() {
   const list = $("gbList");
+  if (!list) return;
   if (gbCache.length === 0) {
     list.innerHTML = `<div class="empty-state">Sei die erste Stimme im Gästebuch 💌</div>`;
-  } else {
-    list.innerHTML = gbCache.map(gb => `
-      <article class="gb-card">
-        <div class="gb-emoji">${gb.emoji || "🌿"}</div>
-        <p class="gb-msg">„${escapeHtml(gb.message)}"</p>
-        <div class="gb-meta">
-          <strong>${escapeHtml(gb.name)}</strong>
-          <span>${fmtDate(gb.createdAt)}</span>
-        </div>
-      </article>
-    `).join("");
+    $("statGaeste").textContent = 0;
+    return;
   }
+
+  list.innerHTML = gbCache.map(gb => renderGbCard(gb)).join("");
   $("statGaeste").textContent = gbCache.length;
+
+  // Lightbox für eigene Drawings / Photos
+  list.querySelectorAll(".gb-media-zoom").forEach(el => {
+    el.addEventListener("click", () => {
+      openLightbox({ src: el.dataset.src, caption: el.dataset.caption || "", kind: "gaestebuch" });
+    });
+  });
+
+  // Löschen (nur für Mitglieder)
+  list.querySelectorAll(".gb-delete").forEach(btn => {
+    btn.addEventListener("click", () => {
+      if (!requireMember("Einträge löschen")) return;
+      if (confirm("Eintrag wirklich löschen?")) deleteGaestebuch(btn.dataset.id);
+    });
+  });
 }
 
-$("gbForm")?.addEventListener("submit", async (e) => {
-  e.preventDefault();
-  const entry = {
-    name: $("gbName").value.trim(),
-    emoji: $("gbEmoji").value.trim() || "🌿",
-    message: $("gbMessage").value.trim(),
-    createdAt: Date.now()
-  };
+function renderGbCard(gb) {
+  const kind = gb.kind || "text";
+  const color = gb.color || "";
+  const headerStyle = color ? `style="--gb-accent:${escapeHtml(color)}"` : "";
+  const headBlock = `
+    <div class="gb-head">
+      <div class="gb-avatar" ${headerStyle}>${gb.emoji || "🌿"}</div>
+      <div class="gb-who">
+        <strong>${escapeHtml(gb.name || "Anonym")}</strong>
+        <span>${fmtDate(gb.createdAt)}</span>
+      </div>
+      ${auth.isMember ? `<button class="gb-delete" data-id="${gb.id}" title="Löschen">✕</button>` : ""}
+    </div>
+  `;
+
+  let body = "";
+  switch (kind) {
+    case "draw":
+      body = `
+        <div class="gb-media">
+          <img class="gb-media-zoom gb-draw" src="${escapeHtml(gb.imageSrc)}" alt="Zeichnung von ${escapeHtml(gb.name)}" data-src="${escapeHtml(gb.imageSrc)}" data-caption="Zeichnung von ${escapeHtml(gb.name)}" loading="lazy" />
+        </div>
+        ${gb.message ? `<p class="gb-msg">${linkifyText(gb.message)}</p>` : ""}
+      `;
+      break;
+    case "photo":
+      body = `
+        <div class="gb-media">
+          <img class="gb-media-zoom" src="${escapeHtml(gb.imageSrc)}" alt="${escapeHtml(gb.message || 'Foto')}" data-src="${escapeHtml(gb.imageSrc)}" data-caption="${escapeHtml(gb.message || '')}" loading="lazy" />
+        </div>
+        ${gb.message ? `<p class="gb-msg gb-caption">${linkifyText(gb.message)}</p>` : ""}
+      `;
+      break;
+    case "gif":
+      body = `
+        <div class="gb-media">
+          <img class="gb-gif" src="${escapeHtml(gb.gifUrl)}" alt="${escapeHtml(gb.gifTitle || 'GIF')}" loading="lazy" />
+          <span class="gb-gif-badge">GIF</span>
+        </div>
+        ${gb.message ? `<p class="gb-msg">${linkifyText(gb.message)}</p>` : ""}
+      `;
+      break;
+    case "voice":
+      body = `
+        <div class="gb-voice">
+          <audio controls src="${escapeHtml(gb.audioSrc)}" preload="metadata"></audio>
+          <span class="gb-voice-meta">🎙️ ${gb.audioDuration ? Math.round(gb.audioDuration) + 's' : 'Sprachnachricht'}</span>
+        </div>
+        ${gb.message ? `<p class="gb-msg">${linkifyText(gb.message)}</p>` : ""}
+      `;
+      break;
+    case "link": {
+      const url = gb.linkUrl || "";
+      const host = guessLinkDomain(url);
+      body = `
+        <a class="gb-link" href="${escapeHtml(url)}" target="_blank" rel="noopener noreferrer">
+          <span class="gb-link-icon">🔗</span>
+          <div class="gb-link-body">
+            <strong>${escapeHtml(gb.linkText || host)}</strong>
+            <span>${escapeHtml(host)}</span>
+          </div>
+        </a>
+        ${gb.message ? `<p class="gb-msg">${linkifyText(gb.message)}</p>` : ""}
+      `;
+      break;
+    }
+    default: // text
+      body = `<p class="gb-msg">${linkifyText(gb.message || "")}</p>`;
+  }
+
+  return `<article class="gb-card gb-kind-${kind}" ${headerStyle}>${headBlock}${body}</article>`;
+}
+
+async function deleteGaestebuch(id) {
   if (firebaseReady) {
-    await addDoc(collection(db, "gaestebuch"), { ...entry, createdAt: serverTimestamp() });
+    try { await deleteDoc(doc(db, "gaestebuch", id)); showToast("Eintrag gelöscht.", "success"); }
+    catch (e) { showToast("Löschen fehlgeschlagen.", "error"); }
   } else {
-    entry.id = "local_" + Date.now();
-    localStore.gaestebuch.unshift(entry);
+    localStore.gaestebuch = localStore.gaestebuch.filter(g => g.id !== id);
     gbCache = localStore.gaestebuch;
     saveLocal("gaestebuch", localStore.gaestebuch);
     renderGaestebuch();
   }
-  e.target.reset();
-  showToast("Danke für deinen Eintrag 🌿", "success");
+}
+
+/* -------- Mode-Tabs -------- */
+
+$$("[data-mode]").forEach(btn => {
+  btn.addEventListener("click", () => {
+    gbMode = btn.dataset.mode;
+    $$(".gb-mode").forEach(b => b.classList.toggle("active", b === btn));
+    $$(".gb-pane").forEach(p => p.classList.toggle("hidden", p.dataset.pane !== gbMode));
+    if (gbMode === "draw") initDrawCanvas();
+  });
 });
+
+/* -------- Emoji-Bar -------- */
+
+$$("[data-emoji-insert]").forEach(btn => {
+  btn.addEventListener("click", () => {
+    const ta = $("gbMessage");
+    const emoji = btn.dataset.emojiInsert;
+    const start = ta.selectionStart || ta.value.length;
+    ta.value = ta.value.slice(0, start) + emoji + ta.value.slice(ta.selectionEnd || start);
+    ta.focus();
+    ta.selectionStart = ta.selectionEnd = start + emoji.length;
+  });
+});
+
+/* -------- Zeichnen -------- */
+
+const DRAW_COLORS = ["#3d2817", "#c67a50", "#8ab88a", "#4b8aa8", "#d4a853", "#b24848", "#6a4d86", "#ffffff"];
+let drawCtx = null;
+let drawing = false;
+let lastX = 0, lastY = 0;
+let drawColor = "#3d2817";
+let drawSize = 4;
+let drawErasing = false;
+let drawDirty = false;
+let drawCanvasInitialized = false;
+
+function initDrawCanvas() {
+  if (drawCanvasInitialized) return;
+  drawCanvasInitialized = true;
+  const canvas = $("drawCanvas");
+  if (!canvas) return;
+  drawCtx = canvas.getContext("2d");
+  // Retina-Unterstützung + responsive Breite
+  const ratio = window.devicePixelRatio || 1;
+  const resize = () => {
+    const w = canvas.clientWidth;
+    const h = 440;
+    canvas.width = w * ratio;
+    canvas.height = h * ratio;
+    drawCtx.scale(ratio, ratio);
+    drawCtx.fillStyle = "#fffaf4";
+    drawCtx.fillRect(0, 0, w, h);
+    drawCtx.lineCap = "round";
+    drawCtx.lineJoin = "round";
+    drawDirty = false;
+  };
+  requestAnimationFrame(resize);
+  window.addEventListener("resize", () => {
+    // Beim Resize nur zurücksetzen wenn nichts gezeichnet wurde
+    if (!drawDirty) resize();
+  });
+
+  // Farben
+  const colorsEl = $("drawColors");
+  colorsEl.innerHTML = DRAW_COLORS.map((c, i) =>
+    `<button type="button" class="draw-color ${i===0?'active':''}" data-color="${c}" style="background:${c}"></button>`
+  ).join("");
+  colorsEl.querySelectorAll("[data-color]").forEach(b => {
+    b.addEventListener("click", () => {
+      drawColor = b.dataset.color;
+      drawErasing = false;
+      colorsEl.querySelectorAll(".draw-color").forEach(x => x.classList.remove("active"));
+      b.classList.add("active");
+    });
+  });
+
+  $("drawSize").addEventListener("input", (e) => { drawSize = +e.target.value; });
+  $("drawErase").addEventListener("click", () => { drawErasing = !drawErasing; $("drawErase").classList.toggle("active", drawErasing); });
+  $("drawClear").addEventListener("click", () => {
+    if (!drawDirty || confirm("Zeichnung wirklich leeren?")) {
+      drawCtx.fillStyle = "#fffaf4";
+      drawCtx.fillRect(0, 0, canvas.clientWidth, 440);
+      drawDirty = false;
+    }
+  });
+
+  const pos = (e) => {
+    const r = canvas.getBoundingClientRect();
+    const p = e.touches ? e.touches[0] : e;
+    return { x: p.clientX - r.left, y: p.clientY - r.top };
+  };
+  const start = (e) => { e.preventDefault(); drawing = true; const p = pos(e); lastX = p.x; lastY = p.y; };
+  const move = (e) => {
+    if (!drawing) return;
+    e.preventDefault();
+    const p = pos(e);
+    drawCtx.strokeStyle = drawErasing ? "#fffaf4" : drawColor;
+    drawCtx.lineWidth = drawErasing ? drawSize * 2.2 : drawSize;
+    drawCtx.beginPath();
+    drawCtx.moveTo(lastX, lastY);
+    drawCtx.lineTo(p.x, p.y);
+    drawCtx.stroke();
+    lastX = p.x; lastY = p.y;
+    drawDirty = true;
+  };
+  const stop = () => { drawing = false; };
+
+  canvas.addEventListener("mousedown", start);
+  canvas.addEventListener("mousemove", move);
+  canvas.addEventListener("mouseup", stop);
+  canvas.addEventListener("mouseleave", stop);
+  canvas.addEventListener("touchstart", start, { passive: false });
+  canvas.addEventListener("touchmove", move, { passive: false });
+  canvas.addEventListener("touchend", stop);
+}
+
+function getDrawingAsDataUrl() {
+  const canvas = $("drawCanvas");
+  if (!drawDirty) return null;
+  // Zeichnung auf normale Größe herunterrechnen (falls retina)
+  const tmp = document.createElement("canvas");
+  const w = canvas.clientWidth;
+  tmp.width = w;
+  tmp.height = 440;
+  tmp.getContext("2d").drawImage(canvas, 0, 0, w, 440);
+  return tmp.toDataURL("image/jpeg", 0.82);
+}
+
+/* -------- Foto -------- */
+
+$("gbPhotoPick")?.addEventListener("click", () => {
+  const input = document.createElement("input");
+  input.type = "file";
+  input.accept = "image/*";
+  input.addEventListener("change", async () => {
+    const file = input.files?.[0];
+    if (!file) return;
+    try {
+      const dataUrl = await resizeImage(file, 1400);
+      const size = Math.ceil((dataUrl.length * 3) / 4);
+      if (size > MAX_IMAGE_BYTES) { showToast("Foto zu gross.", "error"); return; }
+      gbPhotoData = dataUrl;
+      $("gbPhotoImg").src = dataUrl;
+      $("gbPhotoPreview").classList.remove("hidden");
+    } catch (err) { console.error(err); showToast("Foto konnte nicht geladen werden.", "error"); }
+  });
+  input.click();
+});
+$("gbPhotoClear")?.addEventListener("click", () => {
+  gbPhotoData = null;
+  $("gbPhotoPreview").classList.add("hidden");
+});
+
+/* -------- GIF -------- */
+
+async function searchGifs(query) {
+  const results = $("gifResults");
+  if (!GIPHY_API_KEY) {
+    results.innerHTML = `<div class="empty-state small">GIF-Suche nicht verfügbar. Du kannst unten einen GIF-Link einfügen.</div>`;
+    return;
+  }
+  results.innerHTML = `<div class="empty-state small"><span class="spinner"></span> Suche…</div>`;
+  try {
+    const url = `https://api.giphy.com/v1/gifs/search?api_key=${GIPHY_API_KEY}&q=${encodeURIComponent(query)}&limit=18&rating=pg-13&lang=de`;
+    const resp = await fetch(url);
+    if (!resp.ok) throw new Error("API Error " + resp.status);
+    const data = await resp.json();
+    const gifs = (data.data || []).filter(g => g.images?.fixed_width?.url);
+    if (!gifs.length) { results.innerHTML = `<div class="empty-state small">Keine Treffer.</div>`; return; }
+    results.innerHTML = gifs.map(g => `
+      <button type="button" class="gif-result" data-url="${escapeHtml(g.images.downsized_medium?.url || g.images.original.url)}" data-title="${escapeHtml(g.title || '')}">
+        <img src="${escapeHtml(g.images.fixed_width.url)}" alt="${escapeHtml(g.title || 'GIF')}" loading="lazy" />
+      </button>
+    `).join("");
+    results.querySelectorAll(".gif-result").forEach(btn => {
+      btn.addEventListener("click", () => {
+        gbGifData = { url: btn.dataset.url, title: btn.dataset.title };
+        $("gbGifImg").src = btn.dataset.url;
+        $("gbGifPreview").classList.remove("hidden");
+        results.querySelectorAll(".gif-result").forEach(x => x.classList.remove("selected"));
+        btn.classList.add("selected");
+      });
+    });
+  } catch (err) {
+    console.warn("Giphy Fehler:", err);
+    results.innerHTML = `<div class="empty-state small">Suche nicht erreichbar – bitte GIF-URL unten einfügen.</div>`;
+  }
+}
+
+$("gifSearchBtn")?.addEventListener("click", () => {
+  const q = $("gifSearch").value.trim();
+  if (q.length < 2) return;
+  searchGifs(q);
+});
+$("gifSearch")?.addEventListener("keydown", (e) => {
+  if (e.key === "Enter") { e.preventDefault(); $("gifSearchBtn").click(); }
+});
+$("gifUrlPreview")?.addEventListener("click", () => {
+  const url = $("gifUrl").value.trim();
+  if (!url) return;
+  // Giphy-Seiten-URL → Media-URL versuchen
+  let mediaUrl = url;
+  const giphyMatch = url.match(/giphy\.com\/gifs\/[^/?]+-([a-zA-Z0-9]+)/) || url.match(/giphy\.com\/media\/([a-zA-Z0-9]+)/);
+  if (giphyMatch && !url.endsWith(".gif")) {
+    mediaUrl = `https://media.giphy.com/media/${giphyMatch[1]}/giphy.gif`;
+  }
+  gbGifData = { url: mediaUrl, title: "" };
+  $("gbGifImg").src = mediaUrl;
+  $("gbGifPreview").classList.remove("hidden");
+});
+$("gbGifClear")?.addEventListener("click", () => {
+  gbGifData = null;
+  $("gbGifPreview").classList.add("hidden");
+  document.querySelectorAll(".gif-result").forEach(x => x.classList.remove("selected"));
+});
+
+/* -------- Sprachnachricht -------- */
+
+let mediaRecorder = null;
+let recChunks = [];
+let recStart = 0;
+let recTimer = null;
+
+$("voiceRecord")?.addEventListener("click", async () => {
+  if (!navigator.mediaDevices?.getUserMedia) {
+    showToast("Mikrofon nicht verfügbar.", "error");
+    return;
+  }
+  try {
+    const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+    const mimeType = MediaRecorder.isTypeSupported("audio/webm;codecs=opus") ? "audio/webm;codecs=opus"
+      : MediaRecorder.isTypeSupported("audio/webm") ? "audio/webm"
+      : MediaRecorder.isTypeSupported("audio/mp4") ? "audio/mp4" : "";
+    mediaRecorder = new MediaRecorder(stream, mimeType ? { mimeType } : undefined);
+    recChunks = [];
+    recStart = Date.now();
+    mediaRecorder.ondataavailable = (e) => { if (e.data.size > 0) recChunks.push(e.data); };
+    mediaRecorder.onstop = async () => {
+      stream.getTracks().forEach(t => t.stop());
+      clearInterval(recTimer);
+      const blob = new Blob(recChunks, { type: mediaRecorder.mimeType || "audio/webm" });
+      const duration = (Date.now() - recStart) / 1000;
+      if (blob.size > MAX_AUDIO_MESSAGE_BYTES) {
+        showToast(`Sprachnachricht zu gross (${Math.round(blob.size/1024)} KB). Bitte kürzer halten.`, "error");
+        resetVoiceUI();
+        return;
+      }
+      const reader = new FileReader();
+      reader.onload = () => {
+        gbVoiceData = { audioSrc: reader.result, duration };
+        $("voicePlayer").src = reader.result;
+        $("voicePreview").classList.remove("hidden");
+      };
+      reader.readAsDataURL(blob);
+    };
+    mediaRecorder.start();
+    $("voiceRecord").disabled = true;
+    $("voiceRecord").textContent = "● Nimmt auf…";
+    $("voiceRecord").classList.add("recording");
+    $("voiceStop").disabled = false;
+    recTimer = setInterval(() => {
+      const s = Math.floor((Date.now() - recStart) / 1000);
+      $("voiceTimer").textContent = `${Math.floor(s/60)}:${String(s%60).padStart(2,"0")}`;
+      if (s >= MAX_VOICE_SECONDS) {
+        showToast(`Max. ${MAX_VOICE_SECONDS} Sekunden.`, "");
+        stopRecording();
+      }
+    }, 250);
+  } catch (err) {
+    console.error(err);
+    showToast("Kein Mikrofon-Zugriff.", "error");
+  }
+});
+
+function stopRecording() {
+  if (mediaRecorder && mediaRecorder.state === "recording") mediaRecorder.stop();
+}
+function resetVoiceUI() {
+  $("voiceRecord").disabled = false;
+  $("voiceRecord").textContent = "🎙️ Aufnahme starten";
+  $("voiceRecord").classList.remove("recording");
+  $("voiceStop").disabled = true;
+  $("voiceTimer").textContent = "0:00";
+}
+$("voiceStop")?.addEventListener("click", () => { stopRecording(); resetVoiceUI(); });
+$("voiceClear")?.addEventListener("click", () => {
+  gbVoiceData = null;
+  $("voicePreview").classList.add("hidden");
+  $("voicePlayer").src = "";
+  resetVoiceUI();
+});
+
+/* -------- Submit -------- */
+
+$("gbSubmit")?.addEventListener("click", async () => {
+  const name = $("gbName").value.trim();
+  if (!name) { showToast("Bitte deinen Namen eintragen.", "error"); $("gbName").focus(); return; }
+  const emoji = $("gbEmoji").value.trim() || "🌿";
+  const color = $("gbColor").value || "";
+  const message = ($("gbMessage").value || "").trim();
+
+  let entry = { name, emoji, color, kind: gbMode, message, createdAt: Date.now() };
+
+  switch (gbMode) {
+    case "text":
+      if (!message) { showToast("Bitte eine Nachricht schreiben.", "error"); return; }
+      break;
+    case "draw": {
+      const img = getDrawingAsDataUrl();
+      if (!img) { showToast("Bitte etwas zeichnen.", "error"); return; }
+      const size = Math.ceil((img.length * 3) / 4);
+      if (size > MAX_IMAGE_BYTES) { showToast("Zeichnung zu gross.", "error"); return; }
+      entry.imageSrc = img;
+      break;
+    }
+    case "photo":
+      if (!gbPhotoData) { showToast("Bitte Foto auswählen.", "error"); return; }
+      entry.imageSrc = gbPhotoData;
+      entry.message = $("gbPhotoCaption").value.trim();
+      break;
+    case "gif":
+      if (!gbGifData?.url) { showToast("Bitte GIF auswählen oder URL einfügen.", "error"); return; }
+      entry.gifUrl = gbGifData.url;
+      entry.gifTitle = gbGifData.title || "";
+      break;
+    case "voice":
+      if (!gbVoiceData?.audioSrc) { showToast("Bitte Sprachnachricht aufnehmen.", "error"); return; }
+      entry.audioSrc = gbVoiceData.audioSrc;
+      entry.audioDuration = gbVoiceData.duration;
+      break;
+    case "link": {
+      const url = $("linkUrl").value.trim();
+      if (!url) { showToast("Bitte einen Link eintragen.", "error"); return; }
+      try { new URL(url); } catch { showToast("Ungültige URL.", "error"); return; }
+      entry.linkUrl = url;
+      entry.linkText = $("linkText").value.trim();
+      break;
+    }
+  }
+
+  const status = $("gbStatus");
+  status.textContent = "Wird gespeichert…";
+  try {
+    if (firebaseReady) {
+      await addDoc(collection(db, "gaestebuch"), { ...entry, createdAt: serverTimestamp() });
+    } else {
+      entry.id = "local_" + Date.now();
+      localStore.gaestebuch.unshift(entry);
+      gbCache = localStore.gaestebuch;
+      saveLocal("gaestebuch", localStore.gaestebuch);
+      renderGaestebuch();
+    }
+    status.textContent = "";
+    resetGbComposer();
+    showToast("Danke für deinen Eintrag 🌿", "success");
+  } catch (err) {
+    console.error(err);
+    status.textContent = "";
+    showToast("Speichern fehlgeschlagen. Bild/Audio evtl. zu gross.", "error");
+  }
+});
+
+function resetGbComposer() {
+  $("gbMessage").value = "";
+  $("gbPhotoCaption").value = "";
+  $("linkUrl").value = "";
+  $("linkText").value = "";
+  $("gifUrl").value = "";
+  $("gifSearch").value = "";
+  $("gifResults").innerHTML = "";
+  gbPhotoData = null;
+  gbGifData = null;
+  gbVoiceData = null;
+  $("gbPhotoPreview").classList.add("hidden");
+  $("gbGifPreview").classList.add("hidden");
+  $("voicePreview").classList.add("hidden");
+  $("voicePlayer").src = "";
+  resetVoiceUI();
+  if (drawCtx) {
+    const canvas = $("drawCanvas");
+    drawCtx.fillStyle = "#fffaf4";
+    drawCtx.fillRect(0, 0, canvas.clientWidth, 440);
+    drawDirty = false;
+  }
+  // Zurück auf Text-Tab
+  gbMode = "text";
+  $$(".gb-mode").forEach(b => b.classList.toggle("active", b.dataset.mode === "text"));
+  $$(".gb-pane").forEach(p => p.classList.toggle("hidden", p.dataset.pane !== "text"));
+}
 
 /* ==========================================================================
    Musik-Player (Soundtrack)
