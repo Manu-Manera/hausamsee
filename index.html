@@ -26,6 +26,7 @@
       <a href="#musik">Soundtrack</a>
       <a href="#events">Events</a>
       <a href="#kalender">Kalender</a>
+      <a href="#intern" data-wg-only>WG-Intern</a>
       <a href="#gaestebuch">Gästebuch</a>
       <a href="#kontakt">Kontakt</a>
     </nav>
@@ -292,6 +293,112 @@
         <p class="section-lead" style="text-align:left;">Wer ist am kommenden Wochenende da?</p>
         <div class="anwesend-grid" id="anwesendGrid"></div>
         <p class="form-note" data-wg-only-hint>Nur WG-Mitglieder können ihren Status ändern.</p>
+      </div>
+    </div>
+  </section>
+
+  <!-- WG-Intern (nur für eingeloggte Mitglieder) -->
+  <section id="intern" class="section" data-wg-only>
+    <div class="section-head">
+      <span class="eyebrow">Nur für uns</span>
+      <h2>WG-Intern</h2>
+      <p class="section-lead">
+        Für Entscheidungen, die uns alle betreffen – neue Mitbewohner:innen finden und Schäden im Blick behalten.
+      </p>
+    </div>
+
+    <div class="kalender-wrap">
+      <div class="kalender-tabs" role="tablist">
+        <button class="tab active" data-intern-tab="kandidaten">🏠 Kandidat:innen</button>
+        <button class="tab" data-intern-tab="schaeden">🔧 Schäden</button>
+      </div>
+
+      <!-- Kandidaten -->
+      <div class="kalender-panel" id="ternTabKandidaten">
+        <p class="section-lead" style="text-align:left;margin-top:0;">
+          Wer könnte bei uns einziehen? Tragt Vorschläge ein, stimmt gemeinsam ab.
+        </p>
+        <div class="kandidaten-list" id="kandidatenList"></div>
+        <details class="admin-toggle" open>
+          <summary>➕ Kandidat:in hinzufügen</summary>
+          <form id="kandidatForm" class="form-card">
+            <div class="row">
+              <div class="field">
+                <label for="kandName">Name</label>
+                <input id="kandName" required placeholder="z. B. Lisa" />
+              </div>
+              <div class="field">
+                <label for="kandAlter">Alter (optional)</label>
+                <input id="kandAlter" type="number" min="16" max="99" placeholder="29" />
+              </div>
+            </div>
+            <div class="field">
+              <label for="kandInfo">Kurzprofil</label>
+              <textarea id="kandInfo" rows="3" placeholder="Was sollten wir über die Person wissen? Beruf, Hobbys, wie kennen wir sie/ihn…"></textarea>
+            </div>
+            <div class="row">
+              <div class="field">
+                <label for="kandKontakt">Kontakt (optional)</label>
+                <input id="kandKontakt" placeholder="Handy oder Mail" />
+              </div>
+              <div class="field">
+                <label for="kandStatus">Status</label>
+                <select id="kandStatus">
+                  <option value="offen">Offen</option>
+                  <option value="eingeladen">Eingeladen</option>
+                  <option value="abgelehnt">Abgelehnt</option>
+                  <option value="eingezogen">Eingezogen</option>
+                </select>
+              </div>
+            </div>
+            <button type="submit" class="btn btn-primary">Kandidat:in speichern</button>
+            <p class="form-note">Jede:r WG-Mitglied kann 👍 / 🤔 / 👎 abstimmen.</p>
+          </form>
+        </details>
+      </div>
+
+      <!-- Schäden -->
+      <div class="kalender-panel hidden" id="ternTabSchaeden">
+        <p class="section-lead" style="text-align:left;margin-top:0;">
+          Was muss repariert werden? Tragt Schäden ein und haltet fest, wer sich kümmert.
+        </p>
+        <div class="schaeden-list" id="schaedenList"></div>
+        <details class="admin-toggle" open>
+          <summary>➕ Schaden melden</summary>
+          <form id="schadenForm" class="form-card">
+            <div class="row">
+              <div class="field">
+                <label for="schadTitel">Titel</label>
+                <input id="schadTitel" required placeholder="z. B. Wasserhahn Küche tropft" />
+              </div>
+              <div class="field">
+                <label for="schadOrt">Ort</label>
+                <input id="schadOrt" placeholder="Küche, Bad, Garten…" />
+              </div>
+            </div>
+            <div class="field">
+              <label for="schadBeschreibung">Beschreibung</label>
+              <textarea id="schadBeschreibung" rows="3" placeholder="Was ist kaputt? Seit wann? Gibt's schon eine Idee zur Reparatur?"></textarea>
+            </div>
+            <div class="row">
+              <div class="field">
+                <label for="schadPrio">Priorität</label>
+                <select id="schadPrio">
+                  <option value="low">Niedrig</option>
+                  <option value="medium" selected>Mittel</option>
+                  <option value="high">Hoch</option>
+                </select>
+              </div>
+              <div class="field">
+                <label for="schadZustaendig">Kümmert sich</label>
+                <select id="schadZustaendig">
+                  <option value="">Noch offen</option>
+                </select>
+              </div>
+            </div>
+            <button type="submit" class="btn btn-primary">Schaden speichern</button>
+          </form>
+        </details>
       </div>
     </div>
   </section>

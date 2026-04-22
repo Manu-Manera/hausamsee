@@ -1561,6 +1561,14 @@ body.wg-authed .gallery-actions[data-wg-only] {
   display: block;
 }
 
+body.wg-authed section[data-wg-only] {
+  display: block;
+}
+
+body.wg-authed a[data-wg-only] {
+  display: inline-block;
+}
+
 /* ============================================
    Empty states & utility
    ============================================ */
@@ -2026,4 +2034,259 @@ body.is-playing .vinyl {
     grid-column: 1 / -1;
     justify-content: center;
   }
+}
+
+/* ============================================
+   WG-Intern · Kandidat:innen
+   ============================================ */
+
+.kandidaten-list,
+.schaeden-list {
+  display: grid;
+  gap: 14px;
+  margin-bottom: 20px;
+}
+
+.kandidat-card {
+  background: var(--card);
+  border: 1px solid var(--card-border);
+  border-radius: var(--r-md);
+  padding: 18px 20px;
+  box-shadow: var(--card-shadow);
+  display: grid;
+  gap: 14px;
+}
+
+.kandidat-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.kandidat-title {
+  margin: 0;
+  font-size: 1.2rem;
+}
+
+.kandidat-title .alter {
+  color: var(--text-muted);
+  font-weight: 400;
+  font-size: 0.95rem;
+  margin-left: 6px;
+}
+
+.kandidat-meta {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  align-items: center;
+  font-size: 0.82rem;
+  color: var(--text-muted);
+}
+
+.kandidat-info {
+  margin: 0;
+  color: var(--text-soft);
+  line-height: 1.55;
+  white-space: pre-wrap;
+}
+
+.kandidat-kontakt {
+  margin: 0;
+  font-size: 0.9rem;
+  color: var(--text-soft);
+}
+
+.kandidat-kontakt a {
+  color: var(--terracotta-dark);
+  text-decoration: none;
+}
+.kandidat-kontakt a:hover { text-decoration: underline; }
+
+/* Status-Badge */
+.status-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 4px 10px;
+  border-radius: 999px;
+  font-size: 0.78rem;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  border: 1px solid transparent;
+}
+.status-badge.offen       { background: rgba(107, 155, 168, 0.15); color: var(--lake-deep); border-color: rgba(107, 155, 168, 0.4); }
+.status-badge.eingeladen  { background: rgba(217, 160, 58, 0.18); color: #8a6a19; border-color: rgba(217, 160, 58, 0.5); }
+.status-badge.abgelehnt   { background: rgba(185, 74, 61, 0.12); color: var(--berry); border-color: rgba(185, 74, 61, 0.35); }
+.status-badge.eingezogen  { background: rgba(107, 142, 90, 0.15); color: var(--moss-dark); border-color: rgba(107, 142, 90, 0.4); }
+
+.kandidat-card.status-abgelehnt { opacity: 0.7; }
+
+/* Voting */
+.kandidat-votes {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding: 12px;
+  background: var(--linen);
+  border-radius: var(--r-sm);
+  border: 1px solid var(--card-border);
+}
+
+.vote-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 12px;
+  border-radius: 999px;
+  border: 1px solid var(--card-border);
+  background: #fff;
+  color: var(--text);
+  font-size: 0.85rem;
+  cursor: pointer;
+  transition: all 0.2s var(--ease);
+}
+.vote-btn:hover { background: var(--cream-2); }
+.vote-btn .count {
+  background: var(--sand);
+  color: var(--wood-dark);
+  font-weight: 700;
+  padding: 1px 8px;
+  border-radius: 999px;
+  font-size: 0.75rem;
+  min-width: 20px;
+  text-align: center;
+}
+.vote-btn.active.yes   { background: var(--moss); color: #fff; border-color: var(--moss-dark); }
+.vote-btn.active.yes .count,
+.vote-btn.active.maybe .count,
+.vote-btn.active.no .count { background: rgba(255,255,255,0.3); color: #fff; }
+.vote-btn.active.maybe { background: var(--amber); color: #fff; border-color: #a8751a; }
+.vote-btn.active.no    { background: var(--berry); color: #fff; border-color: #8a332b; }
+
+.vote-voters {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  font-size: 0.75rem;
+  color: var(--text-muted);
+  align-items: center;
+}
+.voter-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  padding: 2px 8px;
+  background: #fff;
+  border: 1px solid var(--card-border);
+  border-radius: 999px;
+}
+.voter-chip.yes   { border-color: var(--moss); color: var(--moss-dark); }
+.voter-chip.maybe { border-color: var(--amber); color: #8a6a19; }
+.voter-chip.no    { border-color: var(--berry); color: var(--berry); }
+
+.kandidat-actions {
+  display: flex;
+  gap: 8px;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  align-items: center;
+}
+
+.status-select-inline {
+  padding: 6px 10px;
+  font-size: 0.85rem;
+  border-radius: var(--r-sm);
+  border: 1px solid var(--card-border);
+  background: var(--linen);
+  color: var(--text);
+}
+
+/* ============================================
+   WG-Intern · Schäden
+   ============================================ */
+
+.schaden-card {
+  background: var(--card);
+  border: 1px solid var(--card-border);
+  border-left: 4px solid var(--text-muted);
+  border-radius: var(--r-md);
+  padding: 16px 20px;
+  box-shadow: var(--card-shadow);
+  display: grid;
+  gap: 10px;
+}
+.schaden-card.prio-high    { border-left-color: var(--berry); }
+.schaden-card.prio-medium  { border-left-color: var(--amber); }
+.schaden-card.prio-low     { border-left-color: var(--lake); }
+.schaden-card.status-erledigt {
+  opacity: 0.65;
+}
+.schaden-card.status-erledigt .schaden-titel {
+  text-decoration: line-through;
+}
+
+.schaden-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.schaden-titel {
+  margin: 0;
+  font-size: 1.08rem;
+}
+
+.schaden-badges {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.prio-badge {
+  padding: 3px 9px;
+  border-radius: 999px;
+  font-size: 0.72rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+.prio-badge.high    { background: rgba(185, 74, 61, 0.15); color: var(--berry); }
+.prio-badge.medium  { background: rgba(217, 160, 58, 0.18); color: #8a6a19; }
+.prio-badge.low     { background: rgba(107, 155, 168, 0.15); color: var(--lake-deep); }
+
+.schaden-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px 16px;
+  font-size: 0.84rem;
+  color: var(--text-muted);
+}
+
+.schaden-body {
+  margin: 0;
+  color: var(--text-soft);
+  line-height: 1.55;
+  white-space: pre-wrap;
+}
+
+.schaden-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+  justify-content: space-between;
+  padding-top: 8px;
+  border-top: 1px dashed var(--card-border);
+}
+
+.schaden-actions-left {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
 }

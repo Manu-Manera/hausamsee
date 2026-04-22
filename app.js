@@ -122,6 +122,8 @@ const localStore = {
   gaestebuch: JSON.parse(localStorage.getItem("has_gaestebuch") || "[]"),
   galerie: JSON.parse(localStorage.getItem("has_galerie") || "[]"),
   musik: JSON.parse(localStorage.getItem("has_musik") || "[]"),
+  kandidaten: JSON.parse(localStorage.getItem("has_kandidaten") || "[]"),
+  schaeden: JSON.parse(localStorage.getItem("has_schaeden") || "[]"),
 };
 function saveLocal(key, value) { localStorage.setItem(`has_${key}`, JSON.stringify(value)); }
 
@@ -213,6 +215,9 @@ const auth = {
     renderEvents();
     renderPutzplan();
     renderPlaylist();
+    renderKandidaten();
+    renderSchaeden();
+    populateSchadenZustaendigSelect();
   }
 };
 
@@ -1265,6 +1270,343 @@ async function deleteSong(id) {
 }
 
 /* ==========================================================================
+   WG-Intern · Tabs
+   ========================================================================== */
+
+document.querySelectorAll("[data-intern-tab]").forEach(tab => {
+  tab.addEventListener("click", () => {
+    document.querySelectorAll("[data-intern-tab]").forEach(t => t.classList.remove("active"));
+    tab.classList.add("active");
+    document.querySelectorAll("#intern .kalender-panel").forEach(p => p.classList.add("hidden"));
+    const key = tab.dataset.internTab;
+    const name = key.charAt(0).toUpperCase() + key.slice(1);
+    $("ternTab" + name)?.classList.remove("hidden");
+  });
+});
+
+/* ==========================================================================
+   Kandidat:innen (nur für WG)
+   ========================================================================== */
+
+let kandidatenCache = [];
+const STATUS_LABEL = {
+  offen: "Offen",
+  eingeladen: "Eingeladen",
+  abgelehnt: "Abgelehnt",
+  eingezogen: "Eingezogen"
+};
+
+function renderKandidaten() {
+  const list = $("kandidatenList");
+  if (!list) return;
+  if (!kandidatenCache.length) {
+    list.innerHTML = `<div class="empty-state">Noch keine Kandidat:innen eingetragen. 🏠</div>`;
+    return;
+  }
+  const sorted = [...kandidatenCache].sort((a, b) => (b.createdAt?.toMillis?.() || b.createdAt || 0) - (a.createdAt?.toMillis?.() || a.createdAt || 0));
+
+  list.innerHTML = sorted.map(k => {
+    const votes = k.votes || {};
+    const counts = { yes: 0, maybe: 0, no: 0 };
+    const voters = { yes: [], maybe: [], no: [] };
+    Object.entries(votes).forEach(([name, v]) => {
+      if (counts[v] !== undefined) {
+        counts[v]++;
+        voters[v].push(name);
+      }
+    });
+    const myVote = auth.isAuthed ? votes[auth.member] : null;
+    const status = k.status || "offen";
+
+    const votersChips = ["yes","maybe","no"].flatMap(v =>
+      voters[v].map(n => {
+        const b = BEWOHNER.find(x => x.name === n);
+        const emoji = b?.emoji || "👤";
+        return `<span class="voter-chip ${v}">${emoji} ${escapeHtml(n)}</span>`;
+      })
+    ).join("");
+
+    return `
+      <article class="kandidat-card status-${status}">
+        <div class="kandidat-head">
+          <div>
+            <h3 class="kandidat-title">${escapeHtml(k.name)}${k.alter ? `<span class="alter">· ${k.alter} Jahre</span>` : ""}</h3>
+            <div class="kandidat-meta">
+              <span class="status-badge ${status}">${STATUS_LABEL[status] || status}</span>
+              ${k.addedBy ? `<span>· eingetragen von ${escapeHtml(k.addedBy)}</span>` : ""}
+            </div>
+          </div>
+        </div>
+        ${k.info ? `<p class="kandidat-info">${escapeHtml(k.info)}</p>` : ""}
+        ${k.kontakt ? `<p class="kandidat-kontakt">📧 ${linkifyContact(k.kontakt)}</p>` : ""}
+
+        <div class="kandidat-votes">
+          <button class="vote-btn yes ${myVote==='yes'?'active':''}" data-id="${k.id}" data-vote="yes">👍 Dafür <span class="count">${counts.yes}</span></button>
+          <button class="vote-btn maybe ${myVote==='maybe'?'active':''}" data-id="${k.id}" data-vote="maybe">🤔 Vielleicht <span class="count">${counts.maybe}</span></button>
+          <button class="vote-btn no ${myVote==='no'?'active':''}" data-id="${k.id}" data-vote="no">👎 Dagegen <span class="count">${counts.no}</span></button>
+        </div>
+        ${votersChips ? `<div class="vote-voters">${votersChips}</div>` : ""}
+
+        <div class="kandidat-actions">
+          <label style="display:flex;align-items:center;gap:8px;font-size:0.85rem;color:var(--text-muted);">
+            Status:
+            <select class="status-select-inline" data-id="${k.id}" data-action="status">
+              ${Object.entries(STATUS_LABEL).map(([v,l]) => `<option value="${v}" ${status===v?'selected':''}>${l}</option>`).join("")}
+            </select>
+          </label>
+          <button class="mini-btn danger" data-id="${k.id}" data-action="delete">Löschen</button>
+        </div>
+      </article>
+    `;
+  }).join("");
+
+  list.querySelectorAll(".vote-btn").forEach(btn => {
+    btn.addEventListener("click", () => setKandidatVote(btn.dataset.id, btn.dataset.vote));
+  });
+  list.querySelectorAll("[data-action='status']").forEach(sel => {
+    sel.addEventListener("change", () => setKandidatStatus(sel.dataset.id, sel.value));
+  });
+  list.querySelectorAll("[data-action='delete']").forEach(btn => {
+    btn.addEventListener("click", () => {
+      const k = kandidatenCache.find(x => x.id === btn.dataset.id);
+      if (!k) return;
+      if (confirm(`"${k.name}" wirklich entfernen?`)) deleteKandidat(btn.dataset.id);
+    });
+  });
+}
+
+function linkifyContact(c) {
+  const s = escapeHtml(c);
+  if (/^\S+@\S+\.\S+$/.test(c)) return `<a href="mailto:${s}">${s}</a>`;
+  if (/^[+0-9\s()-]{6,}$/.test(c)) return `<a href="tel:${c.replace(/\s/g,'')}">${s}</a>`;
+  return s;
+}
+
+async function setKandidatVote(id, vote) {
+  if (!requireAuth("Abstimmen")) return;
+  if (firebaseReady) {
+    const current = kandidatenCache.find(k => k.id === id);
+    const existing = current?.votes?.[auth.member];
+    const newValue = existing === vote ? deleteField() : vote;
+    try {
+      await updateDoc(doc(db, "kandidaten", id), { [`votes.${auth.member}`]: newValue });
+    } catch (e) { showToast("Speichern fehlgeschlagen.", "error"); console.error(e); }
+  } else {
+    const item = localStore.kandidaten.find(k => k.id === id);
+    if (!item) return;
+    item.votes = item.votes || {};
+    if (item.votes[auth.member] === vote) delete item.votes[auth.member];
+    else item.votes[auth.member] = vote;
+    kandidatenCache = localStore.kandidaten;
+    saveLocal("kandidaten", localStore.kandidaten);
+    renderKandidaten();
+  }
+}
+
+async function setKandidatStatus(id, status) {
+  if (!requireAuth("Status ändern")) return;
+  if (firebaseReady) {
+    try { await updateDoc(doc(db, "kandidaten", id), { status }); showToast("Status aktualisiert.", "success"); }
+    catch (e) { showToast("Speichern fehlgeschlagen.", "error"); }
+  } else {
+    const item = localStore.kandidaten.find(k => k.id === id);
+    if (!item) return;
+    item.status = status;
+    kandidatenCache = localStore.kandidaten;
+    saveLocal("kandidaten", localStore.kandidaten);
+    renderKandidaten();
+  }
+}
+
+async function deleteKandidat(id) {
+  if (!requireAuth("Kandidat:in löschen")) return;
+  if (firebaseReady) {
+    try { await deleteDoc(doc(db, "kandidaten", id)); showToast("Entfernt.", "success"); }
+    catch (e) { showToast("Löschen fehlgeschlagen.", "error"); }
+  } else {
+    localStore.kandidaten = localStore.kandidaten.filter(k => k.id !== id);
+    kandidatenCache = localStore.kandidaten;
+    saveLocal("kandidaten", localStore.kandidaten);
+    renderKandidaten();
+  }
+}
+
+$("kandidatForm")?.addEventListener("submit", async (e) => {
+  e.preventDefault();
+  if (!requireAuth("Kandidat:in hinzufügen")) return;
+  const alterRaw = $("kandAlter").value.trim();
+  const entry = {
+    name: $("kandName").value.trim(),
+    alter: alterRaw ? parseInt(alterRaw, 10) : null,
+    info: $("kandInfo").value.trim(),
+    kontakt: $("kandKontakt").value.trim(),
+    status: $("kandStatus").value || "offen",
+    votes: {},
+    addedBy: auth.member,
+    createdAt: Date.now()
+  };
+  if (firebaseReady) {
+    try { await addDoc(collection(db, "kandidaten"), { ...entry, createdAt: serverTimestamp() }); }
+    catch (err) { showToast("Speichern fehlgeschlagen.", "error"); return; }
+  } else {
+    entry.id = "local_" + Date.now();
+    localStore.kandidaten.push(entry);
+    kandidatenCache = localStore.kandidaten;
+    saveLocal("kandidaten", localStore.kandidaten);
+    renderKandidaten();
+  }
+  e.target.reset();
+  showToast("Kandidat:in gespeichert.", "success");
+});
+
+/* ==========================================================================
+   Schäden (nur für WG)
+   ========================================================================== */
+
+let schaedenCache = [];
+const PRIO_LABEL = { low: "Niedrig", medium: "Mittel", high: "Hoch" };
+
+function populateSchadenZustaendigSelect() {
+  const select = $("schadZustaendig");
+  if (!select) return;
+  const current = select.value;
+  const adults = BEWOHNER.filter(b => !b.kid);
+  select.innerHTML = `<option value="">Noch offen</option>` +
+    adults.map(b => `<option value="${b.name}">${b.emoji} ${b.name}</option>`).join("");
+  if (current) select.value = current;
+}
+
+function renderSchaeden() {
+  const list = $("schaedenList");
+  if (!list) return;
+  if (!schaedenCache.length) {
+    list.innerHTML = `<div class="empty-state">Keine offenen Schäden – alles in Ordnung 🔧✨</div>`;
+    return;
+  }
+
+  // Sortierung: offene zuerst (high-prio ganz oben), erledigte ans Ende
+  const prioWeight = { high: 0, medium: 1, low: 2 };
+  const statusWeight = { offen: 0, in_bearbeitung: 1, erledigt: 2 };
+  const sorted = [...schaedenCache].sort((a, b) => {
+    const sw = (statusWeight[a.status] ?? 0) - (statusWeight[b.status] ?? 0);
+    if (sw !== 0) return sw;
+    return (prioWeight[a.prio] ?? 1) - (prioWeight[b.prio] ?? 1);
+  });
+
+  list.innerHTML = sorted.map(s => {
+    const prio = s.prio || "medium";
+    const status = s.status || "offen";
+    const zustaendigBewohner = s.zustaendig ? BEWOHNER.find(b => b.name === s.zustaendig) : null;
+    const zustaendigLabel = zustaendigBewohner
+      ? `${zustaendigBewohner.emoji} ${escapeHtml(zustaendigBewohner.name)}`
+      : s.zustaendig ? escapeHtml(s.zustaendig) : "noch niemand";
+
+    return `
+      <article class="schaden-card prio-${prio} status-${status}">
+        <div class="schaden-head">
+          <h3 class="schaden-titel">${escapeHtml(s.titel)}</h3>
+          <div class="schaden-badges">
+            <span class="prio-badge ${prio}">${PRIO_LABEL[prio]}</span>
+            <span class="status-badge ${status === 'erledigt' ? 'eingezogen' : status === 'in_bearbeitung' ? 'eingeladen' : 'offen'}">
+              ${status === 'erledigt' ? '✓ Erledigt' : status === 'in_bearbeitung' ? '🛠️ In Arbeit' : '⏳ Offen'}
+            </span>
+          </div>
+        </div>
+        <div class="schaden-meta">
+          ${s.ort ? `<span>📍 ${escapeHtml(s.ort)}</span>` : ""}
+          <span>👤 Kümmert sich: ${zustaendigLabel}</span>
+          ${s.addedBy ? `<span>· gemeldet von ${escapeHtml(s.addedBy)}</span>` : ""}
+        </div>
+        ${s.beschreibung ? `<p class="schaden-body">${escapeHtml(s.beschreibung)}</p>` : ""}
+        <div class="schaden-actions">
+          <div class="schaden-actions-left">
+            <select class="status-select-inline" data-id="${s.id}" data-action="status">
+              <option value="offen" ${status==='offen'?'selected':''}>⏳ Offen</option>
+              <option value="in_bearbeitung" ${status==='in_bearbeitung'?'selected':''}>🛠️ In Arbeit</option>
+              <option value="erledigt" ${status==='erledigt'?'selected':''}>✓ Erledigt</option>
+            </select>
+            <select class="status-select-inline" data-id="${s.id}" data-action="zustaendig">
+              <option value="">— Noch offen —</option>
+              ${BEWOHNER.filter(b => !b.kid).map(b => `<option value="${b.name}" ${s.zustaendig===b.name?'selected':''}>${b.emoji} ${b.name}</option>`).join("")}
+            </select>
+          </div>
+          <button class="mini-btn danger" data-id="${s.id}" data-action="delete">Löschen</button>
+        </div>
+      </article>
+    `;
+  }).join("");
+
+  list.querySelectorAll("[data-action='status']").forEach(sel => {
+    sel.addEventListener("change", () => setSchadenField(sel.dataset.id, "status", sel.value));
+  });
+  list.querySelectorAll("[data-action='zustaendig']").forEach(sel => {
+    sel.addEventListener("change", () => setSchadenField(sel.dataset.id, "zustaendig", sel.value));
+  });
+  list.querySelectorAll("[data-action='delete']").forEach(btn => {
+    btn.addEventListener("click", () => {
+      const s = schaedenCache.find(x => x.id === btn.dataset.id);
+      if (!s) return;
+      if (confirm(`Schaden "${s.titel}" wirklich löschen?`)) deleteSchaden(btn.dataset.id);
+    });
+  });
+}
+
+async function setSchadenField(id, field, value) {
+  if (!requireAuth("Schaden aktualisieren")) return;
+  if (firebaseReady) {
+    try { await updateDoc(doc(db, "schaeden", id), { [field]: value }); }
+    catch (e) { showToast("Speichern fehlgeschlagen.", "error"); }
+  } else {
+    const item = localStore.schaeden.find(s => s.id === id);
+    if (!item) return;
+    item[field] = value;
+    schaedenCache = localStore.schaeden;
+    saveLocal("schaeden", localStore.schaeden);
+    renderSchaeden();
+  }
+}
+
+async function deleteSchaden(id) {
+  if (!requireAuth("Schaden löschen")) return;
+  if (firebaseReady) {
+    try { await deleteDoc(doc(db, "schaeden", id)); showToast("Entfernt.", "success"); }
+    catch (e) { showToast("Löschen fehlgeschlagen.", "error"); }
+  } else {
+    localStore.schaeden = localStore.schaeden.filter(s => s.id !== id);
+    schaedenCache = localStore.schaeden;
+    saveLocal("schaeden", localStore.schaeden);
+    renderSchaeden();
+  }
+}
+
+$("schadenForm")?.addEventListener("submit", async (e) => {
+  e.preventDefault();
+  if (!requireAuth("Schaden melden")) return;
+  const entry = {
+    titel: $("schadTitel").value.trim(),
+    ort: $("schadOrt").value.trim(),
+    beschreibung: $("schadBeschreibung").value.trim(),
+    prio: $("schadPrio").value || "medium",
+    zustaendig: $("schadZustaendig").value || "",
+    status: "offen",
+    addedBy: auth.member,
+    createdAt: Date.now()
+  };
+  if (firebaseReady) {
+    try { await addDoc(collection(db, "schaeden"), { ...entry, createdAt: serverTimestamp() }); }
+    catch (err) { showToast("Speichern fehlgeschlagen.", "error"); return; }
+  } else {
+    entry.id = "local_" + Date.now();
+    localStore.schaeden.push(entry);
+    schaedenCache = localStore.schaeden;
+    saveLocal("schaeden", localStore.schaeden);
+    renderSchaeden();
+  }
+  e.target.reset();
+  showToast("Schaden gespeichert.", "success");
+});
+
+/* ==========================================================================
    Firebase Listeners (Live)
    ========================================================================== */
 
@@ -1277,6 +1619,8 @@ function setupListeners() {
     gbCache = localStore.gaestebuch;
     galerieCache = localStore.galerie;
     musikCache = [...localStore.musik].sort((a, b) => (a.createdAt || 0) - (b.createdAt || 0));
+    kandidatenCache = localStore.kandidaten;
+    schaedenCache = localStore.schaeden;
     renderEvents();
     renderPutzplan();
     renderTermine();
@@ -1284,6 +1628,8 @@ function setupListeners() {
     renderGaestebuch();
     renderGallery();
     renderPlaylist();
+    renderKandidaten();
+    renderSchaeden();
     return;
   }
 
@@ -1317,6 +1663,16 @@ function setupListeners() {
     galerieCache = snap.docs.map(d => ({ id: d.id, ...d.data() }));
     renderGallery();
   }, (err) => console.warn("galerie listener:", err.message));
+
+  onSnapshot(query(collection(db, "kandidaten"), orderBy("createdAt", "desc")), (snap) => {
+    kandidatenCache = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+    renderKandidaten();
+  }, (err) => console.warn("kandidaten listener:", err.message));
+
+  onSnapshot(query(collection(db, "schaeden"), orderBy("createdAt", "desc")), (snap) => {
+    schaedenCache = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+    renderSchaeden();
+  }, (err) => console.warn("schaeden listener:", err.message));
 
   onSnapshot(query(collection(db, "musik"), orderBy("createdAt", "asc")), (snap) => {
     const prevId = musikCache[currentSongIdx]?.id;
@@ -1355,6 +1711,7 @@ function setupScrollAnim() {
 
 populateLoginMemberSelect();
 populatePutzWhoSelect();
+populateSchadenZustaendigSelect();
 renderBewohner();
 renderGallery();
 setupScrollAnim();

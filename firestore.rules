@@ -25,5 +25,11 @@ service cloud.firestore {
     match /musik/{document=**} {
       allow read, write: if true;
     }
+    match /kandidaten/{document=**} {
+      allow read, write: if true;
+    }
+    match /schaeden/{document=**} {
+      allow read, write: if true;
+    }
   }
 }
