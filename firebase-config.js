@@ -1,9 +1,9 @@
-// Firebase Config – nutzt dasselbe Projekt wie die Wunschliste (andere Collections)
+// Firebase Config – eigenes Projekt "haus-am-see" (Region europe-west, Zürich)
 export const firebaseConfig = {
-  apiKey: "AIzaSyBA10flQpeBbPh7iu0iJa7kJZaBd2X1bbo",
-  authDomain: "chris-wishlist.firebaseapp.com",
-  projectId: "chris-wishlist",
-  storageBucket: "chris-wishlist.firebasestorage.app",
-  messagingSenderId: "567894237947",
-  appId: "1:567894237947:web:257d547dd8336a8c09865e"
+  apiKey: "AIzaSyCA3ugUML6466V2CDWh7pAhCxSB8Zt8oF0",
+  authDomain: "haus-am-see-d91ef.firebaseapp.com",
+  projectId: "haus-am-see-d91ef",
+  storageBucket: "haus-am-see-d91ef.firebasestorage.app",
+  messagingSenderId: "435026838220",
+  appId: "1:435026838220:web:af48d4612fff78c844f869"
 };

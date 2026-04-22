@@ -1,17 +1,10 @@
 rules_version = '2';
 
-// Firestore Regeln für beide Apps:
-// - wishes: Geburtstags-Wunschliste (giftforchris.ch)
-// - events, besuche, putzplan, termine, anwesenheit, gaestebuch: Haus am See
+// Firestore Regeln für Haus am See
+// Projekt: haus-am-see-d91ef (europe-west / Zürich)
 service cloud.firestore {
   match /databases/{database}/documents {
-    match /wishes/{document=**} {
-      allow read, write: if true;
-    }
     match /events/{document=**} {
-      allow read, write: if true;
-    }
-    match /besuche/{document=**} {
       allow read, write: if true;
     }
     match /putzplan/{document=**} {
