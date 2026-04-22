@@ -1465,6 +1465,110 @@ textarea { resize: vertical; font-family: inherit; }
 .info-card h3 { font-size: 1.2rem; margin-bottom: 12px; }
 .info-card p { color: var(--text-soft); margin: 0 0 14px; }
 
+/* Kontaktformular – nimmt die ganze Breite ein */
+.kontakt-form-card { grid-column: 1 / -1; }
+.kontakt-form .row { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; margin-bottom: 12px; }
+.kontakt-form .field { display: flex; flex-direction: column; gap: 6px; margin-bottom: 12px; }
+.kontakt-form label { font-size: 0.85rem; color: var(--text-muted); font-weight: 600; }
+.kontakt-form input,
+.kontakt-form textarea {
+  padding: 10px 12px;
+  border-radius: var(--r-sm);
+  border: 1px solid var(--card-border);
+  background: white;
+  font-family: inherit;
+  font-size: 0.95rem;
+  color: var(--text);
+  resize: vertical;
+}
+.kontakt-form input:focus,
+.kontakt-form textarea:focus {
+  outline: none;
+  border-color: var(--terracotta);
+  box-shadow: 0 0 0 3px rgba(198, 122, 80, 0.15);
+}
+.kontakt-form .form-note { font-size: 0.78rem; color: var(--text-muted); margin-top: 8px; }
+@media (max-width: 600px) {
+  .kontakt-form .row { grid-template-columns: 1fr; }
+}
+
+/* Badge im Intern-Tab */
+.kalender-tabs .tab .badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 18px;
+  height: 18px;
+  padding: 0 6px;
+  margin-left: 6px;
+  border-radius: 999px;
+  background: var(--berry);
+  color: white;
+  font-size: 0.72rem;
+  font-weight: 700;
+  line-height: 1;
+}
+
+/* Nachrichten-Inbox */
+.nachrichten-list {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  margin-top: 10px;
+}
+.nachricht-card {
+  padding: 18px 20px;
+  border-radius: var(--r-md);
+  border: 1px solid var(--card-border);
+  background: var(--card);
+  box-shadow: var(--card-shadow);
+  border-left: 4px solid var(--card-border);
+  transition: all 0.2s var(--ease);
+}
+.nachricht-card.is-unread {
+  border-left-color: var(--terracotta);
+  background: linear-gradient(180deg, rgba(198, 122, 80, 0.05), var(--card));
+}
+.nachricht-card.is-read {
+  opacity: 0.78;
+}
+.nachricht-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 12px;
+  flex-wrap: wrap;
+  margin-bottom: 8px;
+}
+.nachricht-from {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.nachricht-from strong { color: var(--text); font-size: 1rem; }
+.nachricht-mail {
+  font-size: 0.82rem;
+  color: var(--lake);
+  text-decoration: none;
+}
+.nachricht-mail:hover { text-decoration: underline; }
+.nachricht-time {
+  font-size: 0.78rem;
+  color: var(--text-muted);
+}
+.nachricht-body {
+  white-space: pre-wrap;
+  color: var(--text-soft);
+  margin: 0 0 12px;
+  line-height: 1.5;
+}
+.nachricht-actions {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.nachricht-actions .mini-btn { text-decoration: none; }
+
 .map-wrap {
   max-width: 1000px;
   margin: 0 auto;

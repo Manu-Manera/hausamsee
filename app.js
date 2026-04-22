@@ -132,6 +132,7 @@ const localStore = {
   config: JSON.parse(localStorage.getItem("has_config") || "{}"),
   guests: JSON.parse(localStorage.getItem("has_guests") || "[]"),
   anmeldungen: JSON.parse(localStorage.getItem("has_anmeldungen") || "[]"),
+  nachrichten: JSON.parse(localStorage.getItem("has_nachrichten") || "[]"),
 };
 function saveLocal(key, value) { localStorage.setItem(`has_${key}`, JSON.stringify(value)); }
 
@@ -253,6 +254,7 @@ const auth = {
     renderBewohner();
     renderHausFeatures();
     renderGuestsList();
+    renderNachrichten();
     populateSchadenZustaendigSelect();
   }
 };
@@ -2927,6 +2929,136 @@ $("schadenForm")?.addEventListener("submit", async (e) => {
 });
 
 /* ==========================================================================
+   Nachrichten · öffentliches Kontaktformular, WG-interne Inbox
+   ========================================================================== */
+
+let nachrichtenCache = [];
+
+function updateNachrichtenBadge() {
+  const badge = $("nachrichtenBadge");
+  if (!badge) return;
+  const unread = nachrichtenCache.filter(n => !n.read).length;
+  if (unread > 0) {
+    badge.textContent = unread;
+    badge.hidden = false;
+  } else {
+    badge.hidden = true;
+  }
+}
+
+function renderNachrichten() {
+  const list = $("nachrichtenList");
+  if (!list) return;
+  updateNachrichtenBadge();
+
+  if (!nachrichtenCache.length) {
+    list.innerHTML = `<div class="empty-state">Noch keine Nachrichten. 📭</div>`;
+    return;
+  }
+
+  const sorted = [...nachrichtenCache].sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
+
+  list.innerHTML = sorted.map(n => {
+    const when = fmtDateTime(n.createdAt);
+    const mail = n.email ? `<a href="mailto:${escapeHtml(n.email)}" class="nachricht-mail">${escapeHtml(n.email)}</a>` : "";
+    return `
+      <article class="nachricht-card ${n.read ? 'is-read' : 'is-unread'}">
+        <div class="nachricht-head">
+          <div class="nachricht-from">
+            <strong>${escapeHtml(n.name || "Unbekannt")}</strong>
+            ${mail}
+          </div>
+          <span class="nachricht-time">${when}</span>
+        </div>
+        <p class="nachricht-body">${escapeHtml(n.message || "")}</p>
+        <div class="nachricht-actions">
+          <button class="mini-btn" data-id="${n.id}" data-action="toggle-read">
+            ${n.read ? "Als ungelesen markieren" : "Als gelesen markieren"}
+          </button>
+          ${n.email ? `<a class="mini-btn" href="mailto:${escapeHtml(n.email)}?subject=${encodeURIComponent('Re: Haus am See')}">↩️ Antworten</a>` : ""}
+          <button class="mini-btn danger" data-id="${n.id}" data-action="delete">Löschen</button>
+        </div>
+      </article>
+    `;
+  }).join("");
+
+  list.querySelectorAll("[data-action='toggle-read']").forEach(btn => {
+    btn.addEventListener("click", () => toggleNachrichtRead(btn.dataset.id));
+  });
+  list.querySelectorAll("[data-action='delete']").forEach(btn => {
+    btn.addEventListener("click", () => {
+      if (confirm("Nachricht wirklich löschen?")) deleteNachricht(btn.dataset.id);
+    });
+  });
+}
+
+async function toggleNachrichtRead(id) {
+  if (!requireMember("Nachrichten verwalten")) return;
+  const n = nachrichtenCache.find(x => x.id === id);
+  if (!n) return;
+  const read = !n.read;
+  if (firebaseReady) {
+    try { await updateDoc(doc(db, "nachrichten", id), { read, readAt: read ? Date.now() : null }); }
+    catch (e) { showToast("Speichern fehlgeschlagen.", "error"); }
+  } else {
+    n.read = read;
+    n.readAt = read ? Date.now() : null;
+    nachrichtenCache = [...localStore.nachrichten];
+    saveLocal("nachrichten", localStore.nachrichten);
+    renderNachrichten();
+  }
+}
+
+async function deleteNachricht(id) {
+  if (!requireMember("Nachrichten löschen")) return;
+  if (firebaseReady) {
+    try { await deleteDoc(doc(db, "nachrichten", id)); showToast("Entfernt.", "success"); }
+    catch (e) { showToast("Löschen fehlgeschlagen.", "error"); }
+  } else {
+    localStore.nachrichten = localStore.nachrichten.filter(n => n.id !== id);
+    nachrichtenCache = localStore.nachrichten;
+    saveLocal("nachrichten", localStore.nachrichten);
+    renderNachrichten();
+  }
+}
+
+$("kontaktForm")?.addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const name = $("kontaktName").value.trim();
+  const email = $("kontaktEmail").value.trim();
+  const message = $("kontaktMessage").value.trim();
+  if (!name || !message) return;
+  const entry = {
+    name,
+    email,
+    message,
+    read: false,
+    createdAt: Date.now(),
+  };
+  const submitBtn = e.target.querySelector("button[type='submit']");
+  if (submitBtn) submitBtn.disabled = true;
+  if (firebaseReady) {
+    try {
+      await addDoc(collection(db, "nachrichten"), { ...entry, createdAt: serverTimestamp() });
+    } catch (err) {
+      console.error(err);
+      showToast("Senden fehlgeschlagen.", "error");
+      if (submitBtn) submitBtn.disabled = false;
+      return;
+    }
+  } else {
+    entry.id = "local_" + Date.now();
+    localStore.nachrichten.push(entry);
+    nachrichtenCache = localStore.nachrichten;
+    saveLocal("nachrichten", localStore.nachrichten);
+    renderNachrichten();
+  }
+  e.target.reset();
+  if (submitBtn) submitBtn.disabled = false;
+  showToast("Danke! Nachricht ist raus. 💌", "success");
+});
+
+/* ==========================================================================
    Einstellungen · Passwort ändern + Gäste-Zugänge
    ========================================================================== */
 
@@ -3091,6 +3223,7 @@ function setupListeners() {
     eventfotosCache = localStore.eventfotos;
     guestsCache = localStore.guests;
     anmeldungenCache = localStore.anmeldungen;
+    nachrichtenCache = localStore.nachrichten;
     renderEvents();
     renderPutzplan();
     renderTermine();
@@ -3103,6 +3236,7 @@ function setupListeners() {
     renderBewohner();
     renderHausFeatures();
     renderGuestsList();
+    renderNachrichten();
     return;
   }
 
@@ -3183,6 +3317,11 @@ function setupListeners() {
     guestsCache = snap.docs.map(d => ({ id: d.id, ...d.data() }));
     renderGuestsList();
   }, (err) => console.warn("guests listener:", err.message));
+
+  onSnapshot(query(collection(db, "nachrichten"), orderBy("createdAt", "desc")), (snap) => {
+    nachrichtenCache = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+    renderNachrichten();
+  }, (err) => console.warn("nachrichten listener:", err.message));
 }
 
 /* ==========================================================================

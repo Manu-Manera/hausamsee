@@ -49,5 +49,8 @@ service cloud.firestore {
     match /anmeldungen/{document=**} {
       allow read, write: if true;
     }
+    match /nachrichten/{document=**} {
+      allow read, write: if true;
+    }
   }
 }

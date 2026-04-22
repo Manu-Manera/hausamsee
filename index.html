@@ -304,6 +304,7 @@
       <div class="kalender-tabs" role="tablist">
         <button class="tab active" data-intern-tab="kandidaten">🏠 Kandidat:innen</button>
         <button class="tab" data-intern-tab="schaeden">🔧 Schäden</button>
+        <button class="tab" data-intern-tab="nachrichten">📬 Nachrichten <span class="badge" id="nachrichtenBadge" hidden>0</span></button>
         <button class="tab" data-intern-tab="einstellungen">⚙️ Einstellungen</button>
       </div>
 
@@ -445,6 +446,14 @@
             <button type="submit" class="btn btn-primary">Schaden speichern</button>
           </form>
         </details>
+      </div>
+
+      <!-- Nachrichten -->
+      <div class="kalender-panel hidden" id="ternTabNachrichten">
+        <p class="section-lead" style="text-align:left;margin-top:0;">
+          Nachrichten vom öffentlichen Kontaktformular. Nur wir sehen das hier.
+        </p>
+        <div class="nachrichten-list" id="nachrichtenList"></div>
       </div>
     </div>
   </section>
@@ -642,13 +651,30 @@
         <a class="btn btn-ghost" href="https://www.google.com/maps/search/?api=1&query=Pilatusstrasse+40+Pf%C3%A4ffikon+ZH" target="_blank" rel="noopener">In Karten öffnen</a>
       </div>
       <div class="info-card warm">
-        <h3>✉️ Schreib uns</h3>
-        <p>Bei Fragen zu Events oder einfach so – wir freuen uns!</p>
-        <a class="btn btn-primary" href="mailto:hallo@example.com">E-Mail schreiben</a>
-      </div>
-      <div class="info-card warm">
         <h3>🚆 Anreise</h3>
         <p>S3/S5 bis Pfäffikon ZH, dann wenige Minuten zu Fuss zur Pilatusstrasse. Parkplätze gibt's vor dem Haus.</p>
+      </div>
+      <div class="info-card warm kontakt-form-card">
+        <h3>✉️ Schreib uns</h3>
+        <p>Fragen zu Events, Ideen oder einfach mal Hallo sagen? Wir lesen alles – versprochen.</p>
+        <form id="kontaktForm" class="kontakt-form">
+          <div class="row">
+            <div class="field">
+              <label for="kontaktName">Dein Name</label>
+              <input id="kontaktName" required autocomplete="name" placeholder="Wie heisst du?" />
+            </div>
+            <div class="field">
+              <label for="kontaktEmail">E-Mail (optional)</label>
+              <input id="kontaktEmail" type="email" autocomplete="email" placeholder="damit wir antworten können" />
+            </div>
+          </div>
+          <div class="field">
+            <label for="kontaktMessage">Nachricht</label>
+            <textarea id="kontaktMessage" rows="4" required placeholder="Was möchtest du uns mitteilen?"></textarea>
+          </div>
+          <button type="submit" class="btn btn-primary">Nachricht senden</button>
+          <p class="form-note">Deine Nachricht sehen nur die Bewohner:innen – niemand sonst.</p>
+        </form>
       </div>
     </div>
     <div class="map-wrap">
