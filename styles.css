@@ -853,16 +853,152 @@ a:hover { color: var(--terracotta); }
   border-color: var(--berry);
 }
 
+.event-admin {
+  display: flex;
+  gap: 6px;
+  justify-content: center;
+  flex-wrap: wrap;
+}
+
+.event-edit,
 .event-delete {
+  background: none;
+  border: 1px solid var(--card-border);
+  color: var(--text-muted);
+  cursor: pointer;
+  font-size: 0.78rem;
+  padding: 5px 10px;
+  border-radius: 999px;
+  transition: all 0.2s var(--ease);
+}
+
+.event-edit:hover { border-color: var(--terracotta); color: var(--terracotta); background: rgba(198, 122, 80, 0.08); }
+.event-delete:hover { border-color: var(--berry); color: var(--berry); background: rgba(178, 72, 72, 0.08); }
+
+/* ============================================
+   Öffentliche Anmeldeliste (Events)
+   ============================================ */
+
+.event-signup {
+  margin-top: 12px;
+  padding: 12px 14px;
+  border-radius: var(--r-md);
+  background: rgba(255, 250, 244, 0.55);
+  border: 1px solid var(--card-border);
+}
+.event-signup > summary {
+  font-weight: 700;
+  font-size: 0.92rem;
+  cursor: pointer;
+  color: var(--text);
+  list-style: none;
+}
+.event-signup > summary::-webkit-details-marker { display: none; }
+.event-signup > summary::before {
+  content: "▸";
+  display: inline-block;
+  margin-right: 6px;
+  transition: transform 0.2s var(--ease);
+  color: var(--text-muted);
+}
+.event-signup[open] > summary::before { transform: rotate(90deg); }
+
+.signup-subhead {
+  margin: 10px 0 6px;
+  font-size: 0.8rem;
+  font-weight: 700;
+  color: var(--muted);
+  letter-spacing: 0.02em;
+}
+
+.signup-list {
+  list-style: none;
+  margin: 0 0 8px;
+  padding: 0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.signup-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 10px 5px 12px;
+  border-radius: 999px;
+  background: #fff;
+  border: 1px solid var(--card-border);
+  font-size: 0.85rem;
+  color: var(--text);
+}
+.signup-pair {
+  background: rgba(138, 184, 138, 0.18);
+  border-color: rgba(138, 184, 138, 0.45);
+}
+.signup-solo {
+  background: rgba(212, 168, 83, 0.18);
+  border-color: rgba(212, 168, 83, 0.45);
+}
+.signup-link {
+  color: var(--terracotta);
+  margin: 0 2px;
+}
+.signup-remove {
   background: none;
   border: none;
   color: var(--text-muted);
   cursor: pointer;
-  font-size: 0.8rem;
-  padding: 4px 8px;
+  padding: 0 2px;
+  font-size: 1rem;
+  line-height: 1;
+  border-radius: 999px;
 }
+.signup-remove:hover { color: var(--berry); }
 
-.event-delete:hover { color: var(--berry); }
+.signup-form {
+  margin-top: 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.signup-row {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+.signup-row input[type="text"] {
+  flex: 1 1 160px;
+  min-width: 140px;
+  padding: 8px 12px;
+  border-radius: var(--r-sm);
+  border: 1px solid var(--card-border);
+  background: #fff;
+  font: inherit;
+}
+.signup-need-partner {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 0.85rem;
+  color: var(--text-soft);
+}
+.signup-need-partner input { width: 16px; height: 16px; }
+.signup-actions {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  align-items: center;
+}
+.signup-match {
+  background: linear-gradient(135deg, rgba(198, 122, 80, 0.15), rgba(212, 168, 83, 0.15));
+  border-color: rgba(198, 122, 80, 0.4);
+}
+.form-actions {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  align-items: center;
+  margin-top: 8px;
+}
 
 @media (max-width: 640px) {
   .event-card {

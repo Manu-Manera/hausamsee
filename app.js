@@ -131,6 +131,7 @@ const localStore = {
   eventfotos: JSON.parse(localStorage.getItem("has_eventfotos") || "[]"),
   config: JSON.parse(localStorage.getItem("has_config") || "{}"),
   guests: JSON.parse(localStorage.getItem("has_guests") || "[]"),
+  anmeldungen: JSON.parse(localStorage.getItem("has_anmeldungen") || "[]"),
 };
 function saveLocal(key, value) { localStorage.setItem(`has_${key}`, JSON.stringify(value)); }
 
@@ -772,6 +773,7 @@ function resizeImage(file, maxDim = MAX_IMAGE_DIM, quality = JPEG_QUALITY) {
    ========================================================================== */
 
 let eventsCache = [];
+let anmeldungenCache = [];
 
 function renderEvents() {
   const list = $("eventsList");
@@ -806,6 +808,12 @@ function renderEvents() {
       if (confirm("Event wirklich löschen?")) deleteEvent(btn.dataset.id);
     });
   });
+  list.querySelectorAll(".event-edit").forEach(btn => {
+    btn.addEventListener("click", () => {
+      if (!requireAuth("Events bearbeiten")) return;
+      startEditEvent(btn.dataset.id);
+    });
+  });
   list.querySelectorAll(".event-fotos-add").forEach(btn => {
     btn.addEventListener("click", () => uploadEventFotos(btn.dataset.id));
   });
@@ -817,6 +825,23 @@ function renderEvents() {
         id: el.dataset.id,
         kind: "eventfoto"
       });
+    });
+  });
+
+  // Anmelde-Formulare
+  list.querySelectorAll(".signup-form").forEach(form => {
+    form.addEventListener("submit", (e) => {
+      e.preventDefault();
+      handleSignupSubmit(form.dataset.eventid, form);
+    });
+  });
+  list.querySelectorAll(".signup-remove").forEach(btn => {
+    btn.addEventListener("click", () => removeOwnSignup(btn.dataset.id, btn.dataset.eventid));
+  });
+  list.querySelectorAll(".signup-match").forEach(btn => {
+    btn.addEventListener("click", () => {
+      if (!requireAuth("Paare zuweisen")) return;
+      matchSignups(btn.dataset.eventid);
     });
   });
 
@@ -848,6 +873,8 @@ function renderEventCard(ev, isPast) {
     </details>
   ` : "";
 
+  const signupBlock = !isPast ? renderSignupBlock(ev) : "";
+
   return `
     <article class="event-card ${isPast ? 'is-past' : ''}">
       <div class="event-date">
@@ -859,11 +886,12 @@ function renderEventCard(ev, isPast) {
         <h3>${ev.emoji || "🎉"} ${escapeHtml(ev.title)}</h3>
         <div class="event-meta">📍 ${escapeHtml(ev.location || "Haus am See")}</div>
         ${ev.description ? `<p>${escapeHtml(ev.description)}</p>` : ""}
+        ${signupBlock}
         ${fotosBlock}
       </div>
       <div class="event-actions">
         ${!isPast ? `
-          <div class="rsvp-count">
+          <div class="rsvp-count" title="Einfache RSVP – unverbindliche Stimme">
             <span>✓ ${yes}</span>
             <span>✗ ${no}</span>
           </div>
@@ -872,10 +900,247 @@ function renderEventCard(ev, isPast) {
             <button class="rsvp-btn no ${userVote === 'no' ? 'active' : ''}" data-id="${ev.id}" data-vote="no">Kann nicht</button>
           </div>
         ` : ""}
-        ${auth.isMember ? `<button class="event-delete" data-id="${ev.id}">Löschen</button>` : ""}
+        ${auth.isMember ? `
+          <div class="event-admin">
+            <button class="event-edit" data-id="${ev.id}" title="Event bearbeiten">✏️ Bearbeiten</button>
+            <button class="event-delete" data-id="${ev.id}">Löschen</button>
+          </div>
+        ` : ""}
       </div>
     </article>
   `;
+}
+
+/* -------- Öffentliche Anmeldeliste -------- */
+
+function getOwnSignupIds(eventId) {
+  try {
+    return JSON.parse(localStorage.getItem(`anm_${eventId}`) || "[]");
+  } catch { return []; }
+}
+function addOwnSignupId(eventId, id) {
+  const ids = getOwnSignupIds(eventId);
+  if (!ids.includes(id)) ids.push(id);
+  localStorage.setItem(`anm_${eventId}`, JSON.stringify(ids));
+}
+function removeOwnSignupId(eventId, id) {
+  const ids = getOwnSignupIds(eventId).filter(x => x !== id);
+  localStorage.setItem(`anm_${eventId}`, JSON.stringify(ids));
+}
+
+function renderSignupBlock(ev) {
+  const mode = ev.registrationMode || "single";
+  if (mode === "none") return "";
+
+  const entries = anmeldungenCache
+    .filter(a => a.eventId === ev.id)
+    .sort((a, b) => (a.createdAt || 0) - (b.createdAt || 0));
+
+  const ownIds = new Set(getOwnSignupIds(ev.id));
+
+  if (mode === "pair") {
+    const pairs = entries.filter(a => !a.needsPartner && a.partnerName);
+    const solos = entries.filter(a => a.needsPartner || !a.partnerName);
+    const listHtml = `
+      ${pairs.length ? `
+        <div class="signup-subhead">👫 Angemeldete Paare · ${pairs.length}</div>
+        <ul class="signup-list">
+          ${pairs.map(a => `
+            <li class="signup-item signup-pair">
+              <span class="signup-names">${escapeHtml(a.name)} <span class="signup-link">🤝</span> ${escapeHtml(a.partnerName)}</span>
+              ${ownIds.has(a.id) || auth.isMember
+                ? `<button type="button" class="signup-remove" data-id="${a.id}" data-eventid="${ev.id}" title="Anmeldung entfernen">×</button>`
+                : ""}
+            </li>
+          `).join("")}
+        </ul>
+      ` : ""}
+      ${solos.length ? `
+        <div class="signup-subhead">🙋 Sucht noch Partner:in · ${solos.length}</div>
+        <ul class="signup-list">
+          ${solos.map(a => `
+            <li class="signup-item signup-solo">
+              <span class="signup-names">${escapeHtml(a.name)}</span>
+              ${ownIds.has(a.id) || auth.isMember
+                ? `<button type="button" class="signup-remove" data-id="${a.id}" data-eventid="${ev.id}" title="Anmeldung entfernen">×</button>`
+                : ""}
+            </li>
+          `).join("")}
+        </ul>
+      ` : ""}
+      ${!entries.length ? `<div class="empty-state small">Noch niemand angemeldet. Mach den Anfang!</div>` : ""}
+    `;
+    const matchBtn = (auth.isMember && solos.length >= 2) ? `
+      <button type="button" class="btn btn-ghost small signup-match" data-eventid="${ev.id}">🎲 ${solos.length >= 2 ? `${Math.floor(solos.length/2)} Paar${Math.floor(solos.length/2) > 1 ? 'e' : ''} zufällig bilden` : 'Paare zufällig bilden'}</button>
+    ` : "";
+    return `
+      <details class="event-signup" open>
+        <summary>🏁 Anmeldung zum Paar-Lauf · ${entries.length}</summary>
+        ${listHtml}
+        <form class="signup-form signup-form-pair" data-eventid="${ev.id}">
+          <div class="signup-row">
+            <input type="text" name="name" placeholder="Dein Name" autocomplete="off" required />
+            <input type="text" name="partnerName" placeholder="Partner:in (oder leer)" autocomplete="off" />
+          </div>
+          <label class="signup-need-partner">
+            <input type="checkbox" name="needsPartner" />
+            <span>Partner:in gesucht – bitte später zufällig zuweisen</span>
+          </label>
+          <div class="signup-actions">
+            <button type="submit" class="btn btn-primary small">Anmelden</button>
+            ${matchBtn}
+          </div>
+          <p class="form-note">Zwei Namen = komplettes Paar. Nur dein Name + Häkchen = Partner:in wird später ausgelost.</p>
+        </form>
+      </details>
+    `;
+  }
+
+  // single
+  return `
+    <details class="event-signup" ${entries.length ? "open" : ""}>
+      <summary>📝 Anmeldeliste · ${entries.length}</summary>
+      ${entries.length ? `
+        <ul class="signup-list">
+          ${entries.map(a => `
+            <li class="signup-item">
+              <span class="signup-names">${escapeHtml(a.name)}</span>
+              ${ownIds.has(a.id) || auth.isMember
+                ? `<button type="button" class="signup-remove" data-id="${a.id}" data-eventid="${ev.id}" title="Anmeldung entfernen">×</button>`
+                : ""}
+            </li>
+          `).join("")}
+        </ul>
+      ` : `<div class="empty-state small">Noch niemand angemeldet. Mach den Anfang!</div>`}
+      <form class="signup-form" data-eventid="${ev.id}">
+        <div class="signup-row">
+          <input type="text" name="name" placeholder="Dein Name" autocomplete="off" required />
+          <button type="submit" class="btn btn-primary small">Anmelden</button>
+        </div>
+      </form>
+    </details>
+  `;
+}
+
+async function handleSignupSubmit(eventId, form) {
+  const ev = eventsCache.find(e => e.id === eventId);
+  if (!ev) return;
+  const mode = ev.registrationMode || "single";
+  const name = (form.elements["name"].value || "").trim();
+  if (!name) { showToast("Bitte Namen eintragen.", "error"); return; }
+
+  const entry = { eventId, name, createdAt: Date.now() };
+  if (mode === "pair") {
+    const partnerName = (form.elements["partnerName"].value || "").trim();
+    const needsPartnerChecked = !!form.elements["needsPartner"]?.checked;
+    if (partnerName && !needsPartnerChecked) {
+      entry.partnerName = partnerName;
+      entry.needsPartner = false;
+    } else {
+      entry.partnerName = "";
+      entry.needsPartner = true;
+    }
+  }
+
+  try {
+    let newId;
+    if (firebaseReady) {
+      const ref = await addDoc(collection(db, "anmeldungen"), { ...entry, createdAt: serverTimestamp() });
+      newId = ref.id;
+    } else {
+      newId = "local_" + Date.now();
+      entry.id = newId;
+      localStore.anmeldungen.push(entry);
+      anmeldungenCache = localStore.anmeldungen;
+      saveLocal("anmeldungen", localStore.anmeldungen);
+      renderEvents();
+    }
+    addOwnSignupId(eventId, newId);
+    form.reset();
+    showToast("Anmeldung gespeichert 🎉", "success");
+  } catch (err) {
+    console.error(err);
+    showToast("Anmeldung fehlgeschlagen.", "error");
+  }
+}
+
+async function removeOwnSignup(id, eventId) {
+  const ownIds = getOwnSignupIds(eventId);
+  if (!ownIds.includes(id) && !auth.isMember) {
+    showToast("Nur WG-Mitglieder können andere Anmeldungen entfernen.", "error");
+    return;
+  }
+  if (!confirm("Anmeldung wirklich entfernen?")) return;
+  try {
+    if (firebaseReady) {
+      await deleteDoc(doc(db, "anmeldungen", id));
+    } else {
+      localStore.anmeldungen = localStore.anmeldungen.filter(a => a.id !== id);
+      anmeldungenCache = localStore.anmeldungen;
+      saveLocal("anmeldungen", localStore.anmeldungen);
+      renderEvents();
+    }
+    removeOwnSignupId(eventId, id);
+    showToast("Anmeldung entfernt.", "success");
+  } catch (err) {
+    console.error(err);
+    showToast("Entfernen fehlgeschlagen.", "error");
+  }
+}
+
+function shuffle(arr) {
+  const a = arr.slice();
+  for (let i = a.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [a[i], a[j]] = [a[j], a[i]];
+  }
+  return a;
+}
+
+async function matchSignups(eventId) {
+  const solos = anmeldungenCache.filter(a => a.eventId === eventId && (a.needsPartner || !a.partnerName));
+  if (solos.length < 2) { showToast("Mindestens zwei Solo-Anmeldungen nötig.", "error"); return; }
+  if (!confirm(`${solos.length} Solo-Anmeldungen werden zufällig gepaart. Fortfahren?`)) return;
+
+  const shuffled = shuffle(solos);
+  const updates = [];
+  for (let i = 0; i + 1 < shuffled.length; i += 2) {
+    const a = shuffled[i];
+    const b = shuffled[i + 1];
+    updates.push([a.id, { partnerName: b.name, needsPartner: false, matchedWithId: b.id }]);
+    // Der zweite Eintrag wird entfernt, damit das Paar nur einmal in der Liste steht
+    updates.push([b.id, "__delete__"]);
+  }
+
+  try {
+    if (firebaseReady) {
+      for (const [id, payload] of updates) {
+        if (payload === "__delete__") {
+          await deleteDoc(doc(db, "anmeldungen", id));
+        } else {
+          await updateDoc(doc(db, "anmeldungen", id), payload);
+        }
+      }
+    } else {
+      for (const [id, payload] of updates) {
+        if (payload === "__delete__") {
+          localStore.anmeldungen = localStore.anmeldungen.filter(a => a.id !== id);
+        } else {
+          const idx = localStore.anmeldungen.findIndex(a => a.id === id);
+          if (idx >= 0) Object.assign(localStore.anmeldungen[idx], payload);
+        }
+      }
+      anmeldungenCache = localStore.anmeldungen;
+      saveLocal("anmeldungen", localStore.anmeldungen);
+      renderEvents();
+    }
+    const pairs = Math.floor(shuffled.length / 2);
+    const leftover = shuffled.length % 2;
+    showToast(`🎲 ${pairs} Paar${pairs > 1 ? 'e' : ''} gebildet${leftover ? " · 1 Person noch ohne Partner:in" : ""}.`, "success");
+  } catch (err) {
+    console.error(err);
+    showToast("Zuweisung fehlgeschlagen.", "error");
+  }
 }
 
 async function uploadEventFotos(eventId) {
@@ -982,18 +1247,69 @@ async function deleteEvent(eventId) {
   }
 }
 
+function startEditEvent(id) {
+  const ev = eventsCache.find(e => e.id === id);
+  if (!ev) return;
+  $("evId").value = ev.id;
+  $("evTitle").value = ev.title || "";
+  // datetime-local erwartet YYYY-MM-DDTHH:mm
+  $("evDate").value = ev.date ? String(ev.date).slice(0, 16) : "";
+  $("evDesc").value = ev.description || "";
+  $("evLocation").value = ev.location || "";
+  $("evEmoji").value = ev.emoji || "";
+  $("evMode").value = ev.registrationMode || "single";
+  $("evSubmit").textContent = "Änderungen speichern";
+  $("evCancel").classList.remove("hidden");
+  $("eventFormSummary").textContent = `✏️ Event bearbeiten: ${ev.title}`;
+  const toggle = $("eventFormToggle");
+  if (toggle) { toggle.open = true; toggle.scrollIntoView({ behavior: "smooth", block: "start" }); }
+}
+
+function cancelEditEvent() {
+  $("eventForm").reset();
+  $("evId").value = "";
+  $("evSubmit").textContent = "Event speichern";
+  $("evCancel").classList.add("hidden");
+  $("eventFormSummary").textContent = "➕ Event hinzufügen (nur für WG)";
+}
+$("evCancel")?.addEventListener("click", cancelEditEvent);
+
 $("eventForm")?.addEventListener("submit", async (e) => {
   e.preventDefault();
-  if (!requireAuth("Events erstellen")) return;
-  const entry = {
+  if (!requireAuth("Events bearbeiten")) return;
+  const editingId = $("evId").value.trim();
+  const data = {
     title: $("evTitle").value.trim(),
     date: $("evDate").value,
     description: $("evDesc").value.trim(),
     location: $("evLocation").value.trim() || "Haus am See, Pilatusstrasse 40, Pfäffikon ZH",
     emoji: $("evEmoji").value.trim() || "🎉",
+    registrationMode: $("evMode").value || "single",
+  };
+
+  if (editingId) {
+    // Update
+    if (firebaseReady) {
+      try { await updateDoc(doc(db, "events", editingId), data); }
+      catch (err) { console.error(err); showToast("Speichern fehlgeschlagen.", "error"); return; }
+    } else {
+      const idx = localStore.events.findIndex(ev => ev.id === editingId);
+      if (idx >= 0) Object.assign(localStore.events[idx], data);
+      eventsCache = localStore.events;
+      saveLocal("events", localStore.events);
+      renderEvents();
+    }
+    cancelEditEvent();
+    showToast("Event aktualisiert.", "success");
+    return;
+  }
+
+  // Create
+  const entry = {
+    ...data,
     rsvp: { yes: 0, no: 0 },
     createdBy: auth.member,
-    createdAt: Date.now()
+    createdAt: Date.now(),
   };
   if (firebaseReady) {
     try { await addDoc(collection(db, "events"), { ...entry, createdAt: serverTimestamp() }); }
@@ -1006,7 +1322,7 @@ $("eventForm")?.addEventListener("submit", async (e) => {
     renderEvents();
   }
   e.target.reset();
-  e.target.parentElement.open = false;
+  $("eventFormToggle").open = false;
   showToast("Event gespeichert.", "success");
 });
 
@@ -2780,6 +3096,7 @@ function setupListeners() {
     hausbilderCache = localStore.hausbilder;
     eventfotosCache = localStore.eventfotos;
     guestsCache = localStore.guests;
+    anmeldungenCache = localStore.anmeldungen;
     renderEvents();
     renderPutzplan();
     renderTermine();
@@ -2799,6 +3116,11 @@ function setupListeners() {
     eventsCache = snap.docs.map(d => ({ id: d.id, ...d.data() }));
     renderEvents();
   }, (err) => console.warn("events listener:", err.message));
+
+  onSnapshot(collection(db, "anmeldungen"), (snap) => {
+    anmeldungenCache = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+    renderEvents();
+  }, (err) => console.warn("anmeldungen listener:", err.message));
 
   onSnapshot(query(collection(db, "putzplan"), orderBy("createdAt", "desc")), (snap) => {
     putzCache = snap.docs.map(d => ({ id: d.id, ...d.data() }));

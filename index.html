@@ -184,9 +184,10 @@
     <div class="events-list" id="eventsList">
       <div class="empty-state">Lade Events…</div>
     </div>
-    <details class="admin-toggle" data-wg-only>
-      <summary>➕ Event hinzufügen (nur für WG)</summary>
+    <details class="admin-toggle" id="eventFormToggle" data-wg-only>
+      <summary><span id="eventFormSummary">➕ Event hinzufügen (nur für WG)</span></summary>
       <form id="eventForm" class="form-card">
+        <input type="hidden" id="evId" />
         <div class="row">
           <div class="field">
             <label for="evTitle">Titel</label>
@@ -211,7 +212,18 @@
             <input id="evEmoji" maxlength="4" placeholder="🔥" />
           </div>
         </div>
-        <button type="submit" class="btn btn-primary">Event speichern</button>
+        <div class="field">
+          <label for="evMode">Anmeldeart</label>
+          <select id="evMode">
+            <option value="single">Einzel-Anmeldung (Standard)</option>
+            <option value="pair">Paar-Anmeldung (z. B. Bierkastenlauf) – mit Partner:in oder Partner:in gesucht</option>
+            <option value="none">Keine öffentliche Anmeldung</option>
+          </select>
+        </div>
+        <div class="form-actions">
+          <button type="submit" class="btn btn-primary" id="evSubmit">Event speichern</button>
+          <button type="button" class="btn btn-ghost hidden" id="evCancel">Abbrechen</button>
+        </div>
       </form>
     </details>
   </section>
