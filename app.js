@@ -844,6 +844,15 @@ function renderEvents() {
       startEditEvent(btn.dataset.id);
     });
   });
+  list.querySelectorAll(".event-rsvp-reset").forEach(btn => {
+    btn.addEventListener("click", () => {
+      if (!requireMember("RSVP zurücksetzen")) return;
+      const ev = eventsCache.find(e => e.id === btn.dataset.id);
+      if (!ev) return;
+      if (!confirm(`Alle RSVP-Stimmen von "${ev.title}" auf 0 zurücksetzen?`)) return;
+      resetEventRsvp(btn.dataset.id);
+    });
+  });
   list.querySelectorAll(".event-fotos-add").forEach(btn => {
     btn.addEventListener("click", () => uploadEventFotos(btn.dataset.id));
   });
@@ -935,6 +944,7 @@ function renderEventCard(ev, isPast) {
         ${auth.isMember ? `
           <div class="event-admin">
             <button class="event-edit" data-id="${ev.id}" title="Event bearbeiten">✏️ Bearbeiten</button>
+            <button class="event-rsvp-reset" data-id="${ev.id}" title="RSVP-Zähler zurücksetzen">🔄 Zähler 0</button>
             <button class="event-delete" data-id="${ev.id}">Löschen</button>
           </div>
         ` : ""}
@@ -1316,6 +1326,33 @@ async function deleteEvent(eventId) {
     saveLocal("events", localStore.events);
     renderEvents();
   }
+}
+
+async function resetEventRsvp(eventId) {
+  if (firebaseReady) {
+    try {
+      await updateDoc(doc(db, "events", eventId), {
+        "rsvp.yes": 0,
+        "rsvp.no": 0,
+        "rsvp.voters": {},
+      });
+    } catch (e) {
+      console.error(e);
+      showToast("Zurücksetzen fehlgeschlagen.", "error");
+      return;
+    }
+  } else {
+    const idx = localStore.events.findIndex(e => e.id === eventId);
+    if (idx >= 0) {
+      localStore.events[idx].rsvp = { yes: 0, no: 0, voters: {} };
+      eventsCache = localStore.events;
+      saveLocal("events", localStore.events);
+      renderEvents();
+    }
+  }
+  // Eigenen localStorage-Hinweis auf frühere Stimme entfernen (alte Anonym-Zeit)
+  localStorage.removeItem(`rsvp_${eventId}`);
+  showToast("RSVP auf 0 zurückgesetzt.", "success");
 }
 
 function startEditEvent(id) {
