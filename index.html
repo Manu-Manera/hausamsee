@@ -2,9 +2,10 @@
 <html lang="de">
 <head>
   <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Haus am See · Pfäffikon ZH</title>
-  <meta name="description" content="Unsere WG am Pfäffikersee. Events, Besuche, Kalender und Eindrücke aus dem Haus am See." />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+  <title>Haus am See · Pilatusstrasse 40, Pfäffikon ZH</title>
+  <meta name="description" content="Unsere WG an der Pilatusstrasse in Pfäffikon ZH. Events, WG-Termine, Kalender und Eindrücke aus dem Haus am See." />
+  <meta name="theme-color" content="#fdf9f2" />
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,400;0,9..144,600;0,9..144,700;1,9..144,400&family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet" />
@@ -23,11 +24,16 @@
       <a href="#bewohner">Bewohner</a>
       <a href="#galerie">Galerie</a>
       <a href="#events">Events</a>
-      <a href="#besuch">Besuch</a>
       <a href="#kalender">Kalender</a>
       <a href="#gaestebuch">Gästebuch</a>
       <a href="#kontakt">Kontakt</a>
     </nav>
+    <div class="nav-auth">
+      <button id="loginBtn" class="login-chip">
+        <span class="login-icon">🔑</span>
+        <span class="login-label">Anmelden</span>
+      </button>
+    </div>
     <button class="nav-toggle" aria-label="Menü öffnen">
       <span></span><span></span><span></span>
     </button>
@@ -41,18 +47,18 @@
       <div class="mist"></div>
     </div>
     <div class="hero-content">
-      <span class="eyebrow">Pfäffikon ZH · direkt am See</span>
+      <span class="eyebrow">Pilatusstrasse 40 · Pfäffikon ZH</span>
       <h1>
         <span class="serif-italic">Willkommen im</span>
         <span class="big">Haus am See</span>
       </h1>
       <p class="lead">
-        Unser kleines Paradies mit Blick auf den Pfäffikersee. Ein Ort für lange Abende am Feuer,
+        Unsere WG direkt am Pfäffikersee. Ein Ort für lange Abende am Feuer,
         spontane Brunches und Gäste, die zu Freunden werden.
       </p>
       <div class="hero-cta">
-        <a href="#besuch" class="btn btn-primary">Besuch anfragen</a>
-        <a href="#events" class="btn btn-ghost">Kommende Events</a>
+        <a href="#events" class="btn btn-primary">Kommende Events</a>
+        <a href="#galerie" class="btn btn-ghost">Galerie ansehen</a>
       </div>
       <div class="hero-stats">
         <div class="stat"><span class="stat-num" id="statBewohner">–</span><span class="stat-label">Bewohner:innen</span></div>
@@ -70,7 +76,7 @@
   <section id="haus" class="section">
     <div class="section-head">
       <span class="eyebrow">Unser Zuhause</span>
-      <h2>Ein altes Haus mit viel Herz</h2>
+      <h2>Ein Haus mit viel Herz</h2>
       <p class="section-lead">
         Holzböden, die bei jedem Schritt leise knarzen. Eine Küche, in der immer was kocht.
         Ein Garten, der im Sommer zum Open-Air-Wohnzimmer wird. Und vorne dran der See.
@@ -122,7 +128,13 @@
     <div class="gallery" id="gallery">
       <!-- Renderet aus JS -->
     </div>
-    <p class="gallery-hint">Eigene Fotos teilen? <a href="#kontakt">Schreib uns</a> – wir ergänzen sie gerne.</p>
+    <div class="gallery-actions" data-wg-only>
+      <button id="galleryAddBtn" class="btn btn-ghost">
+        📷 Bilder hinzufügen
+      </button>
+      <input id="galleryFileInput" type="file" accept="image/*" multiple hidden />
+      <p class="wg-hint">Nur für WG-Mitglieder · bitte zuerst anmelden</p>
+    </div>
   </section>
 
   <!-- Events -->
@@ -135,8 +147,8 @@
     <div class="events-list" id="eventsList">
       <div class="empty-state">Lade Events…</div>
     </div>
-    <details class="admin-toggle">
-      <summary>➕ Event hinzufügen (für Bewohner:innen)</summary>
+    <details class="admin-toggle" data-wg-only>
+      <summary>➕ Event hinzufügen (nur für WG)</summary>
       <form id="eventForm" class="form-card">
         <div class="row">
           <div class="field">
@@ -155,7 +167,7 @@
         <div class="row">
           <div class="field">
             <label for="evLocation">Ort</label>
-            <input id="evLocation" value="Haus am See, Pfäffikon ZH" />
+            <input id="evLocation" value="Haus am See, Pilatusstrasse 40, Pfäffikon ZH" />
           </div>
           <div class="field">
             <label for="evEmoji">Emoji</label>
@@ -167,110 +179,70 @@
     </details>
   </section>
 
-  <!-- Besuch / Gästeanfrage -->
-  <section id="besuch" class="section">
-    <div class="section-head">
-      <span class="eyebrow">Zu Besuch</span>
-      <h2>Übernachten am See</h2>
-      <p class="section-lead">
-        Lust auf ein Wochenende am Wasser? Schick uns eine Anfrage – wir melden uns schnell zurück.
-      </p>
-    </div>
-    <div class="besuch-grid">
-      <div class="info-card warm">
-        <h3>Was dich erwartet</h3>
-        <ul class="check-list">
-          <li>Gästezimmer mit Doppelbett & Seeblick</li>
-          <li>Frühstück zusammen mit der WG</li>
-          <li>Zugang zu SUPs, Booten & Badesteg</li>
-          <li>Tipps für Ausflüge rund um den See</li>
-        </ul>
-        <p class="small">
-          Richtwert für's gemeinsame Essen & Strom: <strong>CHF 15/Nacht</strong> pro Person.
-          Keine Pflicht – nur eine Empfehlung.
-        </p>
-      </div>
-      <form id="besuchForm" class="form-card">
-        <div class="row">
-          <div class="field">
-            <label for="bName">Dein Name</label>
-            <input id="bName" required />
-          </div>
-          <div class="field">
-            <label for="bContact">E-Mail oder Handy</label>
-            <input id="bContact" required />
-          </div>
-        </div>
-        <div class="row">
-          <div class="field">
-            <label for="bFrom">Von</label>
-            <input id="bFrom" type="date" required />
-          </div>
-          <div class="field">
-            <label for="bTo">Bis</label>
-            <input id="bTo" type="date" required />
-          </div>
-          <div class="field">
-            <label for="bGuests">Anzahl Personen</label>
-            <input id="bGuests" type="number" min="1" max="6" value="1" required />
-          </div>
-        </div>
-        <div class="field">
-          <label for="bMessage">Kurze Nachricht (optional)</label>
-          <textarea id="bMessage" rows="3" placeholder="Wen kennst du aus der WG? Was habt ihr vor?"></textarea>
-        </div>
-        <button type="submit" class="btn btn-primary">Anfrage senden</button>
-        <p class="form-note">Wir melden uns meist innerhalb von 1–2 Tagen.</p>
-      </form>
-    </div>
-  </section>
-
   <!-- Kalender / Putzplan -->
-  <section id="kalender" class="section soft">
+  <section id="kalender" class="section">
     <div class="section-head">
-      <span class="eyebrow">Intern</span>
-      <h2>WG-Kalender & Putzplan</h2>
+      <span class="eyebrow">Intern · WG</span>
+      <h2>WG-Kalender</h2>
       <p class="section-lead">Wer ist wann da, wer macht was. Transparent für alle im Haus.</p>
     </div>
     <div class="kalender-wrap">
-      <div class="kalender-tabs">
+      <div class="kalender-tabs" role="tablist">
         <button class="tab active" data-tab="putzplan">🧹 Putzplan</button>
         <button class="tab" data-tab="termine">📅 Termine</button>
         <button class="tab" data-tab="anwesend">🏡 Anwesenheit</button>
       </div>
+
       <div class="kalender-panel" id="tabPutzplan">
         <div class="putzplan-grid" id="putzplanGrid"></div>
-        <details class="admin-toggle">
+        <details class="admin-toggle" data-wg-only>
           <summary>➕ Aufgabe hinzufügen</summary>
           <form id="putzForm" class="form-card inline">
             <input id="putzTask" placeholder="Aufgabe (z.B. Küche putzen)" required />
-            <input id="putzWho" placeholder="Wer?" required />
+            <select id="putzWho" required>
+              <option value="">Wer?</option>
+            </select>
             <input id="putzWhen" type="date" required />
             <button type="submit" class="btn btn-primary">Speichern</button>
           </form>
         </details>
       </div>
+
       <div class="kalender-panel hidden" id="tabTermine">
         <div class="termine-list" id="termineList"></div>
-        <details class="admin-toggle">
-          <summary>➕ Termin hinzufügen</summary>
-          <form id="termineForm" class="form-card inline">
-            <input id="termTitle" placeholder="Was?" required />
-            <input id="termDate" type="datetime-local" required />
-            <input id="termNote" placeholder="Notiz (optional)" />
-            <button type="submit" class="btn btn-primary">Speichern</button>
+        <details class="admin-toggle" data-wg-only>
+          <summary>➕ Termin erstellen</summary>
+          <form id="termineForm" class="form-card">
+            <div class="row">
+              <div class="field">
+                <label for="termTitle">Titel</label>
+                <input id="termTitle" required placeholder="z.B. WG-Abendessen / Putztag / Umzugshilfe" />
+              </div>
+              <div class="field">
+                <label for="termDate">Datum & Uhrzeit</label>
+                <input id="termDate" type="datetime-local" required />
+              </div>
+            </div>
+            <div class="field">
+              <label for="termNote">Details (optional)</label>
+              <textarea id="termNote" rows="2" placeholder="z.B. Ort, was mitbringen…"></textarea>
+            </div>
+            <button type="submit" class="btn btn-primary">Termin erstellen</button>
+            <p class="form-note">Alle WG-Mitglieder können Zu-/Absagen eintragen.</p>
           </form>
         </details>
       </div>
+
       <div class="kalender-panel hidden" id="tabAnwesend">
         <p class="section-lead" style="text-align:left;">Wer ist am kommenden Wochenende da?</p>
         <div class="anwesend-grid" id="anwesendGrid"></div>
+        <p class="form-note" data-wg-only-hint>Nur WG-Mitglieder können ihren Status ändern.</p>
       </div>
     </div>
   </section>
 
   <!-- Gästebuch -->
-  <section id="gaestebuch" class="section">
+  <section id="gaestebuch" class="section soft">
     <div class="section-head">
       <span class="eyebrow">Hinterlass was da</span>
       <h2>Gästebuch</h2>
@@ -297,7 +269,7 @@
   </section>
 
   <!-- Kontakt -->
-  <section id="kontakt" class="section soft">
+  <section id="kontakt" class="section">
     <div class="section-head">
       <span class="eyebrow">Hallo sagen</span>
       <h2>So findest du uns</h2>
@@ -305,23 +277,23 @@
     <div class="kontakt-grid">
       <div class="info-card warm">
         <h3>📍 Adresse</h3>
-        <p>Haus am See<br>Seestrasse<br>8330 Pfäffikon ZH</p>
-        <a class="btn btn-ghost" href="https://www.google.com/maps/search/?api=1&query=Pf%C3%A4ffikersee+Pf%C3%A4ffikon+ZH" target="_blank" rel="noopener">In Karten öffnen</a>
+        <p>Haus am See<br>Pilatusstrasse 40<br>8330 Pfäffikon ZH</p>
+        <a class="btn btn-ghost" href="https://www.google.com/maps/search/?api=1&query=Pilatusstrasse+40+Pf%C3%A4ffikon+ZH" target="_blank" rel="noopener">In Karten öffnen</a>
       </div>
       <div class="info-card warm">
         <h3>✉️ Schreib uns</h3>
-        <p>Bei Fragen zu Besuchen, Events oder einfach so – wir freuen uns!</p>
+        <p>Bei Fragen zu Events oder einfach so – wir freuen uns!</p>
         <a class="btn btn-primary" href="mailto:hallo@example.com">E-Mail schreiben</a>
       </div>
       <div class="info-card warm">
         <h3>🚆 Anreise</h3>
-        <p>S3/S5 bis Pfäffikon ZH, dann 10 Min. zu Fuss zum See. Kostenlose Parkplätze gibt's vor dem Haus.</p>
+        <p>S3/S5 bis Pfäffikon ZH, dann wenige Minuten zu Fuss zur Pilatusstrasse. Parkplätze gibt's vor dem Haus.</p>
       </div>
     </div>
     <div class="map-wrap">
       <iframe
-        title="Karte Pfäffikersee"
-        src="https://www.openstreetmap.org/export/embed.html?bbox=8.77%2C47.34%2C8.82%2C47.37&layer=mapnik&marker=47.356%2C8.793"
+        title="Karte Pilatusstrasse 40, Pfäffikon ZH"
+        src="https://www.openstreetmap.org/export/embed.html?bbox=8.77%2C47.34%2C8.81%2C47.37&layer=mapnik&marker=47.3615%2C8.7905"
         loading="lazy"
         referrerpolicy="no-referrer-when-downgrade"
       ></iframe>
@@ -329,14 +301,38 @@
   </section>
 
   <footer class="footer">
-    <p>Haus am See · Pfäffikon ZH · mit Liebe gemacht 🌿</p>
+    <p>Haus am See · Pilatusstrasse 40 · 8330 Pfäffikon ZH · mit Liebe gemacht 🌿</p>
   </footer>
+
+  <!-- Login Dialog -->
+  <dialog id="loginDialog" class="auth-dialog">
+    <form method="dialog" id="loginForm" class="auth-form">
+      <button type="button" class="dialog-close" aria-label="Schliessen">×</button>
+      <h2 class="auth-title">🔑 WG-Login</h2>
+      <p class="auth-sub">Nur für Bewohner:innen des Haus am See.</p>
+      <div class="field">
+        <label for="loginMember">Ich bin</label>
+        <select id="loginMember" required></select>
+      </div>
+      <div class="field">
+        <label for="loginPassword">WG-Passwort</label>
+        <input id="loginPassword" type="password" required autocomplete="current-password" placeholder="••••••••" />
+      </div>
+      <button type="submit" class="btn btn-primary">Anmelden</button>
+      <p id="loginError" class="auth-error hidden">Falsches Passwort · versuch's nochmal.</p>
+    </form>
+  </dialog>
 
   <!-- Lightbox -->
   <dialog id="lightbox" class="lightbox">
     <button class="lightbox-close" aria-label="Schliessen">×</button>
+    <button class="lightbox-delete hidden" id="lightboxDelete" data-wg-only>🗑️ Bild löschen</button>
     <img id="lightboxImg" alt="" />
+    <p id="lightboxCaption" class="lightbox-caption"></p>
   </dialog>
+
+  <!-- Toast -->
+  <div id="toast" class="toast hidden"></div>
 
   <script type="module" src="app.js"></script>
 </body>
