@@ -2550,34 +2550,90 @@ body.wg-guest a[href="#intern"] {
   cursor: pointer;
 }
 
-.gb-mode-tabs {
+.gb-add-label {
+  margin: 18px 0 10px;
+  padding-top: 16px;
+  border-top: 1px dashed var(--card-border);
+  font-size: 0.85rem;
+  font-weight: 700;
+  color: var(--muted);
+  letter-spacing: 0.02em;
+}
+.gb-add-chips {
   display: flex;
   flex-wrap: wrap;
-  gap: 6px;
-  margin-bottom: 18px;
-  padding-bottom: 14px;
-  border-bottom: 1px dashed var(--card-border);
+  gap: 8px;
+  margin-bottom: 8px;
 }
-.gb-mode {
-  padding: 8px 14px;
+.gb-add-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 9px 14px 9px 12px;
   border-radius: 999px;
-  border: 1px solid var(--card-border);
-  background: rgba(255, 250, 244, 0.6);
+  border: 1px dashed var(--card-border);
+  background: rgba(255, 250, 244, 0.55);
   font-size: 0.88rem;
   font-weight: 600;
   color: var(--text);
   cursor: pointer;
-  transition: background 0.2s var(--ease), color 0.2s var(--ease), transform 0.15s var(--ease);
+  transition: background 0.2s var(--ease), color 0.2s var(--ease),
+    border-color 0.2s var(--ease), transform 0.15s var(--ease);
 }
-.gb-mode:hover { transform: translateY(-1px); }
-.gb-mode.active {
+.gb-add-chip:hover { transform: translateY(-1px); background: var(--sand); }
+.gb-add-chip .chip-icon { font-size: 1.05rem; }
+.gb-add-chip .chip-plus {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  border-radius: 999px;
+  background: rgba(198, 122, 80, 0.15);
+  color: var(--terracotta);
+  font-size: 0.95rem;
+  font-weight: 700;
+  line-height: 1;
+}
+.gb-add-chip.active {
   background: var(--terracotta);
   border-color: var(--terracotta);
+  border-style: solid;
   color: #fff;
 }
+.gb-add-chip.active .chip-plus {
+  background: rgba(255, 255, 255, 0.25);
+  color: #fff;
+  transform: rotate(45deg);
+}
 
-.gb-pane { animation: gbFade 0.25s var(--ease); }
+.gb-pane {
+  animation: gbFade 0.25s var(--ease);
+  margin-top: 16px;
+  padding: 16px;
+  border-radius: var(--r-md);
+  background: rgba(255, 250, 244, 0.55);
+  border: 1px solid var(--card-border);
+}
+.gb-pane[data-pane="text"] {
+  margin-top: 0;
+  padding: 0;
+  background: transparent;
+  border: none;
+}
 .gb-pane.hidden { display: none; }
+.gb-pane-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin-bottom: 12px;
+}
+.gb-pane-title {
+  font-weight: 700;
+  color: var(--text);
+  font-size: 0.95rem;
+}
 @keyframes gbFade { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: translateY(0); } }
 
 .gb-emoji-bar {
@@ -2942,7 +2998,8 @@ body.wg-guest a[href="#intern"] {
 @media (max-width: 640px) {
   .gb-identity { grid-template-columns: 1fr; }
   .gb-identity .field.narrow { width: 100%; }
-  .gb-mode { font-size: 0.8rem; padding: 7px 11px; }
+  .gb-add-chip { font-size: 0.8rem; padding: 7px 11px 7px 10px; }
+  .gb-add-chip .chip-plus { width: 18px; height: 18px; font-size: 0.85rem; }
   .draw-toolbar { padding: 10px; gap: 8px; }
   .draw-size input { width: 90px; }
   .draw-canvas { height: 320px; }

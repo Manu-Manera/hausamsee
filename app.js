@@ -1308,11 +1308,13 @@ const MAX_AUDIO_MESSAGE_BYTES = 900_000;
 const MAX_VOICE_SECONDS = 90;
 
 let gbCache = [];
-let gbMode = "text";
-let gbDrawData = null;        // Base64 PNG (wenn gezeichnet)
-let gbPhotoData = null;       // Base64 JPG (wenn Foto gewählt)
+// Additive Module – alles lässt sich frei kombinieren
+const GB_OPTIONAL_MODULES = ["draw", "photo", "gif", "voice", "link"];
+let gbModules = { draw: false, photo: false, gif: false, voice: false, link: false };
+let gbPhotoData = null;       // Base64 JPG (Foto – separat oder als Hintergrund der Zeichnung)
 let gbGifData = null;         // { url, title }
 let gbVoiceData = null;       // { audioSrc: dataUrl, duration: Sekunden }
+let gbPhotoBakedIntoDraw = false; // true → Foto ist in die Zeichnung eingebettet
 
 /* -------- Helpers -------- */
 
@@ -1359,7 +1361,6 @@ function renderGaestebuch() {
 }
 
 function renderGbCard(gb) {
-  const kind = gb.kind || "text";
   const color = gb.color || "";
   const headerStyle = color ? `style="--gb-accent:${escapeHtml(color)}"` : "";
   const headBlock = `
@@ -1373,62 +1374,83 @@ function renderGbCard(gb) {
     </div>
   `;
 
+  // Backward-Compat: alte Einträge hatten `kind` + `imageSrc`
+  let photoSrc = gb.photoSrc || (gb.kind === "photo" ? gb.imageSrc : null);
+  let drawSrc = gb.drawSrc || (gb.kind === "draw" ? gb.imageSrc : null);
+  const gifUrl = gb.gifUrl || null;
+  const audioSrc = gb.audioSrc || null;
+  const linkUrl = gb.linkUrl || null;
+  const message = gb.message || "";
+  const photoCaption = gb.photoCaption || "";
+
+  const kinds = [];
+  if (drawSrc) kinds.push("draw");
+  if (photoSrc) kinds.push("photo");
+  if (gifUrl) kinds.push("gif");
+  if (audioSrc) kinds.push("voice");
+  if (linkUrl) kinds.push("link");
+  if (message) kinds.push("text");
+
   let body = "";
-  switch (kind) {
-    case "draw":
-      body = `
-        <div class="gb-media">
-          <img class="gb-media-zoom gb-draw" src="${escapeHtml(gb.imageSrc)}" alt="Zeichnung von ${escapeHtml(gb.name)}" data-src="${escapeHtml(gb.imageSrc)}" data-caption="Zeichnung von ${escapeHtml(gb.name)}" loading="lazy" />
-        </div>
-        ${gb.message ? `<p class="gb-msg">${linkifyText(gb.message)}</p>` : ""}
-      `;
-      break;
-    case "photo":
-      body = `
-        <div class="gb-media">
-          <img class="gb-media-zoom" src="${escapeHtml(gb.imageSrc)}" alt="${escapeHtml(gb.message || 'Foto')}" data-src="${escapeHtml(gb.imageSrc)}" data-caption="${escapeHtml(gb.message || '')}" loading="lazy" />
-        </div>
-        ${gb.message ? `<p class="gb-msg gb-caption">${linkifyText(gb.message)}</p>` : ""}
-      `;
-      break;
-    case "gif":
-      body = `
-        <div class="gb-media">
-          <img class="gb-gif" src="${escapeHtml(gb.gifUrl)}" alt="${escapeHtml(gb.gifTitle || 'GIF')}" loading="lazy" />
-          <span class="gb-gif-badge">GIF</span>
-        </div>
-        ${gb.message ? `<p class="gb-msg">${linkifyText(gb.message)}</p>` : ""}
-      `;
-      break;
-    case "voice":
-      body = `
-        <div class="gb-voice">
-          <audio controls src="${escapeHtml(gb.audioSrc)}" preload="metadata"></audio>
-          <span class="gb-voice-meta">🎙️ ${gb.audioDuration ? Math.round(gb.audioDuration) + 's' : 'Sprachnachricht'}</span>
-        </div>
-        ${gb.message ? `<p class="gb-msg">${linkifyText(gb.message)}</p>` : ""}
-      `;
-      break;
-    case "link": {
-      const url = gb.linkUrl || "";
-      const host = guessLinkDomain(url);
-      body = `
-        <a class="gb-link" href="${escapeHtml(url)}" target="_blank" rel="noopener noreferrer">
-          <span class="gb-link-icon">🔗</span>
-          <div class="gb-link-body">
-            <strong>${escapeHtml(gb.linkText || host)}</strong>
-            <span>${escapeHtml(host)}</span>
-          </div>
-        </a>
-        ${gb.message ? `<p class="gb-msg">${linkifyText(gb.message)}</p>` : ""}
-      `;
-      break;
-    }
-    default: // text
-      body = `<p class="gb-msg">${linkifyText(gb.message || "")}</p>`;
+
+  if (photoSrc) {
+    body += `
+      <div class="gb-media">
+        <img class="gb-media-zoom" src="${escapeHtml(photoSrc)}" alt="${escapeHtml(photoCaption || 'Foto')}" data-src="${escapeHtml(photoSrc)}" data-caption="${escapeHtml(photoCaption || '')}" loading="lazy" />
+      </div>
+      ${photoCaption ? `<p class="gb-msg gb-caption">${linkifyText(photoCaption)}</p>` : ""}
+    `;
   }
 
-  return `<article class="gb-card gb-kind-${kind}" ${headerStyle}>${headBlock}${body}</article>`;
+  if (drawSrc) {
+    body += `
+      <div class="gb-media">
+        <img class="gb-media-zoom gb-draw" src="${escapeHtml(drawSrc)}" alt="Zeichnung von ${escapeHtml(gb.name)}" data-src="${escapeHtml(drawSrc)}" data-caption="Zeichnung von ${escapeHtml(gb.name)}" loading="lazy" />
+      </div>
+    `;
+  }
+
+  if (gifUrl) {
+    body += `
+      <div class="gb-media">
+        <img class="gb-gif" src="${escapeHtml(gifUrl)}" alt="${escapeHtml(gb.gifTitle || 'GIF')}" loading="lazy" />
+        <span class="gb-gif-badge">GIF</span>
+      </div>
+    `;
+  }
+
+  if (linkUrl) {
+    const host = guessLinkDomain(linkUrl);
+    body += `
+      <a class="gb-link" href="${escapeHtml(linkUrl)}" target="_blank" rel="noopener noreferrer">
+        <span class="gb-link-icon">🔗</span>
+        <div class="gb-link-body">
+          <strong>${escapeHtml(gb.linkText || host)}</strong>
+          <span>${escapeHtml(host)}</span>
+        </div>
+      </a>
+    `;
+  }
+
+  if (audioSrc) {
+    body += `
+      <div class="gb-voice">
+        <audio controls src="${escapeHtml(audioSrc)}" preload="metadata"></audio>
+        <span class="gb-voice-meta">🎙️ ${gb.audioDuration ? Math.round(gb.audioDuration) + 's' : 'Sprachnachricht'}</span>
+      </div>
+    `;
+  }
+
+  if (message) {
+    body += `<p class="gb-msg">${linkifyText(message)}</p>`;
+  }
+
+  if (!body) {
+    body = `<p class="gb-msg gb-empty">(leer)</p>`;
+  }
+
+  const kindClasses = kinds.map(k => `gb-kind-${k}`).join(" ");
+  return `<article class="gb-card ${kindClasses}" ${headerStyle}>${headBlock}${body}</article>`;
 }
 
 async function deleteGaestebuch(id) {
@@ -1443,16 +1465,76 @@ async function deleteGaestebuch(id) {
   }
 }
 
-/* -------- Mode-Tabs -------- */
+/* -------- Additive Modul-Chips -------- */
 
-$$("[data-mode]").forEach(btn => {
+function setGbModule(name, active) {
+  if (!GB_OPTIONAL_MODULES.includes(name)) return;
+  gbModules[name] = active;
+  const chip = document.querySelector(`.gb-add-chip[data-module="${name}"]`);
+  const pane = document.querySelector(`.gb-pane[data-pane="${name}"]`);
+  if (chip) chip.classList.toggle("active", active);
+  if (pane) pane.classList.toggle("hidden", !active);
+  if (active && name === "draw") initDrawCanvas();
+  if (name === "photo" || name === "draw") updateDrawUsePhotoButton();
+}
+
+function toggleGbModule(name) { setGbModule(name, !gbModules[name]); }
+
+$$(".gb-add-chip").forEach(btn => {
+  btn.addEventListener("click", () => toggleGbModule(btn.dataset.module));
+});
+
+$$("[data-pane-close]").forEach(btn => {
   btn.addEventListener("click", () => {
-    gbMode = btn.dataset.mode;
-    $$(".gb-mode").forEach(b => b.classList.toggle("active", b === btn));
-    $$(".gb-pane").forEach(p => p.classList.toggle("hidden", p.dataset.pane !== gbMode));
-    if (gbMode === "draw") initDrawCanvas();
+    const name = btn.dataset.paneClose;
+    clearGbModuleData(name);
+    setGbModule(name, false);
   });
 });
+
+function clearGbModuleData(name) {
+  switch (name) {
+    case "photo":
+      gbPhotoData = null;
+      $("gbPhotoPreview")?.classList.add("hidden");
+      $("gbPhotoCaption") && ($("gbPhotoCaption").value = "");
+      gbPhotoBakedIntoDraw = false;
+      break;
+    case "gif":
+      gbGifData = null;
+      $("gbGifPreview")?.classList.add("hidden");
+      $("gifUrl") && ($("gifUrl").value = "");
+      $("gifSearch") && ($("gifSearch").value = "");
+      if ($("gifResults")) $("gifResults").innerHTML = "";
+      break;
+    case "voice":
+      gbVoiceData = null;
+      $("voicePreview")?.classList.add("hidden");
+      if ($("voicePlayer")) $("voicePlayer").src = "";
+      resetVoiceUI();
+      break;
+    case "link":
+      $("linkUrl") && ($("linkUrl").value = "");
+      $("linkText") && ($("linkText").value = "");
+      break;
+    case "draw":
+      if (drawCtx) {
+        const canvas = $("drawCanvas");
+        drawCtx.fillStyle = "#fffaf4";
+        drawCtx.fillRect(0, 0, canvas.clientWidth, 440);
+        drawDirty = false;
+        gbPhotoBakedIntoDraw = false;
+      }
+      break;
+  }
+}
+
+function updateDrawUsePhotoButton() {
+  const btn = $("drawUsePhoto");
+  if (!btn) return;
+  const canUse = gbModules.photo && gbPhotoData && gbModules.draw;
+  btn.classList.toggle("hidden", !canUse);
+}
 
 /* -------- Emoji-Bar -------- */
 
@@ -1587,6 +1669,7 @@ $("gbPhotoPick")?.addEventListener("click", () => {
       gbPhotoData = dataUrl;
       $("gbPhotoImg").src = dataUrl;
       $("gbPhotoPreview").classList.remove("hidden");
+      updateDrawUsePhotoButton();
     } catch (err) { console.error(err); showToast("Foto konnte nicht geladen werden.", "error"); }
   });
   input.click();
@@ -1594,6 +1677,36 @@ $("gbPhotoPick")?.addEventListener("click", () => {
 $("gbPhotoClear")?.addEventListener("click", () => {
   gbPhotoData = null;
   $("gbPhotoPreview").classList.add("hidden");
+  gbPhotoBakedIntoDraw = false;
+  updateDrawUsePhotoButton();
+});
+
+// Foto als Hintergrund auf die Zeichenfläche ziehen
+$("drawUsePhoto")?.addEventListener("click", () => {
+  if (!gbPhotoData || !drawCtx) return;
+  const canvas = $("drawCanvas");
+  const doBake = () => {
+    const img = new Image();
+    img.onload = () => {
+      const w = canvas.clientWidth;
+      const h = 440;
+      drawCtx.fillStyle = "#fffaf4";
+      drawCtx.fillRect(0, 0, w, h);
+      // Foto proportional einpassen (contain)
+      const ratio = Math.min(w / img.width, h / img.height);
+      const iw = img.width * ratio;
+      const ih = img.height * ratio;
+      const ix = (w - iw) / 2;
+      const iy = (h - ih) / 2;
+      drawCtx.drawImage(img, ix, iy, iw, ih);
+      drawDirty = true;
+      gbPhotoBakedIntoDraw = true;
+      showToast("Foto als Hintergrund geladen – jetzt drübermalen!", "success");
+    };
+    img.src = gbPhotoData;
+  };
+  if (drawDirty && !confirm("Die aktuelle Zeichnung wird überschrieben. Fortfahren?")) return;
+  doBake();
 });
 
 /* -------- GIF -------- */
@@ -1744,44 +1857,71 @@ $("gbSubmit")?.addEventListener("click", async () => {
   const color = $("gbColor").value || "";
   const message = ($("gbMessage").value || "").trim();
 
-  let entry = { name, emoji, color, kind: gbMode, message, createdAt: Date.now() };
+  // Alle aktiven Module einsammeln – alles optional, alles kombinierbar
+  const entry = { name, emoji, color, createdAt: Date.now() };
+  const kinds = [];
 
-  switch (gbMode) {
-    case "text":
-      if (!message) { showToast("Bitte eine Nachricht schreiben.", "error"); return; }
-      break;
-    case "draw": {
-      const img = getDrawingAsDataUrl();
-      if (!img) { showToast("Bitte etwas zeichnen.", "error"); return; }
+  // Zeichnung
+  if (gbModules.draw) {
+    const img = getDrawingAsDataUrl();
+    if (img) {
       const size = Math.ceil((img.length * 3) / 4);
-      if (size > MAX_IMAGE_BYTES) { showToast("Zeichnung zu gross.", "error"); return; }
-      entry.imageSrc = img;
-      break;
-    }
-    case "photo":
-      if (!gbPhotoData) { showToast("Bitte Foto auswählen.", "error"); return; }
-      entry.imageSrc = gbPhotoData;
-      entry.message = $("gbPhotoCaption").value.trim();
-      break;
-    case "gif":
-      if (!gbGifData?.url) { showToast("Bitte GIF auswählen oder URL einfügen.", "error"); return; }
-      entry.gifUrl = gbGifData.url;
-      entry.gifTitle = gbGifData.title || "";
-      break;
-    case "voice":
-      if (!gbVoiceData?.audioSrc) { showToast("Bitte Sprachnachricht aufnehmen.", "error"); return; }
-      entry.audioSrc = gbVoiceData.audioSrc;
-      entry.audioDuration = gbVoiceData.duration;
-      break;
-    case "link": {
-      const url = $("linkUrl").value.trim();
-      if (!url) { showToast("Bitte einen Link eintragen.", "error"); return; }
-      try { new URL(url); } catch { showToast("Ungültige URL.", "error"); return; }
-      entry.linkUrl = url;
-      entry.linkText = $("linkText").value.trim();
-      break;
+      if (size > MAX_IMAGE_BYTES) { showToast("Zeichnung zu gross. Bitte kleiner halten.", "error"); return; }
+      entry.drawSrc = img;
+      kinds.push("draw");
     }
   }
+
+  // Foto – nur separat speichern, wenn nicht in die Zeichnung eingebacken
+  if (gbModules.photo && gbPhotoData) {
+    const photoCaption = ($("gbPhotoCaption").value || "").trim();
+    if (!(gbModules.draw && gbPhotoBakedIntoDraw && entry.drawSrc)) {
+      entry.photoSrc = gbPhotoData;
+      kinds.push("photo");
+    }
+    if (photoCaption) entry.photoCaption = photoCaption;
+  }
+
+  // GIF
+  if (gbModules.gif) {
+    if (!gbGifData?.url) { showToast("GIF ausgewählt, aber keins geladen. Bitte GIF wählen oder Modul entfernen.", "error"); return; }
+    entry.gifUrl = gbGifData.url;
+    entry.gifTitle = gbGifData.title || "";
+    kinds.push("gif");
+  }
+
+  // Voice
+  if (gbModules.voice) {
+    if (!gbVoiceData?.audioSrc) { showToast("Sprachnachricht-Modul offen, aber keine Aufnahme. Aufnehmen oder Modul entfernen.", "error"); return; }
+    entry.audioSrc = gbVoiceData.audioSrc;
+    entry.audioDuration = gbVoiceData.duration;
+    kinds.push("voice");
+  }
+
+  // Link
+  if (gbModules.link) {
+    const url = ($("linkUrl").value || "").trim();
+    if (!url) { showToast("Link-Modul offen, aber keine URL. URL eintragen oder Modul entfernen.", "error"); return; }
+    try { new URL(url); } catch { showToast("Ungültige URL.", "error"); return; }
+    entry.linkUrl = url;
+    const linkText = ($("linkText").value || "").trim();
+    if (linkText) entry.linkText = linkText;
+    kinds.push("link");
+  }
+
+  // Text
+  if (message) {
+    entry.message = message;
+    kinds.push("text");
+  }
+
+  if (kinds.length === 0) {
+    showToast("Bitte mindestens Text schreiben oder ein Element hinzufügen.", "error");
+    return;
+  }
+
+  // Für Backward-Compat: „primäres“ Kind speichern
+  entry.kind = kinds[0];
 
   const status = $("gbStatus");
   status.textContent = "Wird gespeichert…";
@@ -1807,19 +1947,20 @@ $("gbSubmit")?.addEventListener("click", async () => {
 
 function resetGbComposer() {
   $("gbMessage").value = "";
-  $("gbPhotoCaption").value = "";
-  $("linkUrl").value = "";
-  $("linkText").value = "";
-  $("gifUrl").value = "";
-  $("gifSearch").value = "";
-  $("gifResults").innerHTML = "";
+  $("gbPhotoCaption") && ($("gbPhotoCaption").value = "");
+  $("linkUrl") && ($("linkUrl").value = "");
+  $("linkText") && ($("linkText").value = "");
+  $("gifUrl") && ($("gifUrl").value = "");
+  $("gifSearch") && ($("gifSearch").value = "");
+  if ($("gifResults")) $("gifResults").innerHTML = "";
   gbPhotoData = null;
   gbGifData = null;
   gbVoiceData = null;
-  $("gbPhotoPreview").classList.add("hidden");
-  $("gbGifPreview").classList.add("hidden");
-  $("voicePreview").classList.add("hidden");
-  $("voicePlayer").src = "";
+  gbPhotoBakedIntoDraw = false;
+  $("gbPhotoPreview")?.classList.add("hidden");
+  $("gbGifPreview")?.classList.add("hidden");
+  $("voicePreview")?.classList.add("hidden");
+  if ($("voicePlayer")) $("voicePlayer").src = "";
   resetVoiceUI();
   if (drawCtx) {
     const canvas = $("drawCanvas");
@@ -1827,10 +1968,8 @@ function resetGbComposer() {
     drawCtx.fillRect(0, 0, canvas.clientWidth, 440);
     drawDirty = false;
   }
-  // Zurück auf Text-Tab
-  gbMode = "text";
-  $$(".gb-mode").forEach(b => b.classList.toggle("active", b.dataset.mode === "text"));
-  $$(".gb-pane").forEach(p => p.classList.toggle("hidden", p.dataset.pane !== "text"));
+  // Alle optionalen Module deaktivieren – Text bleibt immer sichtbar
+  GB_OPTIONAL_MODULES.forEach(m => setGbModule(m, false));
 }
 
 /* ==========================================================================
