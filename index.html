@@ -823,6 +823,28 @@
     </form>
   </dialog>
 
+  <!-- Bewohner Text Dialog -->
+  <dialog id="bewohnerTextDialog" class="auth-dialog">
+    <form method="dialog" id="bewohnerTextForm" class="auth-form">
+      <button type="button" class="dialog-close" aria-label="Schliessen">×</button>
+      <h2 class="auth-title">✏️ <span id="bewohnerTextName">Beschreibung</span> bearbeiten</h2>
+      <p class="auth-sub">Passe Rolle und Beschreibung an. Mit „Zurücksetzen" kommt wieder der Original-Text.</p>
+      <input type="hidden" id="bewohnerTextTarget" />
+      <div class="field">
+        <label for="bewohnerTextRole">Rolle / Spitzname</label>
+        <input id="bewohnerTextRole" maxlength="80" placeholder="z. B. Brunch-Queen" />
+      </div>
+      <div class="field">
+        <label for="bewohnerTextBio">Beschreibung</label>
+        <textarea id="bewohnerTextBio" rows="4" maxlength="500" placeholder="Kurz und knackig – was macht diese Person aus?"></textarea>
+      </div>
+      <div class="form-actions">
+        <button type="submit" class="btn btn-primary">Speichern</button>
+        <button type="button" class="btn btn-ghost" id="bewohnerTextReset">Zurücksetzen</button>
+      </div>
+    </form>
+  </dialog>
+
   <!-- Lightbox -->
   <dialog id="lightbox" class="lightbox">
     <button class="lightbox-close" aria-label="Schliessen">×</button>

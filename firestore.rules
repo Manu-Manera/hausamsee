@@ -52,5 +52,8 @@ service cloud.firestore {
     match /nachrichten/{document=**} {
       allow read, write: if true;
     }
+    match /bewohnertexte/{document=**} {
+      allow read, write: if true;
+    }
   }
 }

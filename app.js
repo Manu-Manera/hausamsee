@@ -134,6 +134,7 @@ const localStore = {
   anmeldungen: JSON.parse(localStorage.getItem("has_anmeldungen") || "[]"),
   nachrichten: JSON.parse(localStorage.getItem("has_nachrichten") || "[]"),
   roomOffer: JSON.parse(localStorage.getItem("has_roomOffer") || "null"),
+  bewohnertexte: JSON.parse(localStorage.getItem("has_bewohnertexte") || "{}"),
 };
 function saveLocal(key, value) { localStorage.setItem(`has_${key}`, JSON.stringify(value)); }
 
@@ -586,6 +587,16 @@ async function deleteHausBild(featureId) {
    ========================================================================== */
 
 let bewohnerfotosCache = {};
+let bewohnertexteCache = {};
+
+function getBewohnerText(name) {
+  const override = bewohnertexteCache[name] || {};
+  const base = BEWOHNER.find(b => b.name === name) || {};
+  return {
+    role: override.role ?? base.role ?? "",
+    bio: override.bio ?? base.bio ?? "",
+  };
+}
 
 function renderBewohner() {
   const grid = $("bewohnerGrid");
@@ -595,6 +606,7 @@ function renderBewohner() {
     const avatar = photo
       ? `<img src="${escapeHtml(photo)}" alt="${escapeHtml(b.name)}" loading="lazy" />`
       : `<span class="avatar-emoji">${b.emoji}</span>`;
+    const text = getBewohnerText(b.name);
     return `
       <article class="bewohner-card ${b.kid ? 'is-kid' : ''}" data-name="${escapeHtml(b.name)}">
         <div class="bewohner-avatar">
@@ -604,9 +616,13 @@ function renderBewohner() {
           ` : ""}
         </div>
         <div class="bewohner-info">
-          <h3>${escapeHtml(b.name)} ${b.kid ? '<span class="kid-badge" title="Jüngstes Mitglied">Kid</span>' : ''}</h3>
-          <span class="bewohner-role">${escapeHtml(b.role)}</span>
-          <p class="bewohner-bio">${escapeHtml(b.bio)}</p>
+          <h3>
+            ${escapeHtml(b.name)}
+            ${b.kid ? '<span class="kid-badge" title="Jüngstes Mitglied">Kid</span>' : ''}
+            ${auth.isMember ? `<button class="bewohner-text-edit" data-name="${escapeHtml(b.name)}" title="Beschreibung bearbeiten">✏️</button>` : ""}
+          </h3>
+          <span class="bewohner-role">${escapeHtml(text.role)}</span>
+          <p class="bewohner-bio">${escapeHtml(text.bio)}</p>
         </div>
       </article>
     `;
@@ -619,7 +635,91 @@ function renderBewohner() {
       uploadBewohnerFoto(btn.dataset.name);
     });
   });
+  grid.querySelectorAll(".bewohner-text-edit").forEach(btn => {
+    btn.addEventListener("click", (e) => {
+      e.stopPropagation();
+      openBewohnerTextDialog(btn.dataset.name);
+    });
+  });
 }
+
+function openBewohnerTextDialog(name) {
+  if (!requireMember("Beschreibung bearbeiten")) return;
+  const dlg = $("bewohnerTextDialog");
+  if (!dlg) return;
+  const text = getBewohnerText(name);
+  $("bewohnerTextTarget").value = name;
+  $("bewohnerTextName").textContent = name;
+  $("bewohnerTextRole").value = text.role;
+  $("bewohnerTextBio").value = text.bio;
+  dlg.showModal();
+}
+
+async function saveBewohnerText(name, payload) {
+  if (firebaseReady) {
+    try {
+      await setDoc(doc(db, "bewohnertexte", name), { ...payload, updatedBy: auth.member, updatedAt: serverTimestamp() }, { merge: true });
+    } catch (e) { console.error(e); showToast("Speichern fehlgeschlagen.", "error"); return false; }
+  } else {
+    localStore.bewohnertexte[name] = { ...payload, updatedAt: Date.now() };
+    bewohnertexteCache = localStore.bewohnertexte;
+    saveLocal("bewohnertexte", localStore.bewohnertexte);
+    renderBewohner();
+  }
+  return true;
+}
+
+async function resetBewohnerText(name) {
+  if (firebaseReady) {
+    try { await deleteDoc(doc(db, "bewohnertexte", name)); }
+    catch (e) { console.error(e); showToast("Zurücksetzen fehlgeschlagen.", "error"); return false; }
+  } else {
+    delete localStore.bewohnertexte[name];
+    bewohnertexteCache = localStore.bewohnertexte;
+    saveLocal("bewohnertexte", localStore.bewohnertexte);
+    renderBewohner();
+  }
+  return true;
+}
+
+$("bewohnerTextForm")?.addEventListener("submit", async (e) => {
+  e.preventDefault();
+  if (!requireMember("Beschreibung speichern")) return;
+  const name = $("bewohnerTextTarget").value;
+  if (!name) return;
+  const role = $("bewohnerTextRole").value.trim();
+  const bio = $("bewohnerTextBio").value.trim();
+  if (!role && !bio) {
+    // Nichts eingegeben → als Reset behandeln
+    if (await resetBewohnerText(name)) {
+      $("bewohnerTextDialog").close();
+      showToast("Zurückgesetzt.", "success");
+    }
+    return;
+  }
+  if (await saveBewohnerText(name, { role, bio })) {
+    $("bewohnerTextDialog").close();
+    showToast("Gespeichert. ✨", "success");
+  }
+});
+
+document.querySelector("#bewohnerTextDialog .dialog-close")?.addEventListener("click", () => {
+  $("bewohnerTextDialog").close();
+});
+$("bewohnerTextDialog")?.addEventListener("click", (e) => {
+  if (e.target === $("bewohnerTextDialog")) $("bewohnerTextDialog").close();
+});
+
+$("bewohnerTextReset")?.addEventListener("click", async () => {
+  if (!requireMember("Zurücksetzen")) return;
+  const name = $("bewohnerTextTarget").value;
+  if (!name) return;
+  if (!confirm(`Text für ${name} auf Original zurücksetzen?`)) return;
+  if (await resetBewohnerText(name)) {
+    $("bewohnerTextDialog").close();
+    showToast("Zurückgesetzt.", "success");
+  }
+});
 
 async function uploadBewohnerFoto(name) {
   if (!requireMember("Bewohner-Fotos ändern")) return;
@@ -3519,6 +3619,7 @@ function setupListeners() {
     anmeldungenCache = localStore.anmeldungen;
     nachrichtenCache = localStore.nachrichten;
     roomOfferCache = localStore.roomOffer || null;
+    bewohnertexteCache = localStore.bewohnertexte || {};
     renderEvents();
     renderPutzplan();
     renderTermine();
@@ -3625,6 +3726,12 @@ function setupListeners() {
     renderRoomOffer();
     updateBewerbungVisibility();
   }, (err) => console.warn("roomOffer listener:", err.message));
+
+  onSnapshot(collection(db, "bewohnertexte"), (snap) => {
+    bewohnertexteCache = {};
+    snap.docs.forEach(d => { bewohnertexteCache[d.id] = d.data(); });
+    renderBewohner();
+  }, (err) => console.warn("bewohnertexte listener:", err.message));
 }
 
 /* ==========================================================================

@@ -637,6 +637,27 @@ a:hover { color: var(--terracotta); }
 }
 .avatar-edit:hover { background: var(--terracotta-dark); transform: scale(1.08); }
 
+.bewohner-text-edit {
+  margin-left: 6px;
+  background: rgba(198, 122, 80, 0.12);
+  border: 1px solid rgba(198, 122, 80, 0.45);
+  color: var(--terracotta-dark);
+  border-radius: 999px;
+  width: 26px;
+  height: 26px;
+  font-size: 0.78rem;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  vertical-align: middle;
+  transition: all 0.2s var(--ease);
+}
+.bewohner-text-edit:hover {
+  background: var(--terracotta);
+  color: white;
+}
+
 .bewohner-info { padding: 18px 20px 22px; }
 .bewohner-info h3 { font-size: 1.2rem; margin-bottom: 2px; }
 .bewohner-role {
