@@ -6,9 +6,11 @@ import {
   updateDoc,
   deleteDoc,
   doc,
+  getDoc,
   onSnapshot,
   orderBy,
   query,
+  where,
   serverTimestamp,
   setDoc,
   deleteField,
@@ -124,6 +126,11 @@ const localStore = {
   musik: JSON.parse(localStorage.getItem("has_musik") || "[]"),
   kandidaten: JSON.parse(localStorage.getItem("has_kandidaten") || "[]"),
   schaeden: JSON.parse(localStorage.getItem("has_schaeden") || "[]"),
+  bewohnerfotos: JSON.parse(localStorage.getItem("has_bewohnerfotos") || "{}"),
+  hausbilder: JSON.parse(localStorage.getItem("has_hausbilder") || "{}"),
+  eventfotos: JSON.parse(localStorage.getItem("has_eventfotos") || "[]"),
+  config: JSON.parse(localStorage.getItem("has_config") || "{}"),
+  guests: JSON.parse(localStorage.getItem("has_guests") || "[]"),
 };
 function saveLocal(key, value) { localStorage.setItem(`has_${key}`, JSON.stringify(value)); }
 
@@ -168,45 +175,70 @@ async function sha256(text) {
 }
 
 /* ==========================================================================
-   Auth (WG-Login)
+   Auth (WG-Login + Gast-Zugänge)
    ========================================================================== */
 
 const SESSION_KEY = "has_wg_session";
 const SESSION_DURATION = 30 * 24 * 60 * 60 * 1000; // 30 Tage
 
+// Laufzeit-Cache für Auth-Config (Passwort-Hash + Gästezugänge)
+// Werden aus Firestore gelesen, Fallback auf hart-codierten Default-Hash
+let authConfig = {
+  passwordHash: WG_PASSWORD_HASH,
+  ready: false
+};
+let guestsCache = [];
+
 const auth = {
   member: null,
+  isGuest: false,
   get isAuthed() { return !!this.member; },
+  get isMember() { return !!this.member && !this.isGuest; },
   init() {
     try {
       const raw = localStorage.getItem(SESSION_KEY);
       if (!raw) return;
       const session = JSON.parse(raw);
-      if (session.until > Date.now() && BEWOHNER.find(b => b.name === session.member)) {
+      if (session.until <= Date.now()) {
+        localStorage.removeItem(SESSION_KEY);
+        return;
+      }
+      if (session.isGuest) {
         this.member = session.member;
+        this.isGuest = true;
+        this.apply();
+      } else if (BEWOHNER.find(b => b.name === session.member)) {
+        this.member = session.member;
+        this.isGuest = false;
         this.apply();
       } else {
         localStorage.removeItem(SESSION_KEY);
       }
     } catch { localStorage.removeItem(SESSION_KEY); }
   },
-  login(member) {
+  login(member, { isGuest = false } = {}) {
     this.member = member;
+    this.isGuest = isGuest;
     localStorage.setItem(SESSION_KEY, JSON.stringify({
       member,
+      isGuest,
       until: Date.now() + SESSION_DURATION
     }));
     this.apply();
-    showToast(`Willkommen zurück, ${member} 🌿`, "success");
+    const greeting = isGuest ? `Willkommen als Gast, ${member} 🎟️` : `Willkommen zurück, ${member} 🌿`;
+    showToast(greeting, "success");
   },
   logout() {
     this.member = null;
+    this.isGuest = false;
     localStorage.removeItem(SESSION_KEY);
     this.apply();
     showToast("Abgemeldet.");
   },
   apply() {
     document.body.classList.toggle("wg-authed", this.isAuthed);
+    document.body.classList.toggle("wg-member", this.isMember);
+    document.body.classList.toggle("wg-guest", this.isGuest);
     updateLoginChip();
     // Re-render dynamic sections so buttons/states reflect auth
     renderTermine();
@@ -217,15 +249,34 @@ const auth = {
     renderPlaylist();
     renderKandidaten();
     renderSchaeden();
+    renderBewohner();
+    renderHausFeatures();
+    renderGuestsList();
     populateSchadenZustaendigSelect();
   }
 };
+
+// Hash für ein Passwort in authConfig oder guestsCache prüfen
+async function verifyPassword(pw) {
+  const hash = await sha256(pw);
+  // Mitglied: Haupt-Passwort
+  if (hash === authConfig.passwordHash) return { ok: true, kind: "member" };
+  // Gast-Zugang?
+  const now = Date.now();
+  for (const g of guestsCache) {
+    if (g.hash !== hash) continue;
+    if (g.expiresAt && g.expiresAt < now) return { ok: false, reason: "expired", guestName: g.name };
+    return { ok: true, kind: "guest", guestName: g.name };
+  }
+  return { ok: false, reason: "wrong" };
+}
 
 function updateLoginChip() {
   const btn = $("loginBtn");
   if (auth.isAuthed) {
     btn.classList.add("logged-in");
-    btn.innerHTML = `<span class="login-icon">👋</span><span class="login-label">${escapeHtml(auth.member)} · Abmelden</span>`;
+    const icon = auth.isGuest ? "🎟️" : "👋";
+    btn.innerHTML = `<span class="login-icon">${icon}</span><span class="login-label">${escapeHtml(auth.member)} · Abmelden</span>`;
   } else {
     btn.classList.remove("logged-in");
     btn.innerHTML = `<span class="login-icon">🔑</span><span class="login-label">Anmelden</span>`;
@@ -235,8 +286,10 @@ function updateLoginChip() {
 function populateLoginMemberSelect() {
   const select = $("loginMember");
   const adults = BEWOHNER.filter(b => !b.kid);
-  select.innerHTML = `<option value="" disabled selected>Wähle dich aus…</option>` +
-    adults.map(b => `<option value="${b.name}">${b.emoji} ${b.name}</option>`).join("");
+  select.innerHTML =
+    `<option value="" disabled selected>Wähle dich aus…</option>` +
+    adults.map(b => `<option value="${b.name}">${b.emoji} ${b.name}</option>`).join("") +
+    `<option value="__guest__">🎟️ Gast-Zugang</option>`;
 }
 
 function populatePutzWhoSelect() {
@@ -269,23 +322,63 @@ $("loginDialog")?.addEventListener("click", (e) => {
 
 $("loginForm")?.addEventListener("submit", async (e) => {
   e.preventDefault();
-  const member = $("loginMember").value;
+  const selected = $("loginMember").value;
   const password = $("loginPassword").value;
-  if (!member) return;
-  const hash = await sha256(password);
-  if (hash === WG_PASSWORD_HASH) {
-    auth.login(member);
-    $("loginDialog").close();
-  } else {
-    $("loginError").classList.remove("hidden");
+  if (!selected) return;
+
+  const result = await verifyPassword(password);
+  if (!result.ok) {
+    const errorEl = $("loginError");
+    errorEl.textContent = result.reason === "expired"
+      ? "Dieser Gast-Zugang ist abgelaufen."
+      : "Falsches Passwort · versuch's nochmal.";
+    errorEl.classList.remove("hidden");
     $("loginPassword").value = "";
     $("loginPassword").focus();
+    return;
   }
+
+  // User hat Gast-Option gewählt
+  if (selected === "__guest__") {
+    if (result.kind !== "guest") {
+      const errorEl = $("loginError");
+      errorEl.textContent = "Das ist kein Gast-Passwort.";
+      errorEl.classList.remove("hidden");
+      $("loginPassword").focus();
+      return;
+    }
+    auth.login(result.guestName, { isGuest: true });
+    $("loginDialog").close();
+    return;
+  }
+
+  // WG-Mitglied gewählt → muss Member-Hash matchen
+  if (result.kind !== "member") {
+    const errorEl = $("loginError");
+    errorEl.textContent = "Dieses Passwort ist nur für Gäste. Für Mitglieder bitte das WG-Passwort nutzen.";
+    errorEl.classList.remove("hidden");
+    $("loginPassword").focus();
+    return;
+  }
+  auth.login(selected, { isGuest: false });
+  $("loginDialog").close();
 });
 
 /* Guard helper: prüft Auth, zeigt sonst Hinweis */
 function requireAuth(actionName = "Diese Aktion") {
   if (auth.isAuthed) return true;
+  showToast(`${actionName} ist nur für angemeldete Personen.`, "error");
+  $("loginDialog").showModal();
+  return false;
+}
+
+/* Nur WG-Mitglieder (Gäste ausgeschlossen) */
+function requireMember(actionName = "Diese Aktion") {
+  if (auth.isMember) return true;
+  if (auth.isGuest) {
+    showToast(`${actionName} ist nur für WG-Mitglieder, nicht für Gäste.`, "error");
+    return false;
+  }
   showToast(`${actionName} ist nur für angemeldete WG-Mitglieder.`, "error");
   $("loginDialog").showModal();
   return false;
@@ -326,10 +419,13 @@ lightbox?.addEventListener("close", () => {
   lightboxCurrentId = null;
 });
 
-function openLightbox({ src, caption = "", id = null }) {
+let lightboxCurrentKind = null; // "gallery" | "eventfoto"
+
+function openLightbox({ src, caption = "", id = null, kind = "gallery" }) {
   lightboxImg.src = src;
   lightboxCaption.textContent = caption;
   lightboxCurrentId = id;
+  lightboxCurrentKind = kind;
   if (id && auth.isAuthed) {
     lightboxDelete.classList.remove("hidden");
   } else {
@@ -341,8 +437,12 @@ function openLightbox({ src, caption = "", id = null }) {
 lightboxDelete?.addEventListener("click", async () => {
   if (!lightboxCurrentId) return;
   if (!requireAuth("Bilder löschen")) return;
-  if (!confirm("Bild wirklich aus der Galerie entfernen?")) return;
-  await deleteGalleryItem(lightboxCurrentId);
+  if (!confirm("Bild wirklich löschen?")) return;
+  if (lightboxCurrentKind === "eventfoto") {
+    await deleteEventFoto(lightboxCurrentId);
+  } else {
+    await deleteGalleryItem(lightboxCurrentId);
+  }
   lightbox.close();
 });
 
@@ -350,19 +450,186 @@ lightboxDelete?.addEventListener("click", async () => {
    Bewohner rendern
    ========================================================================== */
 
+/* ==========================================================================
+   Haus-Features (Cards)
+   ========================================================================== */
+
+const HAUS_FEATURES = [
+  { id: "garten",    emoji: "🌿", title: "Garten mit Trampolin",      text: "Liegewiese, Feuerstelle und ein Trampolin, auf dem wir uns bei jedem Wetter austoben." },
+  { id: "wohnzimmer",emoji: "🔥", title: "Wohnzimmer mit Kamin",      text: "Das Herzstück: knisterndes Feuer, grosse Sofas und lange Abende mit Gesprächen bis in die Nacht." },
+  { id: "kino",      emoji: "🎬", title: "Kinobereich mit Gästebett", text: "Beamer, Leinwand, viele Kissen – und ein ausziehbares Bett für Gäste, die über Nacht bleiben." },
+  { id: "sauna",     emoji: "🧖", title: "Sauna",                      text: "Unsere Wohlfühl-Ecke für kalte Tage und lange Wochenenden. Aufguss inklusive." },
+  { id: "jacuzzi",   emoji: "🛁", title: "Jacuzzi",                    text: "Warmes Wasser, perlende Blasen, Sternenhimmel oben drüber – mehr braucht's nicht." },
+  { id: "sup",       emoji: "🏄", title: "SUPs",                       text: "Unsere Stand-Up-Paddles warten darauf, aufs Wasser gebracht zu werden – der See ist fast vor der Tür." }
+];
+
+let hausbilderCache = {};
+
+function renderHausFeatures() {
+  const grid = $("hausGrid");
+  if (!grid) return;
+  grid.innerHTML = HAUS_FEATURES.map(f => {
+    const photo = hausbilderCache[f.id]?.src;
+    const hero = photo
+      ? `<img class="haus-photo" src="${escapeHtml(photo)}" alt="${escapeHtml(f.title)}" loading="lazy" />`
+      : `<div class="card-icon">${f.emoji}</div>`;
+    return `
+      <div class="haus-card warm ${photo ? 'has-photo' : ''}" data-feature="${f.id}">
+        ${hero}
+        <h3>${escapeHtml(f.title)}</h3>
+        <p>${escapeHtml(f.text)}</p>
+        ${auth.isMember ? `
+          <div class="haus-card-actions">
+            <button class="mini-btn" data-feature="${f.id}" data-action="upload">${photo ? "📷 Ändern" : "📷 Foto hinzufügen"}</button>
+            ${photo ? `<button class="mini-btn danger" data-feature="${f.id}" data-action="delete">Entfernen</button>` : ""}
+          </div>
+        ` : ""}
+      </div>
+    `;
+  }).join("");
+
+  grid.querySelectorAll("[data-action='upload']").forEach(btn => {
+    btn.addEventListener("click", () => uploadHausBild(btn.dataset.feature));
+  });
+  grid.querySelectorAll("[data-action='delete']").forEach(btn => {
+    btn.addEventListener("click", () => {
+      if (confirm("Foto wirklich entfernen?")) deleteHausBild(btn.dataset.feature);
+    });
+  });
+}
+
+async function uploadHausBild(featureId) {
+  if (!requireMember("Haus-Bilder ändern")) return;
+  const input = document.createElement("input");
+  input.type = "file";
+  input.accept = "image/*";
+  input.addEventListener("change", async () => {
+    const file = input.files?.[0];
+    if (!file) return;
+    try {
+      const dataUrl = await resizeImage(file, 1200);
+      const sizeBytes = Math.ceil((dataUrl.length * 3) / 4);
+      if (sizeBytes > MAX_IMAGE_BYTES) {
+        showToast(`Bild zu gross (${Math.round(sizeBytes/1024)} KB). Bitte verkleinern.`, "error");
+        return;
+      }
+      const payload = { src: dataUrl, updatedBy: auth.member, updatedAt: Date.now() };
+      if (firebaseReady) {
+        await setDoc(doc(db, "hausbilder", featureId), { ...payload, updatedAt: serverTimestamp() });
+      } else {
+        localStore.hausbilder[featureId] = payload;
+        hausbilderCache = localStore.hausbilder;
+        saveLocal("hausbilder", localStore.hausbilder);
+        renderHausFeatures();
+      }
+      showToast("Foto gespeichert.", "success");
+    } catch (err) {
+      console.error(err);
+      showToast("Foto-Upload fehlgeschlagen.", "error");
+    }
+  });
+  input.click();
+}
+
+async function deleteHausBild(featureId) {
+  if (!requireMember("Foto entfernen")) return;
+  if (firebaseReady) {
+    try { await deleteDoc(doc(db, "hausbilder", featureId)); }
+    catch (e) { showToast("Entfernen fehlgeschlagen.", "error"); return; }
+  } else {
+    delete localStore.hausbilder[featureId];
+    hausbilderCache = localStore.hausbilder;
+    saveLocal("hausbilder", localStore.hausbilder);
+    renderHausFeatures();
+  }
+  showToast("Foto entfernt.", "success");
+}
+
+/* ==========================================================================
+   Bewohner-Fotos Cache
+   ========================================================================== */
+
+let bewohnerfotosCache = {};
+
 function renderBewohner() {
   const grid = $("bewohnerGrid");
-  grid.innerHTML = BEWOHNER.map(b => `
-    <article class="bewohner-card ${b.kid ? 'is-kid' : ''}">
-      <div class="bewohner-avatar">${b.emoji}</div>
-      <div class="bewohner-info">
-        <h3>${escapeHtml(b.name)} ${b.kid ? '<span class="kid-badge" title="Jüngstes Mitglied">Kid</span>' : ''}</h3>
-        <span class="bewohner-role">${escapeHtml(b.role)}</span>
-        <p class="bewohner-bio">${escapeHtml(b.bio)}</p>
-      </div>
-    </article>
-  `).join("");
+  if (!grid) return;
+  grid.innerHTML = BEWOHNER.map(b => {
+    const photo = bewohnerfotosCache[b.name]?.src;
+    const avatar = photo
+      ? `<img src="${escapeHtml(photo)}" alt="${escapeHtml(b.name)}" loading="lazy" />`
+      : `<span class="avatar-emoji">${b.emoji}</span>`;
+    return `
+      <article class="bewohner-card ${b.kid ? 'is-kid' : ''}" data-name="${escapeHtml(b.name)}">
+        <div class="bewohner-avatar">
+          ${avatar}
+          ${auth.isMember ? `
+            <button class="avatar-edit" data-name="${escapeHtml(b.name)}" title="Foto ändern">📷</button>
+          ` : ""}
+        </div>
+        <div class="bewohner-info">
+          <h3>${escapeHtml(b.name)} ${b.kid ? '<span class="kid-badge" title="Jüngstes Mitglied">Kid</span>' : ''}</h3>
+          <span class="bewohner-role">${escapeHtml(b.role)}</span>
+          <p class="bewohner-bio">${escapeHtml(b.bio)}</p>
+        </div>
+      </article>
+    `;
+  }).join("");
   $("statBewohner").textContent = BEWOHNER.length;
+
+  grid.querySelectorAll(".avatar-edit").forEach(btn => {
+    btn.addEventListener("click", (e) => {
+      e.stopPropagation();
+      uploadBewohnerFoto(btn.dataset.name);
+    });
+  });
+}
+
+async function uploadBewohnerFoto(name) {
+  if (!requireMember("Bewohner-Fotos ändern")) return;
+  const input = document.createElement("input");
+  input.type = "file";
+  input.accept = "image/*";
+  input.addEventListener("change", async () => {
+    const file = input.files?.[0];
+    if (!file) return;
+    try {
+      const dataUrl = await resizeImage(file, 600); // kleiner für Avatar
+      const sizeBytes = Math.ceil((dataUrl.length * 3) / 4);
+      if (sizeBytes > MAX_IMAGE_BYTES) {
+        showToast(`Bild zu gross (${Math.round(sizeBytes/1024)} KB).`, "error");
+        return;
+      }
+      const payload = { src: dataUrl, updatedBy: auth.member, updatedAt: Date.now() };
+      if (firebaseReady) {
+        await setDoc(doc(db, "bewohnerfotos", name), { ...payload, updatedAt: serverTimestamp() });
+      } else {
+        localStore.bewohnerfotos[name] = payload;
+        bewohnerfotosCache = localStore.bewohnerfotos;
+        saveLocal("bewohnerfotos", localStore.bewohnerfotos);
+        renderBewohner();
+      }
+      showToast(`Foto für ${name} aktualisiert.`, "success");
+    } catch (err) {
+      console.error(err);
+      showToast("Foto-Upload fehlgeschlagen.", "error");
+    }
+  });
+  input.click();
+}
+
+async function deleteBewohnerFoto(name) {
+  if (!requireMember("Foto entfernen")) return;
+  if (firebaseReady) {
+    try { await deleteDoc(doc(db, "bewohnerfotos", name)); }
+    catch (e) { showToast("Entfernen fehlgeschlagen.", "error"); return; }
+  } else {
+    delete localStore.bewohnerfotos[name];
+    bewohnerfotosCache = localStore.bewohnerfotos;
+    saveLocal("bewohnerfotos", localStore.bewohnerfotos);
+    renderBewohner();
+  }
+  showToast("Foto entfernt.", "success");
 }
 
 /* ==========================================================================
@@ -476,13 +743,13 @@ async function deleteGalleryItem(id) {
   }
 }
 
-function resizeImage(file) {
+function resizeImage(file, maxDim = MAX_IMAGE_DIM, quality = JPEG_QUALITY) {
   return new Promise((resolve, reject) => {
     const reader = new FileReader();
     reader.onload = (ev) => {
       const img = new Image();
       img.onload = () => {
-        const scale = Math.min(1, MAX_IMAGE_DIM / Math.max(img.width, img.height));
+        const scale = Math.min(1, maxDim / Math.max(img.width, img.height));
         const w = Math.round(img.width * scale);
         const h = Math.round(img.height * scale);
         const canvas = document.createElement("canvas");
@@ -490,7 +757,7 @@ function resizeImage(file) {
         canvas.height = h;
         const ctx = canvas.getContext("2d");
         ctx.drawImage(img, 0, 0, w, h);
-        resolve(canvas.toDataURL("image/jpeg", JPEG_QUALITY));
+        resolve(canvas.toDataURL("image/jpeg", quality));
       };
       img.onerror = reject;
       img.src = ev.target.result;
@@ -508,47 +775,27 @@ let eventsCache = [];
 
 function renderEvents() {
   const list = $("eventsList");
+  if (!list) return;
+  const today = new Date(new Date().setHours(0,0,0,0));
   const upcoming = eventsCache
-    .filter(e => new Date(e.date) >= new Date(new Date().setHours(0,0,0,0)))
+    .filter(e => new Date(e.date) >= today)
     .sort((a, b) => new Date(a.date) - new Date(b.date));
+  const past = eventsCache
+    .filter(e => new Date(e.date) < today)
+    .sort((a, b) => new Date(b.date) - new Date(a.date));
 
-  if (upcoming.length === 0) {
-    list.innerHTML = `<div class="empty-state">Gerade kein Event geplant – aber das ändert sich schnell 🫖</div>`;
-    $("statEvents").textContent = 0;
-    return;
-  }
+  const upcomingHtml = upcoming.length
+    ? upcoming.map(ev => renderEventCard(ev, false)).join("")
+    : `<div class="empty-state">Gerade kein Event geplant – aber das ändert sich schnell 🫖</div>`;
 
-  list.innerHTML = upcoming.map(ev => {
-    const d = new Date(ev.date);
-    const yes = (ev.rsvp?.yes || 0);
-    const no = (ev.rsvp?.no || 0);
-    const userVote = localStorage.getItem(`rsvp_${ev.id}`);
-    return `
-      <article class="event-card">
-        <div class="event-date">
-          <span class="day">${String(d.getDate()).padStart(2,"0")}</span>
-          <span class="month">${monthShort[d.getMonth()]}</span>
-          <span class="time">${d.toLocaleTimeString("de-CH",{hour:"2-digit",minute:"2-digit"})}</span>
-        </div>
-        <div class="event-info">
-          <h3>${ev.emoji || "🎉"} ${escapeHtml(ev.title)}</h3>
-          <div class="event-meta">📍 ${escapeHtml(ev.location || "Haus am See")}</div>
-          ${ev.description ? `<p>${escapeHtml(ev.description)}</p>` : ""}
-        </div>
-        <div class="event-actions">
-          <div class="rsvp-count">
-            <span>✓ ${yes}</span>
-            <span>✗ ${no}</span>
-          </div>
-          <div class="rsvp-buttons">
-            <button class="rsvp-btn yes ${userVote === 'yes' ? 'active' : ''}" data-id="${ev.id}" data-vote="yes">Bin dabei</button>
-            <button class="rsvp-btn no ${userVote === 'no' ? 'active' : ''}" data-id="${ev.id}" data-vote="no">Kann nicht</button>
-          </div>
-          ${auth.isAuthed ? `<button class="event-delete" data-id="${ev.id}">Löschen</button>` : ""}
-        </div>
-      </article>
-    `;
-  }).join("");
+  // Vergangene Events nur anzeigen wenn eingeloggt (Partybilder sind privat)
+  const pastHtml = (auth.isAuthed && past.length)
+    ? `
+      <h3 class="events-divider">📸 Erinnerungen & Partybilder</h3>
+      ${past.map(ev => renderEventCard(ev, true)).join("")}
+    ` : "";
+
+  list.innerHTML = upcomingHtml + pastHtml;
 
   list.querySelectorAll(".rsvp-btn").forEach(btn => {
     btn.addEventListener("click", () => handleEventRsvp(btn.dataset.id, btn.dataset.vote));
@@ -559,9 +806,146 @@ function renderEvents() {
       if (confirm("Event wirklich löschen?")) deleteEvent(btn.dataset.id);
     });
   });
+  list.querySelectorAll(".event-fotos-add").forEach(btn => {
+    btn.addEventListener("click", () => uploadEventFotos(btn.dataset.id));
+  });
+  list.querySelectorAll(".event-foto").forEach(el => {
+    el.addEventListener("click", () => {
+      openLightbox({
+        src: el.dataset.src,
+        caption: el.dataset.caption || "",
+        id: el.dataset.id,
+        kind: "eventfoto"
+      });
+    });
+  });
 
   $("statEvents").textContent = upcoming.length;
 }
+
+function renderEventCard(ev, isPast) {
+  const d = new Date(ev.date);
+  const yes = (ev.rsvp?.yes || 0);
+  const no = (ev.rsvp?.no || 0);
+  const userVote = localStorage.getItem(`rsvp_${ev.id}`);
+  const fotos = eventfotosCache.filter(f => f.eventId === ev.id);
+
+  const fotosBlock = auth.isAuthed ? `
+    <details class="event-fotos" ${fotos.length ? "open" : ""}>
+      <summary>📸 Partybilder · ${fotos.length}</summary>
+      <div class="event-fotos-grid">
+        ${fotos.map(f => `
+          <div class="event-foto" data-src="${escapeHtml(f.src)}" data-id="${escapeHtml(f.id)}" data-caption="${escapeHtml(f.caption || '')}">
+            <img src="${escapeHtml(f.src)}" alt="${escapeHtml(f.caption || ev.title)}" loading="lazy" />
+            ${f.caption ? `<div class="foto-caption">${escapeHtml(f.caption)}</div>` : ""}
+          </div>
+        `).join("") || `<div class="empty-state small">Noch keine Partybilder für dieses Event.</div>`}
+      </div>
+      <div class="event-fotos-actions">
+        <button class="btn btn-ghost small event-fotos-add" data-id="${ev.id}">⬆️ Bilder hochladen</button>
+        <p class="wg-hint">Nur für angemeldete Personen sichtbar · max. 900 KB pro Bild</p>
+      </div>
+    </details>
+  ` : "";
+
+  return `
+    <article class="event-card ${isPast ? 'is-past' : ''}">
+      <div class="event-date">
+        <span class="day">${String(d.getDate()).padStart(2,"0")}</span>
+        <span class="month">${monthShort[d.getMonth()]}</span>
+        <span class="time">${d.toLocaleTimeString("de-CH",{hour:"2-digit",minute:"2-digit"})}</span>
+      </div>
+      <div class="event-info">
+        <h3>${ev.emoji || "🎉"} ${escapeHtml(ev.title)}</h3>
+        <div class="event-meta">📍 ${escapeHtml(ev.location || "Haus am See")}</div>
+        ${ev.description ? `<p>${escapeHtml(ev.description)}</p>` : ""}
+        ${fotosBlock}
+      </div>
+      <div class="event-actions">
+        ${!isPast ? `
+          <div class="rsvp-count">
+            <span>✓ ${yes}</span>
+            <span>✗ ${no}</span>
+          </div>
+          <div class="rsvp-buttons">
+            <button class="rsvp-btn yes ${userVote === 'yes' ? 'active' : ''}" data-id="${ev.id}" data-vote="yes">Bin dabei</button>
+            <button class="rsvp-btn no ${userVote === 'no' ? 'active' : ''}" data-id="${ev.id}" data-vote="no">Kann nicht</button>
+          </div>
+        ` : ""}
+        ${auth.isMember ? `<button class="event-delete" data-id="${ev.id}">Löschen</button>` : ""}
+      </div>
+    </article>
+  `;
+}
+
+async function uploadEventFotos(eventId) {
+  if (!requireAuth("Partybilder hochladen")) return;
+  const input = document.createElement("input");
+  input.type = "file";
+  input.accept = "image/*";
+  input.multiple = true;
+  input.addEventListener("change", async () => {
+    const files = Array.from(input.files || []);
+    if (!files.length) return;
+
+    const progress = document.createElement("div");
+    progress.className = "upload-progress";
+    progress.innerHTML = `<span class="spinner"></span><span>Lade 0 / ${files.length} …</span>`;
+    document.body.appendChild(progress);
+
+    let success = 0;
+    for (let i = 0; i < files.length; i++) {
+      progress.querySelector("span:last-child").textContent = `Lade ${i + 1} / ${files.length} …`;
+      try {
+        const file = files[i];
+        if (!file.type.startsWith("image/")) continue;
+        const dataUrl = await resizeImage(file);
+        const sizeBytes = Math.ceil((dataUrl.length * 3) / 4);
+        if (sizeBytes > MAX_IMAGE_BYTES) {
+          showToast(`"${file.name}" zu gross.`, "error");
+          continue;
+        }
+        const entry = {
+          eventId,
+          src: dataUrl,
+          caption: "",
+          addedBy: auth.member,
+          createdAt: Date.now()
+        };
+        if (firebaseReady) {
+          await addDoc(collection(db, "eventfotos"), { ...entry, createdAt: serverTimestamp() });
+        } else {
+          entry.id = "local_" + Date.now() + "_" + i;
+          localStore.eventfotos.push(entry);
+          eventfotosCache = localStore.eventfotos;
+          saveLocal("eventfotos", localStore.eventfotos);
+          renderEvents();
+        }
+        success++;
+      } catch (err) { console.error(err); }
+    }
+
+    progress.remove();
+    if (success > 0) showToast(`${success} Bild${success > 1 ? "er" : ""} hinzugefügt.`, "success");
+  });
+  input.click();
+}
+
+async function deleteEventFoto(id) {
+  if (!requireAuth("Partybild löschen")) return;
+  if (firebaseReady) {
+    try { await deleteDoc(doc(db, "eventfotos", id)); showToast("Bild gelöscht.", "success"); }
+    catch (e) { showToast("Löschen fehlgeschlagen.", "error"); }
+  } else {
+    localStore.eventfotos = localStore.eventfotos.filter(f => f.id !== id);
+    eventfotosCache = localStore.eventfotos;
+    saveLocal("eventfotos", localStore.eventfotos);
+    renderEvents();
+    showToast("Bild gelöscht.", "success");
+  }
+}
+
+let eventfotosCache = [];
 
 async function handleEventRsvp(eventId, vote) {
   const previous = localStorage.getItem(`rsvp_${eventId}`);
@@ -1607,8 +1991,150 @@ $("schadenForm")?.addEventListener("submit", async (e) => {
 });
 
 /* ==========================================================================
+   Einstellungen · Passwort ändern + Gäste-Zugänge
+   ========================================================================== */
+
+$("changePasswordForm")?.addEventListener("submit", async (e) => {
+  e.preventDefault();
+  if (!requireMember("WG-Passwort ändern")) return;
+  const current = $("currentPassword").value;
+  const newPw = $("newPassword").value;
+  const newPw2 = $("newPassword2").value;
+  if (newPw !== newPw2) { showToast("Die neuen Passwörter stimmen nicht überein.", "error"); return; }
+  if (newPw.length < 4) { showToast("Mindestens 4 Zeichen.", "error"); return; }
+  const currentHash = await sha256(current);
+  if (currentHash !== authConfig.passwordHash) {
+    showToast("Aktuelles Passwort ist falsch.", "error");
+    return;
+  }
+  const newHash = await sha256(newPw);
+  if (firebaseReady) {
+    try {
+      await setDoc(doc(db, "config", "auth"), { passwordHash: newHash, updatedBy: auth.member, updatedAt: serverTimestamp() }, { merge: true });
+      authConfig.passwordHash = newHash;
+      e.target.reset();
+      showToast("WG-Passwort aktualisiert. Bitte allen Mitgliedern mitteilen! 🔑", "success");
+    } catch (err) {
+      console.error(err);
+      showToast("Speichern fehlgeschlagen.", "error");
+    }
+  } else {
+    authConfig.passwordHash = newHash;
+    localStore.config = { passwordHash: newHash };
+    saveLocal("config", localStore.config);
+    e.target.reset();
+    showToast("WG-Passwort lokal aktualisiert.", "success");
+  }
+});
+
+$("guestForm")?.addEventListener("submit", async (e) => {
+  e.preventDefault();
+  if (!requireMember("Gäste-Zugänge erstellen")) return;
+  const name = $("guestName").value.trim();
+  const pw = $("guestPassword").value;
+  const expires = $("guestExpires").value;
+  if (!name || pw.length < 4) return;
+  const hash = await sha256(pw);
+  // Prüfen ob nicht mit Haupt-Passwort identisch
+  if (hash === authConfig.passwordHash) {
+    showToast("Dieses Passwort ist schon das WG-Passwort – bitte ein anderes wählen.", "error");
+    return;
+  }
+  const entry = {
+    name,
+    hash,
+    expiresAt: expires ? new Date(expires + "T23:59:59").getTime() : null,
+    createdBy: auth.member,
+    createdAt: Date.now()
+  };
+  if (firebaseReady) {
+    try {
+      await addDoc(collection(db, "guests"), { ...entry, createdAt: serverTimestamp() });
+    } catch (err) { showToast("Speichern fehlgeschlagen.", "error"); return; }
+  } else {
+    entry.id = "local_" + Date.now();
+    localStore.guests.push(entry);
+    guestsCache = localStore.guests;
+    saveLocal("guests", localStore.guests);
+    renderGuestsList();
+  }
+  e.target.reset();
+  showToast(`Gast-Zugang für ${name} erstellt 🎟️`, "success");
+});
+
+function renderGuestsList() {
+  const list = $("guestsList");
+  if (!list) return;
+  if (!guestsCache.length) {
+    list.innerHTML = `<div class="empty-state small">Noch keine Gäste-Zugänge.</div>`;
+    return;
+  }
+  const now = Date.now();
+  const sorted = [...guestsCache].sort((a, b) => (b.createdAt?.toMillis?.() || b.createdAt || 0) - (a.createdAt?.toMillis?.() || a.createdAt || 0));
+  list.innerHTML = sorted.map(g => {
+    const expired = g.expiresAt && g.expiresAt < now;
+    const expiresLabel = g.expiresAt
+      ? `bis ${new Date(g.expiresAt).toLocaleDateString("de-CH", { day: "2-digit", month: "short", year: "numeric" })}`
+      : "unbegrenzt";
+    return `
+      <div class="guest-row ${expired ? 'expired' : ''}">
+        <div class="guest-info">
+          <strong>🎟️ ${escapeHtml(g.name)}</strong>
+          <span class="guest-meta">Gültig ${expiresLabel}${expired ? ' · abgelaufen' : ''} · erstellt von ${escapeHtml(g.createdBy || '—')}</span>
+        </div>
+        <button class="mini-btn danger" data-id="${g.id}" data-action="delete-guest">Entfernen</button>
+      </div>
+    `;
+  }).join("");
+  list.querySelectorAll("[data-action='delete-guest']").forEach(btn => {
+    btn.addEventListener("click", () => {
+      const g = guestsCache.find(x => x.id === btn.dataset.id);
+      if (!g) return;
+      if (confirm(`Zugang für "${g.name}" entfernen?`)) deleteGuest(btn.dataset.id);
+    });
+  });
+}
+
+async function deleteGuest(id) {
+  if (!requireMember("Gast-Zugang entfernen")) return;
+  if (firebaseReady) {
+    try { await deleteDoc(doc(db, "guests", id)); showToast("Gast-Zugang entfernt.", "success"); }
+    catch (e) { showToast("Löschen fehlgeschlagen.", "error"); }
+  } else {
+    localStore.guests = localStore.guests.filter(g => g.id !== id);
+    guestsCache = localStore.guests;
+    saveLocal("guests", localStore.guests);
+    renderGuestsList();
+  }
+}
+
+/* ==========================================================================
    Firebase Listeners (Live)
    ========================================================================== */
+
+async function loadAuthConfig() {
+  // Aus Firestore: config/auth (passwordHash), Fallback: lokaler Default-Hash
+  if (firebaseReady) {
+    try {
+      const snap = await getDoc(doc(db, "config", "auth"));
+      if (snap.exists() && snap.data().passwordHash) {
+        authConfig.passwordHash = snap.data().passwordHash;
+      } else {
+        // Erstmalig: Default-Hash in Firestore schreiben
+        await setDoc(doc(db, "config", "auth"), { passwordHash: WG_PASSWORD_HASH, createdAt: serverTimestamp() }, { merge: true });
+      }
+      // Live-Listener für spätere Änderungen
+      onSnapshot(doc(db, "config", "auth"), (d) => {
+        if (d.exists() && d.data().passwordHash) authConfig.passwordHash = d.data().passwordHash;
+      });
+    } catch (e) {
+      console.warn("Auth-Config konnte nicht geladen werden, nutze Default.", e.message);
+    }
+  } else if (localStore.config?.passwordHash) {
+    authConfig.passwordHash = localStore.config.passwordHash;
+  }
+  authConfig.ready = true;
+}
 
 function setupListeners() {
   if (!firebaseReady) {
@@ -1621,6 +2147,10 @@ function setupListeners() {
     musikCache = [...localStore.musik].sort((a, b) => (a.createdAt || 0) - (b.createdAt || 0));
     kandidatenCache = localStore.kandidaten;
     schaedenCache = localStore.schaeden;
+    bewohnerfotosCache = localStore.bewohnerfotos;
+    hausbilderCache = localStore.hausbilder;
+    eventfotosCache = localStore.eventfotos;
+    guestsCache = localStore.guests;
     renderEvents();
     renderPutzplan();
     renderTermine();
@@ -1630,6 +2160,9 @@ function setupListeners() {
     renderPlaylist();
     renderKandidaten();
     renderSchaeden();
+    renderBewohner();
+    renderHausFeatures();
+    renderGuestsList();
     return;
   }
 
@@ -1677,13 +2210,34 @@ function setupListeners() {
   onSnapshot(query(collection(db, "musik"), orderBy("createdAt", "asc")), (snap) => {
     const prevId = musikCache[currentSongIdx]?.id;
     musikCache = snap.docs.map(d => ({ id: d.id, ...d.data() }));
-    // Update current index if current song still exists
     if (prevId) {
       const newIdx = musikCache.findIndex(s => s.id === prevId);
       currentSongIdx = newIdx;
     }
     renderPlaylist();
   }, (err) => console.warn("musik listener:", err.message));
+
+  onSnapshot(collection(db, "bewohnerfotos"), (snap) => {
+    bewohnerfotosCache = {};
+    snap.docs.forEach(d => { bewohnerfotosCache[d.id] = d.data(); });
+    renderBewohner();
+  }, (err) => console.warn("bewohnerfotos listener:", err.message));
+
+  onSnapshot(collection(db, "hausbilder"), (snap) => {
+    hausbilderCache = {};
+    snap.docs.forEach(d => { hausbilderCache[d.id] = d.data(); });
+    renderHausFeatures();
+  }, (err) => console.warn("hausbilder listener:", err.message));
+
+  onSnapshot(query(collection(db, "eventfotos"), orderBy("createdAt", "desc")), (snap) => {
+    eventfotosCache = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+    renderEvents();
+  }, (err) => console.warn("eventfotos listener:", err.message));
+
+  onSnapshot(query(collection(db, "guests"), orderBy("createdAt", "desc")), (snap) => {
+    guestsCache = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+    renderGuestsList();
+  }, (err) => console.warn("guests listener:", err.message));
 }
 
 /* ==========================================================================
@@ -1713,8 +2267,13 @@ populateLoginMemberSelect();
 populatePutzWhoSelect();
 populateSchadenZustaendigSelect();
 renderBewohner();
+renderHausFeatures();
 renderGallery();
 setupScrollAnim();
-auth.init();
-setupListeners();
-updateLoginChip();
+
+// Auth-Config zuerst laden (wichtig für korrekte Passwort-Prüfung beim Auto-Login)
+loadAuthConfig().then(() => {
+  auth.init();
+  setupListeners();
+  updateLoginChip();
+});

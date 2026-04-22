@@ -594,13 +594,41 @@ a:hover { color: var(--terracotta); }
 .bewohner-card:hover { transform: translateY(-6px); }
 
 .bewohner-avatar {
+  position: relative;
   aspect-ratio: 1 / 1;
   display: flex;
   align-items: center;
   justify-content: center;
   font-size: 5rem;
   background: linear-gradient(135deg, var(--cream-2), var(--sand));
+  overflow: hidden;
 }
+.bewohner-avatar img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+.bewohner-avatar .avatar-emoji { line-height: 1; }
+.avatar-edit {
+  position: absolute;
+  right: 10px;
+  bottom: 10px;
+  background: rgba(61, 40, 23, 0.78);
+  color: #fff;
+  border: none;
+  border-radius: 999px;
+  width: 36px;
+  height: 36px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 1rem;
+  cursor: pointer;
+  box-shadow: 0 6px 14px rgba(0,0,0,0.25);
+  transition: transform 0.2s var(--ease), background 0.2s var(--ease);
+}
+.avatar-edit:hover { background: var(--terracotta-dark); transform: scale(1.08); }
 
 .bewohner-info { padding: 18px 20px 22px; }
 .bewohner-info h3 { font-size: 1.2rem; margin-bottom: 2px; }
@@ -2289,4 +2317,202 @@ body.is-playing .vinyl {
   flex-wrap: wrap;
   gap: 8px;
   align-items: center;
+}
+
+/* ============================================
+   Haus-Cards mit Foto
+   ============================================ */
+.haus-card {
+  position: relative;
+  padding: 0;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
+.haus-card.has-photo .card-icon { display: none; }
+.haus-card > .card-icon { font-size: 2rem; margin: 22px 24px 8px; }
+.haus-card h3 { margin: 0 24px 6px; padding-top: 4px; }
+.haus-card p { margin: 0 24px 16px; color: var(--text-soft); font-size: 0.95rem; }
+.haus-photo {
+  width: 100%;
+  aspect-ratio: 16 / 10;
+  object-fit: cover;
+  display: block;
+  background: linear-gradient(135deg, var(--cream-2), var(--sand));
+}
+.haus-card-actions {
+  margin: 0 24px 20px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.mini-btn {
+  padding: 6px 12px;
+  border-radius: 999px;
+  border: 1px solid var(--card-border);
+  background: rgba(255, 250, 244, 0.7);
+  color: var(--text);
+  font-size: 0.8rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 0.2s var(--ease), border-color 0.2s var(--ease), color 0.2s var(--ease);
+}
+.mini-btn:hover { background: var(--sand); border-color: var(--terracotta); }
+.mini-btn.danger { color: var(--berry-dark, #a43c3c); border-color: rgba(164, 60, 60, 0.3); }
+.mini-btn.danger:hover { background: rgba(164, 60, 60, 0.12); }
+
+/* ============================================
+   Event-Partybilder
+   ============================================ */
+.events-divider {
+  margin: 48px 0 20px;
+  padding-top: 28px;
+  border-top: 1px dashed var(--card-border);
+  font-size: 1.1rem;
+  color: var(--terracotta-dark);
+  font-weight: 700;
+  letter-spacing: 0.02em;
+}
+
+.event-card.is-past {
+  opacity: 0.94;
+  background: linear-gradient(135deg, rgba(255, 250, 244, 0.7), rgba(248, 236, 220, 0.7));
+}
+.event-card.is-past .event-date { opacity: 0.7; }
+
+.event-fotos {
+  margin-top: 14px;
+  padding: 10px 14px;
+  background: rgba(255, 250, 244, 0.55);
+  border: 1px dashed var(--card-border);
+  border-radius: var(--r-md);
+}
+.event-fotos summary {
+  cursor: pointer;
+  font-weight: 600;
+  color: var(--terracotta-dark);
+  padding: 4px 0;
+  user-select: none;
+}
+.event-fotos summary::marker { color: var(--terracotta); }
+
+.event-fotos-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(120px, 1fr));
+  gap: 8px;
+  margin: 12px 0;
+}
+.event-foto {
+  position: relative;
+  aspect-ratio: 1 / 1;
+  border-radius: 10px;
+  overflow: hidden;
+  cursor: pointer;
+  border: 1px solid var(--card-border);
+  background: var(--cream-2);
+  transition: transform 0.2s var(--ease);
+}
+.event-foto:hover { transform: scale(1.03); }
+.event-foto img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+.event-foto .foto-caption {
+  position: absolute;
+  left: 0; right: 0; bottom: 0;
+  padding: 6px 8px;
+  background: linear-gradient(transparent, rgba(0,0,0,0.55));
+  color: #fff;
+  font-size: 0.72rem;
+  line-height: 1.2;
+  text-shadow: 0 1px 2px rgba(0,0,0,0.4);
+}
+
+.event-fotos-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  align-items: center;
+  justify-content: space-between;
+  padding-top: 6px;
+}
+.wg-hint {
+  font-size: 0.75rem;
+  color: var(--text-muted);
+  margin: 0;
+}
+
+.empty-state.small {
+  padding: 16px;
+  font-size: 0.88rem;
+  color: var(--text-muted);
+}
+
+/* ============================================
+   Einstellungen · Passwort + Gäste
+   ============================================ */
+.settings-card {
+  background: var(--card);
+  border: 1px solid var(--card-border);
+  border-radius: var(--r-md);
+  padding: 22px 24px;
+  margin-bottom: 24px;
+  box-shadow: var(--card-shadow);
+}
+.settings-card h3 {
+  margin: 0 0 6px;
+  font-size: 1.12rem;
+  color: var(--terracotta-dark);
+}
+.form-card.inline {
+  display: grid;
+  gap: 12px;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  align-items: end;
+  background: transparent;
+  padding: 0;
+  border: none;
+  box-shadow: none;
+}
+.form-card.inline .field { margin: 0; }
+.form-card.inline button { align-self: end; min-height: 42px; }
+
+.guests-list {
+  margin-top: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.guest-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 12px 14px;
+  background: rgba(255, 250, 244, 0.7);
+  border: 1px solid var(--card-border);
+  border-radius: var(--r-md);
+}
+.guest-row.expired {
+  opacity: 0.6;
+  background: rgba(164, 60, 60, 0.06);
+  border-color: rgba(164, 60, 60, 0.25);
+}
+.guest-info {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.guest-info strong { font-size: 0.95rem; color: var(--text); }
+.guest-meta {
+  font-size: 0.78rem;
+  color: var(--text-muted);
+}
+
+/* WG-Intern nur für echte Mitglieder (nicht Gäste) */
+body.wg-guest #intern,
+body.wg-guest a[href="#intern"] {
+  display: none !important;
 }

@@ -84,37 +84,8 @@
         Garten mit Trampolin, Sauna, Jacuzzi – und der See liegt nur ein paar Schritte weiter.
       </p>
     </div>
-    <div class="haus-grid">
-      <div class="haus-card warm">
-        <div class="card-icon">🌿</div>
-        <h3>Garten mit Trampolin</h3>
-        <p>Liegewiese, Feuerstelle und ein Trampolin, auf dem wir uns bei jedem Wetter austoben.</p>
-      </div>
-      <div class="haus-card warm">
-        <div class="card-icon">🔥</div>
-        <h3>Wohnzimmer mit Kamin</h3>
-        <p>Das Herzstück: knisterndes Feuer, grosse Sofas und lange Abende mit Gesprächen bis in die Nacht.</p>
-      </div>
-      <div class="haus-card warm">
-        <div class="card-icon">🎬</div>
-        <h3>Kinobereich mit Gästebett</h3>
-        <p>Beamer, Leinwand, viele Kissen – und ein ausziehbares Bett für Gäste, die über Nacht bleiben.</p>
-      </div>
-      <div class="haus-card warm">
-        <div class="card-icon">🧖</div>
-        <h3>Sauna</h3>
-        <p>Unsere Wohlfühl-Ecke für kalte Tage und lange Wochenenden. Aufguss inklusive.</p>
-      </div>
-      <div class="haus-card warm">
-        <div class="card-icon">🛁</div>
-        <h3>Jacuzzi</h3>
-        <p>Warmes Wasser, perlende Blasen, Sternenhimmel oben drüber – mehr braucht's nicht.</p>
-      </div>
-      <div class="haus-card warm">
-        <div class="card-icon">🏄</div>
-        <h3>SUPs</h3>
-        <p>Unsere Stand-Up-Paddles warten darauf, aufs Wasser gebracht zu werden – der See ist fast vor der Tür.</p>
-      </div>
+    <div class="haus-grid" id="hausGrid">
+      <!-- Renderet aus JS -->
     </div>
   </section>
 
@@ -321,6 +292,7 @@
       <div class="kalender-tabs" role="tablist">
         <button class="tab active" data-intern-tab="kandidaten">🏠 Kandidat:innen</button>
         <button class="tab" data-intern-tab="schaeden">🔧 Schäden</button>
+        <button class="tab" data-intern-tab="einstellungen">⚙️ Einstellungen</button>
       </div>
 
       <!-- Kandidaten -->
@@ -365,6 +337,58 @@
             <p class="form-note">Jede:r WG-Mitglied kann 👍 / 🤔 / 👎 abstimmen.</p>
           </form>
         </details>
+      </div>
+
+      <!-- Einstellungen -->
+      <div class="kalender-panel hidden" id="ternTabEinstellungen">
+        <p class="section-lead" style="text-align:left;margin-top:0;">
+          WG-Passwort verwalten und Gäste-Zugänge erstellen.
+        </p>
+
+        <div class="settings-card">
+          <h3>🔑 WG-Passwort ändern</h3>
+          <p class="form-note" style="margin-bottom:12px;">
+            Das neue Passwort gilt dann für alle WG-Mitglieder. Gib's danach weiter.
+          </p>
+          <form id="changePasswordForm" class="form-card inline">
+            <div class="field">
+              <label for="currentPassword">Aktuelles Passwort</label>
+              <input id="currentPassword" type="password" required autocomplete="current-password" />
+            </div>
+            <div class="field">
+              <label for="newPassword">Neues Passwort</label>
+              <input id="newPassword" type="password" required minlength="4" autocomplete="new-password" />
+            </div>
+            <div class="field">
+              <label for="newPassword2">Wiederholen</label>
+              <input id="newPassword2" type="password" required minlength="4" autocomplete="new-password" />
+            </div>
+            <button type="submit" class="btn btn-primary">Passwort speichern</button>
+          </form>
+        </div>
+
+        <div class="settings-card">
+          <h3>🎟️ Gäste-Zugänge</h3>
+          <p class="form-note" style="margin-bottom:12px;">
+            Erstelle einen Zugang für Besuch. Gäste können Events, Galerie und Partybilder sehen, aber keine WG-Internes bearbeiten. Optional mit Ablaufdatum.
+          </p>
+          <form id="guestForm" class="form-card inline">
+            <div class="field">
+              <label for="guestName">Name (Wer bekommt Zugang?)</label>
+              <input id="guestName" required placeholder="z. B. Sarah Besuch Mai 2026" />
+            </div>
+            <div class="field">
+              <label for="guestPassword">Passwort</label>
+              <input id="guestPassword" required minlength="4" placeholder="min. 4 Zeichen" />
+            </div>
+            <div class="field">
+              <label for="guestExpires">Gültig bis (optional)</label>
+              <input id="guestExpires" type="date" />
+            </div>
+            <button type="submit" class="btn btn-primary">Gast-Zugang erstellen</button>
+          </form>
+          <div id="guestsList" class="guests-list"></div>
+        </div>
       </div>
 
       <!-- Schäden -->
@@ -480,14 +504,14 @@
   <dialog id="loginDialog" class="auth-dialog">
     <form method="dialog" id="loginForm" class="auth-form">
       <button type="button" class="dialog-close" aria-label="Schliessen">×</button>
-      <h2 class="auth-title">🔑 WG-Login</h2>
-      <p class="auth-sub">Nur für Bewohner:innen des Haus am See.</p>
+      <h2 class="auth-title">🔑 Login</h2>
+      <p class="auth-sub">Für Bewohner:innen – oder mit einem Gast-Zugang.</p>
       <div class="field">
         <label for="loginMember">Ich bin</label>
         <select id="loginMember" required></select>
       </div>
       <div class="field">
-        <label for="loginPassword">WG-Passwort</label>
+        <label for="loginPassword">Passwort</label>
         <input id="loginPassword" type="password" required autocomplete="current-password" placeholder="••••••••" />
       </div>
       <button type="submit" class="btn btn-primary">Anmelden</button>
