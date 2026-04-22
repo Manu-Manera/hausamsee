@@ -239,6 +239,15 @@
             <option value="none">Keine öffentliche Anmeldung</option>
           </select>
         </div>
+        <div class="field">
+          <label for="evFlyer">Flyer (optional)</label>
+          <input id="evFlyer" type="file" accept="image/*" />
+          <p class="form-note">Bild-Flyer wird automatisch verkleinert. PDF? Einfach als Screenshot/Export hochladen.</p>
+        </div>
+        <div id="evFlyerPreview" class="flyer-preview hidden">
+          <img id="evFlyerImg" alt="Flyer-Vorschau" />
+          <button type="button" class="mini-btn danger" id="evFlyerRemove">🗑️ Flyer entfernen</button>
+        </div>
         <div class="form-actions">
           <button type="submit" class="btn btn-primary" id="evSubmit">Event speichern</button>
           <button type="button" class="btn btn-ghost hidden" id="evCancel">Abbrechen</button>

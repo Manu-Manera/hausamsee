@@ -876,6 +876,18 @@ function renderEvents() {
       matchSignups(btn.dataset.eventid);
     });
   });
+  list.querySelectorAll("[data-flyer]").forEach(el => {
+    const open = () => {
+      const ev = eventsCache.find(x => x.id === el.dataset.flyer);
+      if (ev?.flyerSrc) openLightbox({ src: ev.flyerSrc, caption: `📄 ${ev.title}` });
+    };
+    el.addEventListener("click", open);
+    if (el.tagName === "DIV") {
+      el.addEventListener("keydown", (e) => {
+        if (e.key === "Enter" || e.key === " ") { e.preventDefault(); open(); }
+      });
+    }
+  });
 
   $("statEvents").textContent = upcoming.length;
 }
@@ -904,15 +916,23 @@ function renderEventCard(ev, isPast) {
 
   const signupBlock = !isPast ? renderSignupBlock(ev) : "";
 
+  const hasFlyer = !!ev.flyerSrc;
+  const dateClickable = hasFlyer ? `data-flyer="${ev.id}" role="button" tabindex="0" title="Flyer ansehen"` : "";
+  const flyerBadge = hasFlyer ? `<span class="event-flyer-chip">📄</span>` : "";
+  const flyerButton = hasFlyer
+    ? `<button class="event-flyer-btn" data-flyer="${ev.id}" title="Flyer ansehen">📄 Flyer</button>`
+    : "";
+
   return `
-    <article class="event-card ${isPast ? 'is-past' : ''}">
-      <div class="event-date">
+    <article class="event-card ${isPast ? 'is-past' : ''} ${hasFlyer ? 'has-flyer' : ''}">
+      <div class="event-date ${hasFlyer ? 'clickable' : ''}" ${dateClickable}>
         <span class="day">${String(d.getDate()).padStart(2,"0")}</span>
         <span class="month">${monthShort[d.getMonth()]}</span>
         <span class="time">${d.toLocaleTimeString("de-CH",{hour:"2-digit",minute:"2-digit"})}</span>
+        ${flyerBadge}
       </div>
       <div class="event-info">
-        <h3>${ev.emoji || "🎉"} ${escapeHtml(ev.title)}</h3>
+        <h3>${ev.emoji || "🎉"} ${escapeHtml(ev.title)} ${flyerButton}</h3>
         <div class="event-meta">📍 ${escapeHtml(ev.location || "Haus am See")}</div>
         ${ev.description ? `<p>${escapeHtml(ev.description)}</p>` : ""}
         ${signupBlock}
@@ -1243,6 +1263,53 @@ async function deleteEvent(eventId) {
   }
 }
 
+// Flyer-State für das Event-Formular
+let evFlyerData = null;       // base64 eines neu hochgeladenen Flyers
+let evFlyerRemove = false;    // true, wenn beim Bearbeiten ein bestehender Flyer entfernt werden soll
+
+function setEvFlyerPreview(src) {
+  const wrap = $("evFlyerPreview");
+  const img = $("evFlyerImg");
+  if (!wrap || !img) return;
+  if (src) {
+    img.src = src;
+    wrap.classList.remove("hidden");
+  } else {
+    img.removeAttribute("src");
+    wrap.classList.add("hidden");
+  }
+}
+
+$("evFlyer")?.addEventListener("change", async (e) => {
+  const file = e.target.files?.[0];
+  if (!file) return;
+  try {
+    const dataUrl = await resizeImage(file, 1400);
+    evFlyerData = dataUrl;
+    evFlyerRemove = false;
+    setEvFlyerPreview(dataUrl);
+  } catch (err) {
+    console.error(err);
+    showToast("Flyer konnte nicht verarbeitet werden.", "error");
+  }
+});
+
+$("evFlyerRemove")?.addEventListener("click", () => {
+  evFlyerData = null;
+  evFlyerRemove = true;
+  const input = $("evFlyer");
+  if (input) input.value = "";
+  setEvFlyerPreview(null);
+});
+
+function resetEvFlyerState() {
+  evFlyerData = null;
+  evFlyerRemove = false;
+  const input = $("evFlyer");
+  if (input) input.value = "";
+  setEvFlyerPreview(null);
+}
+
 function startEditEvent(id) {
   const ev = eventsCache.find(e => e.id === id);
   if (!ev) return;
@@ -1254,6 +1321,8 @@ function startEditEvent(id) {
   $("evLocation").value = ev.location || "";
   $("evEmoji").value = ev.emoji || "";
   $("evMode").value = ev.registrationMode || "single";
+  resetEvFlyerState();
+  if (ev.flyerSrc) setEvFlyerPreview(ev.flyerSrc);
   $("evSubmit").textContent = "Änderungen speichern";
   $("evCancel").classList.remove("hidden");
   $("eventFormSummary").textContent = `✏️ Event bearbeiten: ${ev.title}`;
@@ -1264,6 +1333,7 @@ function startEditEvent(id) {
 function cancelEditEvent() {
   $("eventForm").reset();
   $("evId").value = "";
+  resetEvFlyerState();
   $("evSubmit").textContent = "Event speichern";
   $("evCancel").classList.add("hidden");
   $("eventFormSummary").textContent = "➕ Event hinzufügen (nur für WG)";
@@ -1285,12 +1355,18 @@ $("eventForm")?.addEventListener("submit", async (e) => {
 
   if (editingId) {
     // Update
+    const update = { ...data };
+    if (evFlyerData) update.flyerSrc = evFlyerData;
+    else if (evFlyerRemove) update.flyerSrc = null;
     if (firebaseReady) {
-      try { await updateDoc(doc(db, "events", editingId), data); }
+      try { await updateDoc(doc(db, "events", editingId), update); }
       catch (err) { console.error(err); showToast("Speichern fehlgeschlagen.", "error"); return; }
     } else {
       const idx = localStore.events.findIndex(ev => ev.id === editingId);
-      if (idx >= 0) Object.assign(localStore.events[idx], data);
+      if (idx >= 0) {
+        Object.assign(localStore.events[idx], update);
+        if (update.flyerSrc === null) delete localStore.events[idx].flyerSrc;
+      }
       eventsCache = localStore.events;
       saveLocal("events", localStore.events);
       renderEvents();
@@ -1307,6 +1383,7 @@ $("eventForm")?.addEventListener("submit", async (e) => {
     createdBy: auth.member,
     createdAt: Date.now(),
   };
+  if (evFlyerData) entry.flyerSrc = evFlyerData;
   if (firebaseReady) {
     try { await addDoc(collection(db, "events"), { ...entry, createdAt: serverTimestamp() }); }
     catch (err) { showToast("Speichern fehlgeschlagen.", "error"); return; }
@@ -1318,6 +1395,7 @@ $("eventForm")?.addEventListener("submit", async (e) => {
     renderEvents();
   }
   e.target.reset();
+  resetEvFlyerState();
   $("eventFormToggle").open = false;
   showToast("Event gespeichert.", "success");
 });
