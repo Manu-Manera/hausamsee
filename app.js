@@ -829,9 +829,6 @@ function renderEvents() {
 
   list.innerHTML = upcomingHtml + pastHtml;
 
-  list.querySelectorAll(".rsvp-btn").forEach(btn => {
-    btn.addEventListener("click", () => handleEventRsvp(btn.dataset.id, btn.dataset.vote));
-  });
   list.querySelectorAll(".event-delete").forEach(btn => {
     btn.addEventListener("click", () => {
       if (!requireAuth("Events löschen")) return;
@@ -842,15 +839,6 @@ function renderEvents() {
     btn.addEventListener("click", () => {
       if (!requireAuth("Events bearbeiten")) return;
       startEditEvent(btn.dataset.id);
-    });
-  });
-  list.querySelectorAll(".event-rsvp-reset").forEach(btn => {
-    btn.addEventListener("click", () => {
-      if (!requireMember("RSVP zurücksetzen")) return;
-      const ev = eventsCache.find(e => e.id === btn.dataset.id);
-      if (!ev) return;
-      if (!confirm(`Alle RSVP-Stimmen von "${ev.title}" auf 0 zurücksetzen?`)) return;
-      resetEventRsvp(btn.dataset.id);
     });
   });
   list.querySelectorAll(".event-fotos-add").forEach(btn => {
@@ -889,11 +877,6 @@ function renderEvents() {
 
 function renderEventCard(ev, isPast) {
   const d = new Date(ev.date);
-  const yes = (ev.rsvp?.yes || 0);
-  const no = (ev.rsvp?.no || 0);
-  const ownName = auth.member || localStorage.getItem("rsvp_name") || "";
-  const ownKey = sanitizeVoterKey(ownName);
-  const userVote = ownKey ? ev.rsvp?.voters?.[ownKey]?.vote : null;
   const fotos = eventfotosCache.filter(f => f.eventId === ev.id);
 
   const fotosBlock = auth.isAuthed ? `
@@ -931,20 +914,9 @@ function renderEventCard(ev, isPast) {
         ${fotosBlock}
       </div>
       <div class="event-actions">
-        ${!isPast ? `
-          <div class="rsvp-count" title="Einfache RSVP – unverbindliche Stimme">
-            <span>✓ ${yes}</span>
-            <span>✗ ${no}</span>
-          </div>
-          <div class="rsvp-buttons">
-            <button class="rsvp-btn yes ${userVote === 'yes' ? 'active' : ''}" data-id="${ev.id}" data-vote="yes">Bin dabei</button>
-            <button class="rsvp-btn no ${userVote === 'no' ? 'active' : ''}" data-id="${ev.id}" data-vote="no">Kann nicht</button>
-          </div>
-        ` : ""}
         ${auth.isMember ? `
           <div class="event-admin">
             <button class="event-edit" data-id="${ev.id}" title="Event bearbeiten">✏️ Bearbeiten</button>
-            <button class="event-rsvp-reset" data-id="${ev.id}" title="RSVP-Zähler zurücksetzen">🔄 Zähler 0</button>
             <button class="event-delete" data-id="${ev.id}">Löschen</button>
           </div>
         ` : ""}
@@ -1254,68 +1226,6 @@ async function deleteEventFoto(id) {
 
 let eventfotosCache = [];
 
-function sanitizeVoterKey(name) {
-  // Firestore Map-Keys: sicherer Weg – auf [a-z0-9_] reduzieren
-  return (name || "")
-    .trim()
-    .toLowerCase()
-    .normalize("NFD")
-    .replace(/[\u0300-\u036f]/g, "") // Akzente entfernen
-    .replace(/ß/g, "ss")
-    .replace(/[^a-z0-9]+/g, "_")
-    .replace(/^_+|_+$/g, "")
-    .slice(0, 40);
-}
-
-function getRsvpName() {
-  if (auth.isAuthed) return auth.member;
-  const remembered = localStorage.getItem("rsvp_name") || "";
-  const input = prompt("Wie ist dein Name? (Pflicht, damit niemand doppelt abstimmt)", remembered);
-  if (input === null) return null; // abgebrochen
-  const name = input.trim();
-  if (!name) { showToast("Bitte Namen eingeben.", "error"); return null; }
-  if (name.length < 2) { showToast("Name zu kurz.", "error"); return null; }
-  localStorage.setItem("rsvp_name", name);
-  return name;
-}
-
-async function handleEventRsvp(eventId, vote) {
-  const ev = eventsCache.find(e => e.id === eventId);
-  if (!ev) return;
-
-  const name = getRsvpName();
-  if (!name) return;
-
-  const key = sanitizeVoterKey(name);
-  if (!key) { showToast("Name enthält keine gültigen Zeichen.", "error"); return; }
-
-  const voters = ev.rsvp?.voters || {};
-  const previous = voters[key]?.vote;
-  if (previous === vote) return;
-
-  if (firebaseReady) {
-    const updates = {};
-    if (previous) updates[`rsvp.${previous}`] = increment(-1);
-    updates[`rsvp.${vote}`] = increment(1);
-    updates[`rsvp.voters.${key}`] = { name, vote, at: Date.now() };
-    try { await updateDoc(doc(db, "events", eventId), updates); }
-    catch (e) { console.error(e); showToast("Stimme konnte nicht gespeichert werden.", "error"); return; }
-  } else {
-    const idx = localStore.events.findIndex(e => e.id === eventId);
-    if (idx >= 0) {
-      const r = localStore.events[idx].rsvp = localStore.events[idx].rsvp || { yes: 0, no: 0, voters: {} };
-      r.voters = r.voters || {};
-      if (previous) r[previous] = Math.max(0, r[previous] - 1);
-      r[vote] = (r[vote] || 0) + 1;
-      r.voters[key] = { name, vote, at: Date.now() };
-      eventsCache = localStore.events;
-      saveLocal("events", localStore.events);
-      renderEvents();
-    }
-  }
-  localStorage.setItem(`rsvp_${eventId}`, vote);
-}
-
 async function deleteEvent(eventId) {
   if (firebaseReady) {
     try { await deleteDoc(doc(db, "events", eventId)); showToast("Event gelöscht."); }
@@ -1326,33 +1236,6 @@ async function deleteEvent(eventId) {
     saveLocal("events", localStore.events);
     renderEvents();
   }
-}
-
-async function resetEventRsvp(eventId) {
-  if (firebaseReady) {
-    try {
-      await updateDoc(doc(db, "events", eventId), {
-        "rsvp.yes": 0,
-        "rsvp.no": 0,
-        "rsvp.voters": {},
-      });
-    } catch (e) {
-      console.error(e);
-      showToast("Zurücksetzen fehlgeschlagen.", "error");
-      return;
-    }
-  } else {
-    const idx = localStore.events.findIndex(e => e.id === eventId);
-    if (idx >= 0) {
-      localStore.events[idx].rsvp = { yes: 0, no: 0, voters: {} };
-      eventsCache = localStore.events;
-      saveLocal("events", localStore.events);
-      renderEvents();
-    }
-  }
-  // Eigenen localStorage-Hinweis auf frühere Stimme entfernen (alte Anonym-Zeit)
-  localStorage.removeItem(`rsvp_${eventId}`);
-  showToast("RSVP auf 0 zurückgesetzt.", "success");
 }
 
 function startEditEvent(id) {

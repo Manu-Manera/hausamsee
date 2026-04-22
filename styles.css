@@ -817,42 +817,6 @@ a:hover { color: var(--terracotta); }
   min-width: 130px;
 }
 
-.rsvp-count {
-  display: flex;
-  gap: 10px;
-  font-size: 0.82rem;
-  color: var(--text-muted);
-  justify-content: center;
-}
-
-.rsvp-buttons { display: flex; gap: 6px; }
-
-.rsvp-btn {
-  flex: 1;
-  padding: 8px 12px;
-  border-radius: 999px;
-  border: 1px solid var(--card-border);
-  background: white;
-  font-family: inherit;
-  font-size: 0.82rem;
-  font-weight: 600;
-  cursor: pointer;
-  color: var(--text-soft);
-  transition: all 0.2s var(--ease);
-}
-
-.rsvp-btn.yes:hover, .rsvp-btn.yes.active {
-  background: var(--moss);
-  color: white;
-  border-color: var(--moss);
-}
-
-.rsvp-btn.no:hover, .rsvp-btn.no.active {
-  background: var(--berry);
-  color: white;
-  border-color: var(--berry);
-}
-
 .event-admin {
   display: flex;
   gap: 6px;
@@ -861,7 +825,6 @@ a:hover { color: var(--terracotta); }
 }
 
 .event-edit,
-.event-rsvp-reset,
 .event-delete {
   background: none;
   border: 1px solid var(--card-border);
@@ -874,7 +837,6 @@ a:hover { color: var(--terracotta); }
 }
 
 .event-edit:hover { border-color: var(--terracotta); color: var(--terracotta); background: rgba(198, 122, 80, 0.08); }
-.event-rsvp-reset:hover { border-color: var(--sage); color: var(--sage); background: rgba(140, 164, 127, 0.1); }
 .event-delete:hover { border-color: var(--berry); color: var(--berry); background: rgba(178, 72, 72, 0.08); }
 
 /* ============================================
