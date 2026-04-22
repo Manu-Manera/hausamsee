@@ -23,28 +23,60 @@ import { firebaseConfig } from "./firebase-config.js";
 
 const BEWOHNER = [
   {
-    name: "Anna",
-    role: "Seekapitänin & Gärtnerin",
+    name: "Corina",
+    role: "Seele des Hauses",
     emoji: "🌻",
-    bio: "Hat die meisten Pflanzen im Haus, kocht am liebsten vegetarisch und kennt jeden Schwan beim Namen."
+    bio: "Sorgt dafür, dass es überall Pflanzen, gute Laune und frischen Kaffee gibt."
   },
   {
-    name: "Chris",
-    role: "Grillmeister",
-    emoji: "🔥",
-    bio: "Zuständig für Feuerstelle, Playlist und spontane Spieleabende. Schwimmt im Winter gerne im See."
-  },
-  {
-    name: "Lea",
+    name: "Jasmin",
     role: "Brunch-Queen",
     emoji: "🥐",
-    bio: "Steht früh auf, backt oft Sonntags-Gipfeli und organisiert die gemeinsamen Ausflüge."
+    bio: "Steht gerne früh auf, macht die besten Sonntags-Gipfeli und kennt jedes nette Café am See."
   },
   {
-    name: "Jonas",
+    name: "Dino",
+    role: "Grill- & Feuerchef",
+    emoji: "🔥",
+    bio: "Wenn es Rauch gibt, steht Dino am Grill. Zuständig für Feuerstelle, Playlist und spontane Abende."
+  },
+  {
+    name: "Andy",
+    role: "Handwerker & Tüftler",
+    emoji: "🛠️",
+    bio: "Repariert alles, baut Möbel aus Palettenholz und hat immer das richtige Werkzeug zur Hand."
+  },
+  {
+    name: "Manu",
+    role: "Events & Ausflüge",
+    emoji: "🏕️",
+    bio: "Organisiert die besten Touren rund um den Pfäffikersee und hat immer einen Plan für das Wochenende."
+  },
+  {
+    name: "Hugues",
     role: "SUP-Liebhaber",
     emoji: "🛶",
-    bio: "Paddelt bei jedem Wetter, baut Möbel aus Palettenholz und hat immer ein kaltes Bier im Kühlschrank."
+    bio: "Paddelt bei jedem Wetter über den See und bringt einen französischen Akzent ins Haus."
+  },
+  {
+    name: "Fanny",
+    role: "Kreativ-Kopf",
+    emoji: "🎨",
+    bio: "Bringt Farbe ins Haus, liebt lange Gespräche am Feuer und kocht leidenschaftlich gerne."
+  },
+  {
+    name: "Elliot",
+    role: "Junior-Abenteurer",
+    emoji: "🦊",
+    bio: "Jüngster im Haus. Entdeckt den Garten, den Steg und alle Schwäne auf dem See.",
+    kid: true
+  },
+  {
+    name: "Oscar",
+    role: "Junior-Abenteurer",
+    emoji: "🐻",
+    bio: "Bringt das grösste Lachen ins Haus und ist Co-Pilot bei jedem Ausflug zum See.",
+    kid: true
   }
 ];
 
@@ -60,6 +92,9 @@ const MAX_GALLERY_IMAGES = 20;
 const MAX_IMAGE_DIM = 1600;
 const JPEG_QUALITY = 0.82;
 const MAX_IMAGE_BYTES = 900_000; // ~900 KB per Bild (Firestore Document Limit = 1MB)
+
+// Audio-Konstanten
+const MAX_AUDIO_BYTES = 900_000; // ~900 KB pro Audio-Datei (Firestore Document Limit)
 
 /* ==========================================================================
    Firebase Setup
@@ -86,6 +121,7 @@ const localStore = {
   anwesenheit: JSON.parse(localStorage.getItem("has_anwesenheit") || "{}"),
   gaestebuch: JSON.parse(localStorage.getItem("has_gaestebuch") || "[]"),
   galerie: JSON.parse(localStorage.getItem("has_galerie") || "[]"),
+  musik: JSON.parse(localStorage.getItem("has_musik") || "[]"),
 };
 function saveLocal(key, value) { localStorage.setItem(`has_${key}`, JSON.stringify(value)); }
 
@@ -176,6 +212,7 @@ const auth = {
     renderGallery();
     renderEvents();
     renderPutzplan();
+    renderPlaylist();
   }
 };
 
@@ -192,16 +229,18 @@ function updateLoginChip() {
 
 function populateLoginMemberSelect() {
   const select = $("loginMember");
+  const adults = BEWOHNER.filter(b => !b.kid);
   select.innerHTML = `<option value="" disabled selected>Wähle dich aus…</option>` +
-    BEWOHNER.map(b => `<option value="${b.name}">${b.emoji} ${b.name}</option>`).join("");
+    adults.map(b => `<option value="${b.name}">${b.emoji} ${b.name}</option>`).join("");
 }
 
 function populatePutzWhoSelect() {
   const select = $("putzWho");
   if (!select) return;
   const current = select.value;
+  const adults = BEWOHNER.filter(b => !b.kid);
   select.innerHTML = `<option value="">Wer?</option>` +
-    BEWOHNER.map(b => `<option value="${b.name}">${b.emoji} ${b.name}</option>`).join("");
+    adults.map(b => `<option value="${b.name}">${b.emoji} ${b.name}</option>`).join("");
   if (current) select.value = current;
 }
 
@@ -309,10 +348,10 @@ lightboxDelete?.addEventListener("click", async () => {
 function renderBewohner() {
   const grid = $("bewohnerGrid");
   grid.innerHTML = BEWOHNER.map(b => `
-    <article class="bewohner-card">
+    <article class="bewohner-card ${b.kid ? 'is-kid' : ''}">
       <div class="bewohner-avatar">${b.emoji}</div>
       <div class="bewohner-info">
-        <h3>${escapeHtml(b.name)}</h3>
+        <h3>${escapeHtml(b.name)} ${b.kid ? '<span class="kid-badge" title="Jüngstes Mitglied">Kid</span>' : ''}</h3>
         <span class="bewohner-role">${escapeHtml(b.role)}</span>
         <p class="bewohner-bio">${escapeHtml(b.bio)}</p>
       </div>
@@ -699,8 +738,8 @@ function renderTermine() {
     const responses = t.responses || {};
     const myResponse = auth.isAuthed ? responses[auth.member] : null;
 
-    // Response-Badges: Alle Bewohner inkl. Status
-    const badges = BEWOHNER.map(b => {
+    // Response-Badges: Erwachsene Bewohner mit Status
+    const badges = BEWOHNER.filter(b => !b.kid).map(b => {
       const status = responses[b.name];
       const classes = status ? status : "pending";
       const icon = status === "yes" ? "✓" : status === "no" ? "✗" : status === "maybe" ? "?" : "…";
@@ -916,6 +955,316 @@ $("gbForm")?.addEventListener("submit", async (e) => {
 });
 
 /* ==========================================================================
+   Musik-Player (Soundtrack)
+   ========================================================================== */
+
+let musikCache = [];
+let currentSongIdx = -1;
+
+const audio = $("audioPlayer");
+const btnPlayPause = $("btnPlayPause");
+const btnPrev = $("btnPrev");
+const btnNext = $("btnNext");
+const progressBar = $("progressBar");
+const volumeBar = $("volumeBar");
+const timeCurrent = $("timeCurrent");
+const timeTotal = $("timeTotal");
+const nowTitle = $("nowTitle");
+const nowArtist = $("nowArtist");
+const playlistEl = $("playlist");
+
+// Gespeicherte Lautstärke wiederherstellen
+const savedVol = parseFloat(localStorage.getItem("has_player_vol") || "0.8");
+if (audio && volumeBar) {
+  audio.volume = isNaN(savedVol) ? 0.8 : savedVol;
+  volumeBar.value = audio.volume;
+  updateSliderFill(volumeBar);
+}
+
+function fmtTime(sec) {
+  if (!isFinite(sec) || sec < 0) return "0:00";
+  const m = Math.floor(sec / 60);
+  const s = Math.floor(sec % 60);
+  return `${m}:${String(s).padStart(2, "0")}`;
+}
+
+function updateSliderFill(input) {
+  if (!input) return;
+  const min = parseFloat(input.min) || 0;
+  const max = parseFloat(input.max) || 100;
+  const val = parseFloat(input.value) || 0;
+  const pct = max > min ? ((val - min) / (max - min)) * 100 : 0;
+  input.style.setProperty("--pct", pct + "%");
+}
+
+function renderPlaylist() {
+  if (!playlistEl) return;
+  if (!musikCache.length) {
+    playlistEl.innerHTML = `<li class="playlist-empty">Noch keine Songs · WG-Mitglieder können Lieder hinzufügen 🎵</li>`;
+    setCurrentSong(-1, { autoplay: false, silent: true });
+    updatePlayPauseUI();
+    btnPrev.disabled = true;
+    btnNext.disabled = true;
+    btnPlayPause.disabled = true;
+    return;
+  }
+
+  btnPlayPause.disabled = false;
+
+  playlistEl.innerHTML = musikCache.map((s, i) => `
+    <li class="playlist-item ${i === currentSongIdx ? 'active' : ''}" data-idx="${i}">
+      <span class="pi-icon">${i === currentSongIdx ? '♪' : (i + 1)}</span>
+      <div class="pi-meta">
+        <span class="pi-title">${escapeHtml(s.title || 'Ohne Titel')}</span>
+        <span class="pi-sub">${escapeHtml(s.artist || '')}${s.addedBy ? ` · hinzugefügt von ${escapeHtml(s.addedBy)}` : ''}</span>
+      </div>
+      ${auth.isAuthed ? `<button class="pi-delete" data-del="${i}" aria-label="Entfernen" title="Entfernen">✕</button>` : ''}
+    </li>
+  `).join("");
+
+  playlistEl.querySelectorAll(".playlist-item").forEach(li => {
+    li.addEventListener("click", (e) => {
+      if (e.target.closest(".pi-delete")) return;
+      const idx = parseInt(li.dataset.idx, 10);
+      setCurrentSong(idx, { autoplay: true });
+    });
+  });
+  playlistEl.querySelectorAll(".pi-delete").forEach(btn => {
+    btn.addEventListener("click", (e) => {
+      e.stopPropagation();
+      if (!requireAuth("Songs entfernen")) return;
+      const idx = parseInt(btn.dataset.del, 10);
+      const song = musikCache[idx];
+      if (!song) return;
+      if (confirm(`"${song.title}" aus der Playlist entfernen?`)) deleteSong(song.id);
+    });
+  });
+
+  btnPrev.disabled = musikCache.length <= 1;
+  btnNext.disabled = musikCache.length <= 1;
+}
+
+function setCurrentSong(idx, { autoplay = false, silent = false } = {}) {
+  if (!audio) return;
+  if (idx < 0 || idx >= musikCache.length) {
+    currentSongIdx = -1;
+    audio.removeAttribute("src");
+    audio.load();
+    nowTitle.textContent = "Noch kein Song ausgewählt";
+    nowArtist.textContent = "";
+    document.body.classList.remove("is-playing");
+    return;
+  }
+  currentSongIdx = idx;
+  const song = musikCache[idx];
+  nowTitle.textContent = song.title || "Ohne Titel";
+  nowArtist.textContent = song.artist || "";
+  audio.src = song.src;
+  audio.load();
+  if (autoplay) {
+    audio.play().catch(err => {
+      if (!silent) showToast("Song konnte nicht abgespielt werden.", "error");
+      console.warn(err);
+    });
+  }
+  renderPlaylist();
+}
+
+function updatePlayPauseUI() {
+  if (!btnPlayPause) return;
+  const playing = !audio.paused && !audio.ended && audio.readyState > 2;
+  btnPlayPause.textContent = playing ? "⏸" : "▶";
+  document.body.classList.toggle("is-playing", playing);
+}
+
+btnPlayPause?.addEventListener("click", () => {
+  if (!musikCache.length) return;
+  if (currentSongIdx < 0) {
+    setCurrentSong(0, { autoplay: true });
+    return;
+  }
+  if (audio.paused) {
+    audio.play().catch(err => {
+      showToast("Abspielen fehlgeschlagen.", "error");
+      console.warn(err);
+    });
+  } else {
+    audio.pause();
+  }
+});
+
+btnPrev?.addEventListener("click", () => {
+  if (!musikCache.length) return;
+  const next = currentSongIdx <= 0 ? musikCache.length - 1 : currentSongIdx - 1;
+  setCurrentSong(next, { autoplay: true });
+});
+
+btnNext?.addEventListener("click", () => {
+  if (!musikCache.length) return;
+  const next = (currentSongIdx + 1) % musikCache.length;
+  setCurrentSong(next, { autoplay: true });
+});
+
+audio?.addEventListener("play", updatePlayPauseUI);
+audio?.addEventListener("pause", updatePlayPauseUI);
+audio?.addEventListener("ended", () => {
+  if (musikCache.length > 1) {
+    btnNext.click();
+  } else {
+    updatePlayPauseUI();
+  }
+});
+audio?.addEventListener("timeupdate", () => {
+  if (!audio.duration) return;
+  const pct = (audio.currentTime / audio.duration) * 100;
+  progressBar.value = pct;
+  updateSliderFill(progressBar);
+  timeCurrent.textContent = fmtTime(audio.currentTime);
+});
+audio?.addEventListener("loadedmetadata", () => {
+  timeTotal.textContent = fmtTime(audio.duration);
+});
+audio?.addEventListener("error", () => {
+  if (audio.src) showToast("Song konnte nicht geladen werden.", "error");
+});
+
+progressBar?.addEventListener("input", () => {
+  if (!audio.duration) return;
+  const t = (parseFloat(progressBar.value) / 100) * audio.duration;
+  audio.currentTime = t;
+  updateSliderFill(progressBar);
+});
+
+volumeBar?.addEventListener("input", () => {
+  audio.volume = parseFloat(volumeBar.value);
+  updateSliderFill(volumeBar);
+  localStorage.setItem("has_player_vol", String(audio.volume));
+});
+
+/* Song hinzufügen – URL */
+$("addSongUrlBtn")?.addEventListener("click", () => {
+  if (!requireAuth("Songs hinzufügen")) return;
+  $("songUrlForm").reset();
+  $("songUrlDialog").showModal();
+});
+document.querySelector("#songUrlDialog .dialog-close")?.addEventListener("click", () => {
+  $("songUrlDialog").close();
+});
+$("songUrlDialog")?.addEventListener("click", (e) => {
+  if (e.target === $("songUrlDialog")) $("songUrlDialog").close();
+});
+$("songUrlForm")?.addEventListener("submit", async (e) => {
+  e.preventDefault();
+  if (!requireAuth("Songs hinzufügen")) return;
+  let url = $("songUrlInput").value.trim();
+  // Convenience: Dropbox share link → raw
+  if (/dropbox\.com/.test(url) && /\?dl=0/.test(url)) url = url.replace("?dl=0", "?raw=1");
+  const entry = {
+    title: $("songTitleInput").value.trim() || "Ohne Titel",
+    artist: $("songArtistInput").value.trim(),
+    src: url,
+    kind: "url",
+    addedBy: auth.member,
+    createdAt: Date.now()
+  };
+  await saveSong(entry);
+  $("songUrlDialog").close();
+});
+
+/* Song hinzufügen – Datei-Upload */
+$("addSongFileBtn")?.addEventListener("click", () => {
+  if (!requireAuth("Songs hinzufügen")) return;
+  $("songFileInput").click();
+});
+
+$("songFileInput")?.addEventListener("change", async (e) => {
+  const file = (e.target.files || [])[0];
+  e.target.value = "";
+  if (!file) return;
+  if (!requireAuth("Songs hinzufügen")) return;
+  if (!file.type.startsWith("audio/")) {
+    showToast("Bitte eine Audio-Datei wählen.", "error");
+    return;
+  }
+  if (file.size > MAX_AUDIO_BYTES) {
+    showToast(`Datei zu gross (${Math.round(file.size/1024)} KB). Max. ${Math.round(MAX_AUDIO_BYTES/1024)} KB – bitte Link statt Upload nutzen.`, "error");
+    return;
+  }
+
+  const progress = document.createElement("div");
+  progress.className = "upload-progress";
+  progress.innerHTML = `<span class="spinner"></span><span>Lade Song hoch…</span>`;
+  document.body.appendChild(progress);
+
+  try {
+    const dataUrl = await fileToDataUrl(file);
+    const title = (prompt("Titel des Songs?", file.name.replace(/\.[^.]+$/, "")) || file.name).trim();
+    const artist = (prompt("Künstler:in (optional):", "") || "").trim();
+    const entry = {
+      title: title || "Ohne Titel",
+      artist,
+      src: dataUrl,
+      kind: "file",
+      addedBy: auth.member,
+      createdAt: Date.now()
+    };
+    await saveSong(entry);
+  } catch (err) {
+    console.error(err);
+    showToast("Upload fehlgeschlagen.", "error");
+  } finally {
+    progress.remove();
+  }
+});
+
+function fileToDataUrl(file) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(reader.result);
+    reader.onerror = reject;
+    reader.readAsDataURL(file);
+  });
+}
+
+async function saveSong(entry) {
+  if (firebaseReady) {
+    try {
+      await addDoc(collection(db, "musik"), { ...entry, createdAt: serverTimestamp() });
+      showToast(`"${entry.title}" hinzugefügt 🎵`, "success");
+    } catch (e) {
+      console.error(e);
+      showToast("Speichern fehlgeschlagen.", "error");
+    }
+  } else {
+    entry.id = "local_" + Date.now();
+    localStore.musik.push(entry);
+    musikCache = [...localStore.musik].sort((a, b) => (a.createdAt || 0) - (b.createdAt || 0));
+    saveLocal("musik", localStore.musik);
+    renderPlaylist();
+    showToast(`"${entry.title}" hinzugefügt 🎵`, "success");
+  }
+}
+
+async function deleteSong(id) {
+  if (!requireAuth("Songs entfernen")) return;
+  const wasCurrent = musikCache[currentSongIdx]?.id === id;
+  if (firebaseReady) {
+    try { await deleteDoc(doc(db, "musik", id)); showToast("Song entfernt.", "success"); }
+    catch (e) { showToast("Löschen fehlgeschlagen.", "error"); return; }
+  } else {
+    localStore.musik = localStore.musik.filter(s => s.id !== id);
+    musikCache = [...localStore.musik].sort((a, b) => (a.createdAt || 0) - (b.createdAt || 0));
+    saveLocal("musik", localStore.musik);
+    renderPlaylist();
+    showToast("Song entfernt.", "success");
+  }
+  if (wasCurrent) {
+    audio.pause();
+    setCurrentSong(-1);
+  }
+}
+
+/* ==========================================================================
    Firebase Listeners (Live)
    ========================================================================== */
 
@@ -927,12 +1276,14 @@ function setupListeners() {
     anwesendCache = localStore.anwesenheit;
     gbCache = localStore.gaestebuch;
     galerieCache = localStore.galerie;
+    musikCache = [...localStore.musik].sort((a, b) => (a.createdAt || 0) - (b.createdAt || 0));
     renderEvents();
     renderPutzplan();
     renderTermine();
     renderAnwesend();
     renderGaestebuch();
     renderGallery();
+    renderPlaylist();
     return;
   }
 
@@ -966,6 +1317,17 @@ function setupListeners() {
     galerieCache = snap.docs.map(d => ({ id: d.id, ...d.data() }));
     renderGallery();
   }, (err) => console.warn("galerie listener:", err.message));
+
+  onSnapshot(query(collection(db, "musik"), orderBy("createdAt", "asc")), (snap) => {
+    const prevId = musikCache[currentSongIdx]?.id;
+    musikCache = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+    // Update current index if current song still exists
+    if (prevId) {
+      const newIdx = musikCache.findIndex(s => s.id === prevId);
+      currentSongIdx = newIdx;
+    }
+    renderPlaylist();
+  }, (err) => console.warn("musik listener:", err.message));
 }
 
 /* ==========================================================================

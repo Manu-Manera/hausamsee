@@ -23,6 +23,7 @@
       <a href="#haus">Haus</a>
       <a href="#bewohner">Bewohner</a>
       <a href="#galerie">Galerie</a>
+      <a href="#musik">Soundtrack</a>
       <a href="#events">Events</a>
       <a href="#kalender">Kalender</a>
       <a href="#gaestebuch">Gästebuch</a>
@@ -111,7 +112,7 @@
     <div class="section-head">
       <span class="eyebrow">Die Truppe</span>
       <h2>Wer hier wohnt</h2>
-      <p class="section-lead">Vier Menschen, viel zu viele Pflanzen, eine Katze und gelegentliche Gäste.</p>
+      <p class="section-lead">Sieben Erwachsene, zwei kleine Abenteurer, viel zu viele Pflanzen und gelegentliche Gäste.</p>
     </div>
     <div class="bewohner-grid" id="bewohnerGrid">
       <!-- Renderet aus JS -->
@@ -134,6 +135,60 @@
       </button>
       <input id="galleryFileInput" type="file" accept="image/*" multiple hidden />
       <p class="wg-hint">Nur für WG-Mitglieder · bitte zuerst anmelden</p>
+    </div>
+  </section>
+
+  <!-- Musik / Soundtrack -->
+  <section id="musik" class="section">
+    <div class="section-head">
+      <span class="eyebrow">Unser Lied</span>
+      <h2>Soundtrack vom Haus am See</h2>
+      <p class="section-lead">
+        Eine kleine Playlist, die zu uns gehört. Klick auf Play und lass dich mitnehmen.
+      </p>
+    </div>
+
+    <div class="player-card">
+      <div class="player-visual">
+        <div class="vinyl">
+          <div class="vinyl-inner"></div>
+        </div>
+        <div class="player-now">
+          <span class="eyebrow small">Gerade läuft</span>
+          <h3 id="nowTitle">Noch kein Song ausgewählt</h3>
+          <p id="nowArtist" class="player-artist"></p>
+        </div>
+      </div>
+
+      <audio id="audioPlayer" preload="metadata"></audio>
+
+      <div class="player-controls">
+        <button id="btnPrev" class="player-btn" aria-label="Vorheriger Song">⏮</button>
+        <button id="btnPlayPause" class="player-btn big" aria-label="Abspielen / Pausieren">▶</button>
+        <button id="btnNext" class="player-btn" aria-label="Nächster Song">⏭</button>
+        <div class="player-progress">
+          <span id="timeCurrent">0:00</span>
+          <input id="progressBar" type="range" min="0" max="100" value="0" step="0.1" aria-label="Fortschritt" />
+          <span id="timeTotal">0:00</span>
+        </div>
+        <div class="player-volume">
+          <span class="vol-icon">🔊</span>
+          <input id="volumeBar" type="range" min="0" max="1" step="0.01" value="0.8" aria-label="Lautstärke" />
+        </div>
+      </div>
+
+      <div class="playlist-wrap">
+        <div class="playlist-head">
+          <h3>Playlist</h3>
+          <div class="playlist-actions" data-wg-only>
+            <button id="addSongUrlBtn" class="btn btn-ghost small">🔗 Link hinzufügen</button>
+            <button id="addSongFileBtn" class="btn btn-ghost small">⬆️ Datei hochladen</button>
+            <input id="songFileInput" type="file" accept="audio/*" hidden />
+            <p class="wg-hint">Nur für WG · max. 900 KB pro Upload</p>
+          </div>
+        </div>
+        <ul id="playlist" class="playlist"></ul>
+      </div>
     </div>
   </section>
 
@@ -320,6 +375,31 @@
       </div>
       <button type="submit" class="btn btn-primary">Anmelden</button>
       <p id="loginError" class="auth-error hidden">Falsches Passwort · versuch's nochmal.</p>
+    </form>
+  </dialog>
+
+  <!-- Song URL Dialog -->
+  <dialog id="songUrlDialog" class="auth-dialog">
+    <form method="dialog" id="songUrlForm" class="auth-form">
+      <button type="button" class="dialog-close" aria-label="Schliessen">×</button>
+      <h2 class="auth-title">🎵 Song per Link hinzufügen</h2>
+      <p class="auth-sub">Direkter Link zu einer MP3/M4A/WAV-Datei (z. B. Dropbox „direct download", Cloud-Speicher).</p>
+      <div class="field">
+        <label for="songUrlInput">Audio-URL</label>
+        <input id="songUrlInput" type="url" required placeholder="https://…" />
+      </div>
+      <div class="row">
+        <div class="field">
+          <label for="songTitleInput">Titel</label>
+          <input id="songTitleInput" required placeholder="Unser Lied" />
+        </div>
+        <div class="field">
+          <label for="songArtistInput">Künstler/in</label>
+          <input id="songArtistInput" placeholder="Optional" />
+        </div>
+      </div>
+      <button type="submit" class="btn btn-primary">Zur Playlist hinzufügen</button>
+      <p class="form-note">Tipp Dropbox-Links: <code>?dl=0</code> am Ende zu <code>?raw=1</code> ändern.</p>
     </form>
   </dialog>
 

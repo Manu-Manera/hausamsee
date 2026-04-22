@@ -29,5 +29,8 @@ service cloud.firestore {
     match /galerie/{document=**} {
       allow read, write: if true;
     }
+    match /musik/{document=**} {
+      allow read, write: if true;
+    }
   }
 }
