@@ -61,5 +61,8 @@ service cloud.firestore {
     match /erinnerungen/{document=**} {
       allow read, write: if true;
     }
+    match /bewaesserung_tasks/{document=**} {
+      allow read, write: if true;
+    }
   }
 }

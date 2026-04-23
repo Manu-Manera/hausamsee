@@ -25,6 +25,11 @@ const { initializeApp } = require("firebase-admin/app");
 const { getFirestore, FieldValue } = require("firebase-admin/firestore");
 const logger = require("firebase-functions/logger");
 
+// Smart-Plug-Provider: "tuya" (Default, für Smart Life / Maxcio / Tapo-Tuya-Varianten)
+// oder "meross" (für Refoss / Meross). Beide Module haben die gleiche Schnittstelle.
+const PLUG_PROVIDER = (process.env.PLUG_PROVIDER || "tuya").toLowerCase();
+const plugs = require(PLUG_PROVIDER === "meross" ? "./meross" : "./tuya");
+
 initializeApp();
 const db = getFirestore();
 
@@ -39,6 +44,10 @@ const WEBSITE_URL = "https://manu-manera.github.io/hausamsee";
 const BEWOHNER = ["Corina", "Jasmin", "Dino", "Andy", "Manu", "Hugues", "Fanny", "Elliot", "Oscar"];
 const KIDS = new Set(["Elliot", "Oscar"]);
 const ADULTS = BEWOHNER.filter((n) => !KIDS.has(n));
+
+// Bewässerung: harte Sicherheitsgrenzen für Steckdosen-Timer.
+const PUMP_DEFAULT_MINUTES = 15; // Default-Timeout, wenn "Pumpe an" ohne Minuten kommt
+const PUMP_MAX_MINUTES = 60;     // Länger lassen wir die Pumpe NIE laufen
 
 // Nachrichten die mit einem dieser Tokens beginnen → direkt an den Bot gerichtet (in Gruppen)
 const BOT_MENTIONS = ["@bot", "!bot", "/bot", "haus am see bot", "haus am see", "@haus", "bot,", "bot:", "bot "];
@@ -167,10 +176,31 @@ function toISODate(d) {
 }
 
 function fmtDate(d) {
-  return new Date(d).toLocaleDateString("de-CH", { day: "2-digit", month: "2-digit", year: "numeric" });
+  return new Date(d).toLocaleDateString("de-CH", { timeZone: "Europe/Zurich", day: "2-digit", month: "2-digit", year: "numeric" });
 }
 function fmtDateTime(d) {
-  return new Date(d).toLocaleString("de-CH", { dateStyle: "short", timeStyle: "short" });
+  return new Date(d).toLocaleString("de-CH", { timeZone: "Europe/Zurich", dateStyle: "short", timeStyle: "short" });
+}
+
+/** Wand-Uhrzeit in Europe/Zurich (y,m,d,h,min) → UTC als Date (Cloud Functions laufen in UTC) */
+function zurichWallToUtcDate(y, m, d, h, min) {
+  let guess = Date.UTC(y, m - 1, d, h, min, 0);
+  for (let i = 0; i < 20; i++) {
+    const parts = new Intl.DateTimeFormat("en-GB", {
+      timeZone: "Europe/Zurich", year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit", hour12: false,
+    }).formatToParts(new Date(guess));
+    const p = (t) => +parts.find((x) => x.type === t).value;
+    const Y = p("year");
+    const M = p("month");
+    const D = p("day");
+    const H = p("hour");
+    const Mi = p("minute");
+    if (Y === y && M === m && D === d && H === h && Mi === min) {
+      return new Date(guess);
+    }
+    guess += (h * 60 + min - (H * 60 + Mi)) * 60 * 1000;
+  }
+  return new Date(guess);
 }
 
 const WEEKDAYS = {
@@ -463,7 +493,8 @@ function isBewerberListCommand(raw) {
   return /^(bewerber(\s*liste)?|bewerberinnen|kandidat(en|innen)?(\s*liste)?|zimmer\s*bewerber)\s*[?.!]*$/i.test(String(raw).trim());
 }
 
-// "Erinner mich am 30.4. um 8:00 an: Rechnung zahlen"
+// "Erinner mich am 30.4. um 8:00 an: Rechnung zahlen" / "Erinner mich 23.04. um 15:40 Uhr an: …"
+// Zeit ist immer in Europe/Zurich (nicht UTC – setHours in der Cloud wäre sonst 1–2h falsch)
 function parseErinnerungMessage(raw) {
   const re = /^(?:erinner(?:e|ung)?\s*(?:mich|uns)?|reminde?r?)\s*(?:am\s+)?(.+?)(?:\s+(?:an|für|zu|to))\s*[:\-–]?\s*(.+)$/i;
   const m = String(raw).trim().match(re);
@@ -471,15 +502,75 @@ function parseErinnerungMessage(raw) {
   const when = m[1];
   const what = m[2].trim();
 
-  // Erst Datum, dann Zeit aus "when"
   let { date, cleaned } = extractDate(when);
   if (!date) date = startOfDay(new Date());
+  const y = date.getUTCFullYear();
+  const mo = date.getUTCMonth() + 1;
+  const da = date.getUTCDate();
   const { hh, mi } = extractTime(cleaned);
-  const d = new Date(date);
-  d.setHours(hh === null ? 9 : hh, mi, 0, 0);
-  if (d < new Date()) return null;
+  const h = hh === null ? 9 : hh;
+  const dUtc = zurichWallToUtcDate(y, mo, da, h, mi);
+  if (dUtc.getTime() <= Date.now()) return null;
 
-  return { date: d.toISOString(), text: what.slice(0, 500) };
+  return { date: dUtc.toISOString(), text: what.slice(0, 500) };
+}
+
+/* --- Bewässerung / Smart Plugs --- */
+
+// Erkennt Bewässerungs-Befehle:
+//   "Pumpe an" / "Pumpe aus" / "Pumpe 15 Min" → Gerät "Pumpe" (Smart-Life-Name)
+//   "Beet aus" / "Steckdose Beet aus"         → { device: "beet", on: false }
+//   "Bewässerung Rasen 20 Min"                → { device: "rasen", on: true, minutes: 20 }
+function parseBewaesserungMessage(raw) {
+  const s = String(raw).trim();
+  const firstWord = (s.split(/\s+/)[0] || "").toLowerCase();
+  const re = /^(?:bewässerung|bewaesserung|pumpe|steckdose|plug)\s+(?:für\s+)?(.+?)$/i;
+  const m = s.match(re);
+  let rest = null;
+  if (m) {
+    rest = m[1].trim();
+  } else {
+    // Erlaubt direkt "Pumpe an" ohne Präfix
+    const short = s.match(/^(pumpe|beet|rasen|garten|terrasse|hecke|tropf|bewässerung|bewaesserung)\s+(.+)$/i);
+    if (!short) return null;
+    rest = `${short[1]} ${short[2]}`;
+  }
+
+  // Zeitangabe finden: "15 min" / "20 minuten" / "5m"
+  let minutes = null;
+  const timeMatch = rest.match(/(\d{1,3})\s*(?:min(?:ute[n]?)?|m)\b/i);
+  if (timeMatch) {
+    minutes = Math.max(1, Math.min(PUMP_MAX_MINUTES, parseInt(timeMatch[1], 10)));
+    rest = rest.replace(timeMatch[0], "").trim();
+  }
+
+  // On/Off
+  let on = null;
+  if (/\b(aus|off|stop+|stopp)\b/i.test(rest)) {
+    on = false;
+    rest = rest.replace(/\b(aus|off|stop+|stopp)\b/gi, "").trim();
+  } else if (/\b(an|ein|on|start(?:en)?)\b/i.test(rest)) {
+    on = true;
+    rest = rest.replace(/\b(an|ein|on|start(?:en)?)\b/gi, "").trim();
+  } else if (minutes !== null) {
+    // "Pumpe 15 Min" ohne explizites "an" → implizit an
+    on = true;
+  } else {
+    return null;
+  }
+
+  let device = rest.replace(/[,.;:!?]/g, " ").replace(/\s+/g, " ").trim();
+  // "Pumpe an" / "Pumpe aus" / "Pumpe 15 Min" — in Smart Life heisst das Gerät oft ebenfalls "Pumpe"
+  if (!device && firstWord === "pumpe") {
+    device = "Pumpe";
+  }
+  if (!device) return null;
+
+  return { device, on, minutes };
+}
+
+function isPumpListCommand(raw) {
+  return /^(pumpen|steckdosen|smartplugs?|plugs?|bewässerung|bewaesserung)\s*(?:status|liste|\?)?\s*[?.!]*$/i.test(String(raw).trim());
 }
 
 /* ==========================================================================
@@ -763,6 +854,11 @@ const HELP_TEXT =
   `➕ "Bewerber: Lisa, 25 | Studentin, super sympatisch | +41 79 123 45 67"\n` +
   `📸 Foto + Caption "Foto Bewerber Lisa" — Foto anhängen\n` +
   `📋 "Bewerber"\n\n` +
+  `*Bewässerung / Smart Plugs*\n` +
+  `💧 "Pumpe an" / "Pumpe aus"\n` +
+  `💧 "Pumpe 15 Min" (auto-aus nach 15 Min, max. ${PUMP_MAX_MINUTES})\n` +
+  `💧 "Beet 20 Min" — andere Steckdose per Name\n` +
+  `📋 "Pumpen" — Status aller Steckdosen\n\n` +
   `🌐 ${WEBSITE_URL}`;
 
 /**
@@ -994,7 +1090,77 @@ async function dispatch(ctx) {
     return true;
   }
 
-  // 14) Help / unbekannt
+  // 14a) Steckdosen-Status / Liste
+  if (isPumpListCommand(rawInput)) {
+    if (!plugs.isConfigured()) {
+      await sendWhatsApp(from, `⚠️ Smart Plugs nicht konfiguriert (TUYA_ACCESS_ID / TUYA_ACCESS_SECRET / TUYA_UID in functions/.env).`);
+      return true;
+    }
+    try {
+      const items = await plugs.getAllStatus();
+      if (!items.length) {
+        await sendWhatsApp(from, `🔌 Keine Smart Plugs gefunden. Sind sie im Refoss-Account eingerichtet?`);
+      } else {
+        const lines = items.map((d) => {
+          if (!d.online) return `📴 ${d.name} — offline`;
+          if (d.on === null) return `❓ ${d.name} — Status unbekannt`;
+          return d.on ? `🟢 ${d.name} — AN` : `⚪ ${d.name} — aus`;
+        });
+        await sendWhatsApp(from, `🔌 *Smart Plugs:*\n\n${lines.join("\n")}`);
+      }
+    } catch (e) {
+      await sendWhatsApp(from, `😕 Konnte die Smart-Plug-Cloud nicht erreichen: ${e.message || e}`);
+      await debugLog("plug_error", { cmd: "list", error: String(e.message || e) });
+    }
+    return true;
+  }
+
+  // 14b) Bewässerung / Pumpe schalten
+  const pump = parseBewaesserungMessage(rawInput);
+  if (pump) {
+    if (!plugs.isConfigured()) {
+      await sendWhatsApp(from, `⚠️ Smart Plugs nicht konfiguriert (TUYA_ACCESS_ID / TUYA_ACCESS_SECRET / TUYA_UID in functions/.env).`);
+      return true;
+    }
+    try {
+      const result = await plugs.setPower(pump.device, pump.on);
+      if (pump.on) {
+        // Auto-Off planen: entweder explizit (pump.minutes) oder Default
+        const minutes = pump.minutes ?? PUMP_DEFAULT_MINUTES;
+        const offAt = new Date(Date.now() + minutes * 60000);
+        await db.collection("bewaesserung_tasks").add({
+          device: result.name,
+          offAt: offAt.toISOString(),
+          requestedBy: from,
+          createdAt: FieldValue.serverTimestamp(),
+          done: false,
+        });
+        const bis = offAt.toLocaleTimeString("de-CH", { hour: "2-digit", minute: "2-digit", timeZone: "Europe/Zurich" });
+        await sendWhatsApp(
+          from,
+          `💧 *${result.name}* läuft. Automatisch aus in *${minutes} Min* (${bis} Uhr).\n\nSchneller aus? Schreib "${result.name} aus".`
+        );
+      } else {
+        // Bei Aus: alle offenen Timer zu diesem Gerät schliessen (nur done==false, Rest im Code filtern = kein Zusatz-Index)
+        const openSnap = await db.collection("bewaesserung_tasks").where("done", "==", false).get();
+        const ops = [];
+        openSnap.forEach((d) => {
+          if (d.data().device === result.name) {
+            ops.push(d.ref.update({ done: true, cancelledAt: FieldValue.serverTimestamp() }));
+          }
+        });
+        await Promise.all(ops);
+        await sendWhatsApp(from, `⏹️ *${result.name}* ist aus.`);
+      }
+      await debugLog("plug_action", { device: result.name, on: pump.on, minutes: pump.minutes });
+    } catch (e) {
+      await sendWhatsApp(from, `😕 Steckdose konnte nicht geschaltet werden:\n${e.message || e}`);
+      await debugLog("plug_error", { cmd: "set", device: pump.device, on: pump.on, error: String(e.message || e) });
+    }
+    return true;
+  }
+
+  // 15) Help / unbekannt
   return false;
 }
 
@@ -1120,7 +1286,7 @@ exports.whatsappWebhook = onRequest({ cors: false, invoker: "public" }, async (r
 
           // Zusätzliche Heuristik: WhatsApp Cloud API liefert derzeit für Gruppen wenig Metadaten.
           // Wenn der Text mit einem Trigger-Wort beginnt ("Neues Event", "Schaden", "Putz", …), akzeptieren wir trotzdem.
-          const looksLikeDirectCommand = /^(neue[rs]?\s+)?(event|termin|anlass|party|geburtstag|apero|schaden|putz|gäste?buch|erinner|foto|bild|bewerber|bewerberin|kandidat|kandidatin|zimmer|events?|termine?|liste|wer\s+(putzt|ist|kommt)|bin\s+(da|hier|weg|fort)|ja\s+|nein\s+)/i.test(combined.trim());
+          const looksLikeDirectCommand = /^(neue[rs]?\s+)?(event|termin|anlass|party|geburtstag|apero|schaden|putz|gäste?buch|erinner|foto|bild|bewerber|bewerberin|kandidat|kandidatin|zimmer|bewässerung|bewaesserung|pumpe|pumpen|steckdose[n]?|smartplugs?|plugs?|beet|rasen|garten|terrasse|hecke|tropf|events?|termine?|liste|wer\s+(putzt|ist|kommt)|bin\s+(da|hier|weg|fort)|ja\s+|nein\s+)/i.test(combined.trim());
 
           if (!isPrivate && !mention.addressed && !looksLikeDirectCommand) {
             await debugLog("group_ignored", { from, senderName, preview: combined.slice(0, 80) });
@@ -1180,19 +1346,21 @@ exports.onNewNachricht = onDocumentCreated("nachrichten/{id}", async (event) => 
 });
 
 /* ==========================================================================
-   Scheduler: Erinnerungen – alle 15 Minuten prüfen
+   Scheduler: Erinnerungen – jede Minute (kein Composite-Index; Zeit = ISO in UTC)
    ========================================================================== */
 
 exports.checkReminders = onSchedule(
-  { schedule: "every 15 minutes", timeZone: "Europe/Zurich" },
+  { schedule: "every 1 minutes", timeZone: "Europe/Zurich" },
   async () => {
     const nowISO = new Date().toISOString();
-    const snap = await db.collection("erinnerungen")
-      .where("sent", "==", false)
-      .where("date", "<=", nowISO).get();
+    const snap = await db.collection("erinnerungen").where("sent", "==", false).get();
+    const due = snap.docs.filter((doc) => {
+      const x = doc.data().date;
+      return x && String(x) <= nowISO;
+    });
 
     const promises = [];
-    snap.forEach((doc) => {
+    due.forEach((doc) => {
       const d = doc.data();
       const target = d.owner || (cfg().recipients[0] || "");
       if (!target) return;
@@ -1204,7 +1372,126 @@ exports.checkReminders = onSchedule(
       })());
     });
     await Promise.all(promises);
-    logger.info(`Reminders sent: ${promises.length}`);
+    if (promises.length) logger.info(`Reminders sent: ${promises.length}`);
+  }
+);
+
+/* ==========================================================================
+   Garten: Wochenplan (Europe/Zurich) — zur vollen Minute schalten
+   ========================================================================== */
+
+function zurichWeekdayKeyAndHM() {
+  const now = new Date();
+  const fmt = new Intl.DateTimeFormat("en-US", {
+    timeZone: "Europe/Zurich",
+    weekday: "short",
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: false,
+  });
+  const parts = fmt.formatToParts(now);
+  const wd = parts.find((p) => p.type === "weekday")?.value;
+  const map = { Mon: "mon", Tue: "tue", Wed: "wed", Thu: "thu", Fri: "fri", Sat: "sat", Sun: "sun" };
+  const dayKey = map[wd] || "mon";
+  const hh = parts.find((p) => p.type === "hour")?.value ?? "00";
+  const mm = parts.find((p) => p.type === "minute")?.value ?? "00";
+  const hm = `${String(hh).padStart(2, "0")}:${String(mm).padStart(2, "0")}`;
+  return { dayKey, hm };
+}
+
+function normHM(t) {
+  if (!t || typeof t !== "string") return "";
+  const m = t.trim().match(/^(\d{1,2}):(\d{2})/);
+  if (!m) return "";
+  return `${String(parseInt(m[1], 10)).padStart(2, "0")}:${m[2]}`;
+}
+
+async function runGartenPlanTick() {
+  if (!plugs.isConfigured()) return;
+  let planSnap;
+  try {
+    planSnap = await db.doc("config/gartenPlan").get();
+  } catch (e) {
+    logger.warn("gartenPlan read failed", e?.message || e);
+    return;
+  }
+  if (!planSnap.exists) return;
+  const data = planSnap.data();
+  if (!data?.enabled) return;
+  const device = String(data.deviceName || "Pumpe").trim() || "Pumpe";
+  const days = data.days && typeof data.days === "object" ? data.days : {};
+  const { dayKey, hm } = zurichWeekdayKeyAndHM();
+  const slots = Array.isArray(days[dayKey]) ? days[dayKey] : [];
+  for (const slot of slots) {
+    const onT = normHM(slot.on);
+    const offT = normHM(slot.off);
+    if (!onT || !offT) continue;
+    if (onT === hm) {
+      try {
+        await plugs.setPower(device, true);
+        await debugLog("garten_plan_on", { device, hm, dayKey });
+      } catch (e) {
+        logger.error("garten_plan_on", e?.message || e);
+      }
+    }
+    if (offT === hm) {
+      try {
+        await plugs.setPower(device, false);
+        await debugLog("garten_plan_off", { device, hm, dayKey });
+      } catch (e) {
+        logger.error("garten_plan_off", e?.message || e);
+      }
+    }
+  }
+}
+
+/* ==========================================================================
+   Scheduler: Bewässerung Auto-Off + Garten Wochenplan – jede Minute
+   ========================================================================== */
+
+exports.checkBewaesserung = onSchedule(
+  { schedule: "every 1 minutes", timeZone: "Europe/Zurich" },
+  async () => {
+    // 1) WhatsApp-Timer (einmalig nach X Min ausschalten)
+    // Nur where("done","==",false) — dann in Memory nach offAt filtern, damit kein
+    // Firestore-Composite-Index nötig ist (Fehler «index required» = nie ausgeschaltet).
+    const nowISO = new Date().toISOString();
+    const snap = await db.collection("bewaesserung_tasks").where("done", "==", false).get();
+    const due = snap.docs.filter((d) => {
+      const x = d.data().offAt;
+      return x && String(x) <= nowISO;
+    });
+
+    if (due.length && plugs.isConfigured()) {
+      for (const doc of due) {
+        const d = doc.data();
+        try {
+          await plugs.setPower(d.device, false);
+          await doc.ref.update({ done: true, offDoneAt: FieldValue.serverTimestamp() });
+          if (d.requestedBy) {
+            await sendWhatsApp(d.requestedBy, `⏹️ *${d.device}* automatisch aus (Timer abgelaufen).`);
+          }
+          await debugLog("plug_auto_off", { device: d.device });
+        } catch (e) {
+          logger.error(`Auto-Off failed for ${d.device}:`, e.message || e);
+          await debugLog("plug_auto_off_error", { device: d.device, error: String(e.message || e) });
+          const createdAt = d.createdAt?.toMillis?.() || 0;
+          const age = Date.now() - createdAt;
+          if (age > 70 * 60 * 1000) {
+            await doc.ref.update({ done: true, failedAt: FieldValue.serverTimestamp(), lastError: String(e.message || e) });
+          }
+        }
+      }
+    } else if (due.length) {
+      logger.warn("Smart Plugs nicht konfiguriert – Auto-Off übersprungen");
+    }
+
+    // 2) Wochenplan (WG-Intern → config/gartenPlan)
+    try {
+      await runGartenPlanTick();
+    } catch (e) {
+      logger.error("runGartenPlanTick", e);
+    }
   }
 );
 

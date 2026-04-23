@@ -135,6 +135,7 @@ const localStore = {
   nachrichten: JSON.parse(localStorage.getItem("has_nachrichten") || "[]"),
   roomOffer: JSON.parse(localStorage.getItem("has_roomOffer") || "null"),
   bewohnertexte: JSON.parse(localStorage.getItem("has_bewohnertexte") || "{}"),
+  gartenPlan: JSON.parse(localStorage.getItem("has_gartenPlan") || "null"),
 };
 function saveLocal(key, value) { localStorage.setItem(`has_${key}`, JSON.stringify(value)); }
 
@@ -3134,7 +3135,163 @@ document.querySelectorAll("[data-intern-tab]").forEach(tab => {
     const key = tab.dataset.internTab;
     const name = key.charAt(0).toUpperCase() + key.slice(1);
     $("ternTab" + name)?.classList.remove("hidden");
+    if (key === "garten") renderGartenWeek();
   });
+});
+
+/* ==========================================================================
+   Gartenbewässerung · Wochenplan (config/gartenPlan)
+   ========================================================================== */
+
+const GARTEN_DAY_DEF = [
+  ["mon", "Montag"],
+  ["tue", "Dienstag"],
+  ["wed", "Mittwoch"],
+  ["thu", "Donnerstag"],
+  ["fri", "Freitag"],
+  ["sat", "Samstag"],
+  ["sun", "Sonntag"],
+];
+
+function defaultGartenPlan() {
+  return {
+    enabled: false,
+    deviceName: "Pumpe",
+    days: { mon: [], tue: [], wed: [], thu: [], fri: [], sat: [], sun: [] },
+  };
+}
+
+let gartenPlanCache = null;
+
+function normalizeGartenPlan(raw) {
+  const d = defaultGartenPlan();
+  if (!raw || typeof raw !== "object") return d;
+  d.enabled = !!raw.enabled;
+  d.deviceName = (raw.deviceName || "Pumpe").trim() || "Pumpe";
+  "mon tue wed thu fri sat sun".split(" ").forEach((k) => {
+    const arr = raw.days?.[k];
+    d.days[k] = Array.isArray(arr)
+      ? arr.map((s) => ({
+        on: String(s.on || "07:00").slice(0, 5),
+        off: String(s.off || "07:15").slice(0, 5),
+      }))
+      : [];
+  });
+  return d;
+}
+
+function gartenSlotRowHtml(day, idx, s) {
+  const on = (s.on || "07:00").slice(0, 5);
+  const off = (s.off || "07:15").slice(0, 5);
+  return `<div class="garten-slot-row" data-day="${day}" data-index="${idx}">
+    <label>Ein <input type="time" class="garten-on" value="${on}" /></label>
+    <label>Aus <input type="time" class="garten-off" value="${off}" /></label>
+    <button type="button" class="mini-btn danger garten-remove-slot" data-day="${day}" data-index="${idx}">Entfernen</button>
+  </div>`;
+}
+
+function renderGartenWeek() {
+  const root = $("gartenWeek");
+  if (!root) return;
+  gartenPlanCache = normalizeGartenPlan(gartenPlanCache);
+  const data = gartenPlanCache;
+  const en = $("gartenPlanEnabled");
+  const dev = $("gartenDeviceName");
+  if (en) en.checked = !!data.enabled;
+  if (dev) dev.value = data.deviceName || "Pumpe";
+
+  root.innerHTML = GARTEN_DAY_DEF.map(([key, label]) => {
+    const slots = data.days[key] || [];
+    const inner = slots.length
+      ? slots.map((s, i) => gartenSlotRowHtml(key, i, s)).join("")
+      : "";
+    return `<div class="garten-day" data-day="${key}">
+      <h4 class="garten-day-title">${label}</h4>
+      <div class="garten-slots">${inner || `<p class="form-note" style="margin:0 0 8px;">Noch keine Zeiten — unten «Zeitblock» klicken.</p>`}</div>
+      <button type="button" class="btn btn-ghost small garten-add-slot" data-day="${key}">+ Zeitblock</button>
+    </div>`;
+  }).join("");
+
+  root.querySelectorAll(".garten-add-slot").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      const day = btn.dataset.day;
+      gartenPlanCache = normalizeGartenPlan(gartenPlanCache);
+      gartenPlanCache.days[day] = gartenPlanCache.days[day] || [];
+      gartenPlanCache.days[day].push({ on: "07:00", off: "07:15" });
+      renderGartenWeek();
+    });
+  });
+  root.querySelectorAll(".garten-remove-slot").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      const day = btn.dataset.day;
+      const idx = parseInt(btn.dataset.index, 10);
+      gartenPlanCache = normalizeGartenPlan(gartenPlanCache);
+      if (gartenPlanCache.days[day]) gartenPlanCache.days[day].splice(idx, 1);
+      renderGartenWeek();
+    });
+  });
+}
+
+function gartenTimeToMin(t) {
+  const m = String(t).trim().match(/^(\d{1,2}):(\d{2})$/);
+  if (!m) return null;
+  return parseInt(m[1], 10) * 60 + parseInt(m[2], 10);
+}
+
+function collectGartenPlanFromDom() {
+  const days = { mon: [], tue: [], wed: [], thu: [], fri: [], sat: [], sun: [] };
+  document.querySelectorAll("#gartenWeek .garten-day").forEach((dayEl) => {
+    const key = dayEl.dataset.day;
+    if (!days[key]) return;
+    dayEl.querySelectorAll(".garten-slot-row").forEach((row) => {
+      const on = row.querySelector(".garten-on")?.value || "07:00";
+      const off = row.querySelector(".garten-off")?.value || "07:15";
+      days[key].push({ on, off });
+    });
+  });
+  return {
+    enabled: !!$("gartenPlanEnabled")?.checked,
+    deviceName: ($("gartenDeviceName")?.value || "Pumpe").trim() || "Pumpe",
+    days,
+  };
+}
+
+$("gartenPlanForm")?.addEventListener("submit", async (e) => {
+  e.preventDefault();
+  if (!requireMember("Gartenplan speichern")) return;
+  const next = collectGartenPlanFromDom();
+  for (const k of Object.keys(next.days)) {
+    for (const slot of next.days[k]) {
+      const a = gartenTimeToMin(slot.on);
+      const b = gartenTimeToMin(slot.off);
+      if (a === null || b === null) {
+        showToast(`Ungültige Zeit in ${k}. Bitte beide Uhrzeiten prüfen.`, "error");
+        return;
+      }
+      if (a >= b) {
+        showToast(`Bei ${k}: «Ein» muss vor «Aus» liegen (${slot.on} → ${slot.off}).`, "error");
+        return;
+      }
+    }
+  }
+  gartenPlanCache = normalizeGartenPlan(next);
+  if (firebaseReady) {
+    try {
+      await setDoc(
+        doc(db, "config", "gartenPlan"),
+        { ...gartenPlanCache, updatedBy: auth.member, updatedAt: serverTimestamp() },
+        { merge: true }
+      );
+      showToast("Gartenplan gespeichert. 🌿", "success");
+    } catch (err) {
+      console.error(err);
+      showToast("Speichern fehlgeschlagen.", "error");
+    }
+  } else {
+    localStore.gartenPlan = gartenPlanCache;
+    saveLocal("gartenPlan", gartenPlanCache);
+    showToast("Gartenplan lokal gespeichert (Demo).", "success");
+  }
 });
 
 /* ==========================================================================
@@ -3976,6 +4133,7 @@ function setupListeners() {
     nachrichtenCache = localStore.nachrichten;
     roomOfferCache = localStore.roomOffer || null;
     bewohnertexteCache = localStore.bewohnertexte || {};
+    gartenPlanCache = normalizeGartenPlan(localStore.gartenPlan);
     renderEvents();
     renderPutzplan();
     renderTermine();
@@ -4082,6 +4240,11 @@ function setupListeners() {
     renderRoomOffer();
     syncBewerbungToggleVisibility();
   }, (err) => console.warn("roomOffer listener:", err.message));
+
+  onSnapshot(doc(db, "config", "gartenPlan"), (snap) => {
+    gartenPlanCache = normalizeGartenPlan(snap.exists() ? snap.data() : null);
+    if (document.querySelector('[data-intern-tab="garten"].active')) renderGartenWeek();
+  }, (err) => console.warn("gartenPlan listener:", err.message));
 
   onSnapshot(collection(db, "bewohnertexte"), (snap) => {
     bewohnertexteCache = {};

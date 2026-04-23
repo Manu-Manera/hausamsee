@@ -9,7 +9,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,400;0,9..144,600;0,9..144,700;1,9..144,400&family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet" />
-  <link rel="stylesheet" href="styles.css?v=20260423c" />
+  <link rel="stylesheet" href="styles.css?v=20260424b" />
   <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Ctext y='.9em' font-size='90'%3E🏡%3C/text%3E%3C/svg%3E" />
 </head>
 <body>
@@ -338,6 +338,7 @@
     <div class="kalender-wrap">
       <div class="kalender-tabs" role="tablist">
         <button class="tab active" data-intern-tab="kandidaten">🏠 Kandidat:innen</button>
+        <button class="tab" data-intern-tab="garten">💧 Gartenbewässerung</button>
         <button class="tab" data-intern-tab="schaeden">🔧 Schäden</button>
         <button class="tab" data-intern-tab="zimmer">🚪 Zimmer frei</button>
         <button class="tab" data-intern-tab="nachrichten">📬 Nachrichten <span class="badge" id="nachrichtenBadge" hidden>0</span></button>
@@ -386,6 +387,31 @@
             <p class="form-note">Jede:r WG-Mitglied kann 👍 / 🤔 / 👎 abstimmen.</p>
           </form>
         </details>
+      </div>
+
+      <!-- Gartenbewässerung (Wochenplan → Cloud schaltet Smart-Plug) -->
+      <div class="kalender-panel hidden" id="ternTabGarten">
+        <p class="section-lead" style="text-align:left;margin-top:0;">
+          Wochenplan mit Ein- und Ausschaltzeiten (Zeitzone Europe/Zürich). Die Steckdose
+          muss in Smart Life denselben Namen tragen wie unten. Aktiv nur wenn der Plan eingeschaltet ist.
+        </p>
+        <form id="gartenPlanForm" class="form-card garten-plan-form">
+          <label class="toggle-row">
+            <input type="checkbox" id="gartenPlanEnabled" />
+            <span>Automatischen Plan aktiv (Server schaltet minütlich per Tuya-Cloud)</span>
+          </label>
+          <div class="field">
+            <label for="gartenDeviceName">Name der Steckdose in Smart Life</label>
+            <input type="text" id="gartenDeviceName" placeholder="Pumpe" autocomplete="off" />
+          </div>
+          <div class="garten-week" id="gartenWeek"></div>
+          <p class="form-note">
+            Pro Tag kannst du mehrere Blöcke anlegen. «Ein» muss vor «Aus» liegen (gleicher Tag, keine Mitternachts-Überhänge in dieser Version).
+          </p>
+          <div class="form-actions">
+            <button type="submit" class="btn btn-primary">Plan speichern</button>
+          </div>
+        </form>
       </div>
 
       <!-- Einstellungen -->
@@ -914,6 +940,6 @@
   <!-- Toast -->
   <div id="toast" class="toast hidden"></div>
 
-  <script type="module" src="app.js?v=20260423c"></script>
+  <script type="module" src="app.js?v=20260424b"></script>
 </body>
 </html>

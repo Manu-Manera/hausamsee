@@ -1339,6 +1339,28 @@ textarea { resize: vertical; font-family: inherit; }
   margin: 0 auto 28px;
   box-shadow: var(--card-shadow);
   overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+  scrollbar-width: thin;
+}
+
+/* WG-Intern: viele Reiter – nicht zusammenquetschen, ggf. umbrechen + volle Breite */
+#intern .kalender-wrap {
+  max-width: min(900px, 100%);
+  padding: 0 8px;
+}
+#intern .kalender-tabs {
+  max-width: 100%;
+  width: 100%;
+  flex-wrap: wrap;
+  justify-content: center;
+  border-radius: var(--r-md);
+  row-gap: 6px;
+}
+#intern .kalender-tabs .tab {
+  flex: 0 1 auto;
+  min-width: max-content;
+  padding: 8px 12px;
+  font-size: 0.82rem;
 }
 
 .tab {
@@ -3228,6 +3250,59 @@ body.is-playing .vinyl {
 .guest-meta {
   font-size: 0.78rem;
   color: var(--text-muted);
+}
+
+/* WG-Intern · Gartenbewässerung (Wochenplan) */
+.garten-plan-form {
+  text-align: left;
+}
+.garten-week {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  margin: 16px 0 8px;
+}
+.garten-day {
+  border: 1px solid var(--card-border);
+  background: rgba(255, 250, 244, 0.65);
+  border-radius: var(--r-md);
+  padding: 12px 14px;
+}
+.garten-day-title {
+  font-size: 0.9rem;
+  font-weight: 700;
+  margin: 0 0 8px;
+  color: var(--text);
+}
+.garten-slots {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.garten-slot-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px 16px;
+}
+.garten-slot-row label {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 0.86rem;
+  color: var(--text-muted);
+}
+.garten-slot-row input[type="time"] {
+  font-family: inherit;
+  font-size: 0.9rem;
+  padding: 6px 8px;
+  border-radius: var(--r-sm);
+  border: 1px solid var(--card-border);
+  background: #fff;
+}
+.garten-day .btn.garten-add-slot {
+  margin-top: 6px;
+  align-self: flex-start;
 }
 
 /* WG-Intern nur für echte Mitglieder (nicht Gäste) */
