@@ -213,8 +213,15 @@
             <input id="evTitle" required placeholder="z.B. Sommerfest am See" />
           </div>
           <div class="field">
-            <label for="evDate">Datum & Uhrzeit</label>
+            <label for="evDate">Beginn (Datum & Uhrzeit)</label>
             <input id="evDate" type="datetime-local" required />
+          </div>
+        </div>
+        <div class="row">
+          <div class="field">
+            <label for="evEndDate">Ende (optional)</label>
+            <input id="evEndDate" type="datetime-local" />
+            <p class="form-note">Wenn leer, rechnet der Kalender mit +2 Stunden.</p>
           </div>
         </div>
         <div class="field">

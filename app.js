@@ -1036,7 +1036,13 @@ function renderEventCard(ev, isPast) {
       <div class="event-date ${hasFlyer ? 'clickable' : ''}" ${dateClickable}>
         <span class="day">${String(d.getDate()).padStart(2,"0")}</span>
         <span class="month">${monthShort[d.getMonth()]}</span>
-        <span class="time">${d.toLocaleTimeString("de-CH",{hour:"2-digit",minute:"2-digit"})}</span>
+        <span class="time">${d.toLocaleTimeString("de-CH",{hour:"2-digit",minute:"2-digit"})}${(() => {
+          const ed = ev.endDate ? new Date(ev.endDate) : null;
+          if (!ed || isNaN(ed.getTime()) || ed <= d) return "";
+          const sameDay = ed.toDateString() === d.toDateString();
+          if (sameDay) return " – " + ed.toLocaleTimeString("de-CH", { hour: "2-digit", minute: "2-digit" });
+          return "";
+        })()}</span>
         ${flyerBadge}
       </div>
       <div class="event-info">
@@ -1108,8 +1114,10 @@ function eventPermalink(ev) {
 function buildIcs(ev) {
   const start = new Date(ev.date);
   if (isNaN(start.getTime())) return null;
-  // Default-Ende: +2h (Events haben aktuell kein Endzeit-Feld)
-  const end = new Date(start.getTime() + 2 * 60 * 60 * 1000);
+  let end = ev.endDate ? new Date(ev.endDate) : null;
+  if (!end || isNaN(end.getTime()) || end <= start) {
+    end = new Date(start.getTime() + 2 * 60 * 60 * 1000);
+  }
   const now = new Date();
   const uid = `${ev.id || "local-" + start.getTime()}@hausamsee`;
   const lines = [
@@ -1153,10 +1161,19 @@ function buildShareText(ev) {
   const when = d.toLocaleString("de-CH", {
     weekday: "long", day: "2-digit", month: "long", hour: "2-digit", minute: "2-digit",
   });
+  const endDate = ev.endDate ? new Date(ev.endDate) : null;
+  let whenLine = `🗓️ ${when}`;
+  if (endDate && !isNaN(endDate.getTime()) && endDate > d) {
+    const sameDay = endDate.toDateString() === d.toDateString();
+    const endFmt = sameDay
+      ? endDate.toLocaleTimeString("de-CH", { hour: "2-digit", minute: "2-digit" })
+      : endDate.toLocaleString("de-CH", { weekday: "long", day: "2-digit", month: "long", hour: "2-digit", minute: "2-digit" });
+    whenLine += ` – ${endFmt}`;
+  }
   const titleLine = `${ev.emoji || "🎉"} ${ev.title} · Haus am See`;
   const parts = [
     titleLine,
-    `🗓️ ${when}`,
+    whenLine,
     `📍 ${ev.location || "Pilatusstrasse 40, Pfäffikon ZH"}`,
   ];
   if (ev.description) parts.push("", ev.description);
@@ -1562,6 +1579,7 @@ function startEditEvent(id) {
   $("evTitle").value = ev.title || "";
   // datetime-local erwartet YYYY-MM-DDTHH:mm
   $("evDate").value = ev.date ? String(ev.date).slice(0, 16) : "";
+  $("evEndDate").value = ev.endDate ? String(ev.endDate).slice(0, 16) : "";
   $("evDesc").value = ev.description || "";
   $("evLocation").value = ev.location || "";
   $("evEmoji").value = ev.emoji || "";
@@ -1589,9 +1607,11 @@ $("eventForm")?.addEventListener("submit", async (e) => {
   e.preventDefault();
   if (!requireAuth("Events bearbeiten")) return;
   const editingId = $("evId").value.trim();
+  const endDateRaw = $("evEndDate")?.value || "";
   const data = {
     title: $("evTitle").value.trim(),
     date: $("evDate").value,
+    endDate: endDateRaw || null,
     description: $("evDesc").value.trim(),
     location: $("evLocation").value.trim() || "Haus am See, Pilatusstrasse 40, Pfäffikon ZH",
     emoji: $("evEmoji").value.trim() || "🎉",
