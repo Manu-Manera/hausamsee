@@ -903,6 +903,30 @@ a:hover { color: var(--terracotta); }
   min-width: 130px;
 }
 
+.event-share {
+  display: flex;
+  gap: 6px;
+  justify-content: center;
+  flex-wrap: wrap;
+  margin-bottom: 6px;
+}
+.event-share-btn {
+  background: white;
+  border: 1px solid var(--card-border);
+  color: var(--text-soft);
+  cursor: pointer;
+  font-size: 0.78rem;
+  font-weight: 500;
+  padding: 6px 12px;
+  border-radius: 999px;
+  transition: all 0.2s var(--ease);
+}
+.event-share-btn:hover {
+  border-color: var(--terracotta);
+  color: var(--terracotta-dark);
+  background: rgba(198, 122, 80, 0.06);
+}
+
 .event-admin {
   display: flex;
   gap: 6px;

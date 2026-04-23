@@ -988,6 +988,14 @@ function renderEvents() {
       });
     }
   });
+  list.querySelectorAll(".event-share-btn").forEach(btn => {
+    btn.addEventListener("click", () => {
+      const ev = eventsCache.find(x => x.id === btn.dataset.id);
+      if (!ev) return;
+      if (btn.dataset.action === "ical") downloadEventIcs(ev);
+      else if (btn.dataset.action === "share") shareEvent(ev);
+    });
+  });
 
   $("statEvents").textContent = upcoming.length;
 }
@@ -1039,6 +1047,12 @@ function renderEventCard(ev, isPast) {
         ${fotosBlock}
       </div>
       <div class="event-actions">
+        ${!isPast ? `
+          <div class="event-share">
+            <button class="event-share-btn" data-action="ical" data-id="${ev.id}" title="In Kalender speichern">📅 Kalender</button>
+            <button class="event-share-btn" data-action="share" data-id="${ev.id}" title="Event teilen">📤 Teilen</button>
+          </div>
+        ` : ""}
         ${auth.isMember ? `
           <div class="event-admin">
             <button class="event-edit" data-id="${ev.id}" title="Event bearbeiten">✏️ Bearbeiten</button>
@@ -1048,6 +1062,137 @@ function renderEventCard(ev, isPast) {
       </div>
     </article>
   `;
+}
+
+/* -------- iCal-Export + Teilen -------- */
+
+function pad2(n) { return String(n).padStart(2, "0"); }
+
+function toIcsDate(date) {
+  // UTC-Format: YYYYMMDDTHHMMSSZ
+  return (
+    date.getUTCFullYear() +
+    pad2(date.getUTCMonth() + 1) +
+    pad2(date.getUTCDate()) + "T" +
+    pad2(date.getUTCHours()) +
+    pad2(date.getUTCMinutes()) +
+    pad2(date.getUTCSeconds()) + "Z"
+  );
+}
+
+function icsEscape(str) {
+  return String(str || "")
+    .replace(/\\/g, "\\\\")
+    .replace(/\n/g, "\\n")
+    .replace(/,/g, "\\,")
+    .replace(/;/g, "\\;");
+}
+
+function foldIcsLine(line) {
+  // iCal: Zeilen > 75 Oktetten müssen umgebrochen werden
+  const out = [];
+  let rest = line;
+  while (rest.length > 74) {
+    out.push(rest.slice(0, 74));
+    rest = " " + rest.slice(74);
+  }
+  out.push(rest);
+  return out.join("\r\n");
+}
+
+function eventPermalink(ev) {
+  const base = location.href.split("#")[0];
+  return `${base}#events`;
+}
+
+function buildIcs(ev) {
+  const start = new Date(ev.date);
+  if (isNaN(start.getTime())) return null;
+  // Default-Ende: +2h (Events haben aktuell kein Endzeit-Feld)
+  const end = new Date(start.getTime() + 2 * 60 * 60 * 1000);
+  const now = new Date();
+  const uid = `${ev.id || "local-" + start.getTime()}@hausamsee`;
+  const lines = [
+    "BEGIN:VCALENDAR",
+    "VERSION:2.0",
+    "PRODID:-//Haus am See//DE",
+    "CALSCALE:GREGORIAN",
+    "METHOD:PUBLISH",
+    "BEGIN:VEVENT",
+    `UID:${uid}`,
+    `DTSTAMP:${toIcsDate(now)}`,
+    `DTSTART:${toIcsDate(start)}`,
+    `DTEND:${toIcsDate(end)}`,
+    foldIcsLine(`SUMMARY:${icsEscape((ev.emoji ? ev.emoji + " " : "") + ev.title)}`),
+    foldIcsLine(`LOCATION:${icsEscape(ev.location || "Haus am See, Pilatusstrasse 40, Pfäffikon ZH")}`),
+  ];
+  const description = [ev.description || "", eventPermalink(ev)].filter(Boolean).join("\n\n");
+  if (description) lines.push(foldIcsLine(`DESCRIPTION:${icsEscape(description)}`));
+  lines.push(foldIcsLine(`URL:${eventPermalink(ev)}`));
+  lines.push("END:VEVENT", "END:VCALENDAR");
+  return lines.join("\r\n");
+}
+
+function downloadEventIcs(ev) {
+  const ics = buildIcs(ev);
+  if (!ics) { showToast("Datum ungültig.", "error"); return; }
+  const blob = new Blob([ics], { type: "text/calendar;charset=utf-8" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = `haus-am-see-${(ev.title || "event").replace(/[^a-z0-9äöüß -]/gi, "").trim().replace(/\s+/g, "-").toLowerCase() || "event"}.ics`;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+  showToast("Termin-Datei heruntergeladen.", "success");
+}
+
+function buildShareText(ev) {
+  const d = new Date(ev.date);
+  const when = d.toLocaleString("de-CH", {
+    weekday: "long", day: "2-digit", month: "long", hour: "2-digit", minute: "2-digit",
+  });
+  const titleLine = `${ev.emoji || "🎉"} ${ev.title} · Haus am See`;
+  const parts = [
+    titleLine,
+    `🗓️ ${when}`,
+    `📍 ${ev.location || "Pilatusstrasse 40, Pfäffikon ZH"}`,
+  ];
+  if (ev.description) parts.push("", ev.description);
+  parts.push("", eventPermalink(ev));
+  return parts.join("\n");
+}
+
+async function shareEvent(ev) {
+  const text = buildShareText(ev);
+  const url = eventPermalink(ev);
+  // 1. Native Web-Share-API (iOS/Android Share-Sheet)
+  if (navigator.share) {
+    try {
+      await navigator.share({
+        title: `${ev.title} · Haus am See`,
+        text,
+        url,
+      });
+      return;
+    } catch (err) {
+      // Nutzer hat abgebrochen → still kein Fallback
+      if (err?.name === "AbortError") return;
+    }
+  }
+  // 2. Fallback: direkt WhatsApp
+  const waUrl = `https://wa.me/?text=${encodeURIComponent(text)}`;
+  const win = window.open(waUrl, "_blank", "noopener");
+  if (!win) {
+    // 3. Letzter Fallback: Zwischenablage
+    try {
+      await navigator.clipboard.writeText(text);
+      showToast("In Zwischenablage kopiert.", "success");
+    } catch {
+      showToast("Teilen nicht möglich.", "error");
+    }
+  }
 }
 
 /* -------- Öffentliche Anmeldeliste -------- */
