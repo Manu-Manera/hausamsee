@@ -479,6 +479,11 @@
                 </select>
               </div>
             </div>
+            <div class="field">
+              <label for="schadFoto">Foto (optional)</label>
+              <input id="schadFoto" type="file" accept="image/*" />
+              <small style="color: var(--text-muted);">Wird automatisch verkleinert.</small>
+            </div>
             <button type="submit" class="btn btn-primary">Schaden speichern</button>
           </form>
         </details>
@@ -830,26 +835,72 @@
     </form>
   </dialog>
 
-  <!-- Bewohner Text Dialog -->
-  <dialog id="bewohnerTextDialog" class="auth-dialog">
-    <form method="dialog" id="bewohnerTextForm" class="auth-form">
-      <button type="button" class="dialog-close" aria-label="Schliessen">×</button>
-      <h2 class="auth-title">✏️ <span id="bewohnerTextName">Beschreibung</span> bearbeiten</h2>
-      <p class="auth-sub">Passe Rolle und Beschreibung an. Mit „Zurücksetzen" kommt wieder der Original-Text.</p>
-      <input type="hidden" id="bewohnerTextTarget" />
-      <div class="field">
-        <label for="bewohnerTextRole">Rolle / Spitzname</label>
-        <input id="bewohnerTextRole" maxlength="80" placeholder="z. B. Brunch-Queen" />
-      </div>
-      <div class="field">
-        <label for="bewohnerTextBio">Beschreibung</label>
-        <textarea id="bewohnerTextBio" rows="4" maxlength="500" placeholder="Kurz und knackig – was macht diese Person aus?"></textarea>
-      </div>
-      <div class="form-actions">
-        <button type="submit" class="btn btn-primary">Speichern</button>
-        <button type="button" class="btn btn-ghost" id="bewohnerTextReset">Zurücksetzen</button>
-      </div>
-    </form>
+  <!-- Bewohner Profil Dialog (View + Edit) -->
+  <dialog id="bewohnerProfileDialog" class="profile-dialog">
+    <div class="profile-shell">
+      <button type="button" class="dialog-close" id="profileClose" aria-label="Schliessen">×</button>
+
+      <!-- VIEW MODE -->
+      <section class="profile-view" id="profileView">
+        <div class="profile-header">
+          <div class="profile-avatar" id="profileAvatar"></div>
+          <div class="profile-head-text">
+            <h2 id="profileName">Name</h2>
+            <span class="profile-role" id="profileRole"></span>
+          </div>
+        </div>
+        <p class="profile-bio" id="profileBio"></p>
+        <div class="profile-sections" id="profileSections"></div>
+        <div class="profile-actions">
+          <button type="button" class="btn btn-primary" id="profileEditBtn" data-wg-only hidden>✏️ Profil bearbeiten</button>
+          <button type="button" class="btn btn-ghost" id="profileCloseBtn">Schliessen</button>
+        </div>
+      </section>
+
+      <!-- EDIT MODE -->
+      <form method="dialog" id="bewohnerTextForm" class="profile-edit" hidden>
+        <h2 class="auth-title">✏️ <span id="bewohnerTextName">Profil</span> bearbeiten</h2>
+        <p class="auth-sub">Erzähl was über dich. Felder leer lassen = auf Standard zurücksetzen.</p>
+        <input type="hidden" id="bewohnerTextTarget" />
+        <div class="field">
+          <label for="bewohnerTextRole">Rolle / Spitzname</label>
+          <input id="bewohnerTextRole" maxlength="80" placeholder="z. B. Brunch-Queen" />
+        </div>
+        <div class="field">
+          <label for="bewohnerTextBio">Kurzbeschreibung</label>
+          <textarea id="bewohnerTextBio" rows="2" maxlength="280" placeholder="Ein Satz der dich beschreibt"></textarea>
+        </div>
+        <div class="field">
+          <label for="bewohnerTextLong">Über mich (ausführlich)</label>
+          <textarea id="bewohnerTextLong" rows="5" maxlength="2000" placeholder="Was macht dich aus? Wo kommst du her? Was gibt dir Energie?"></textarea>
+        </div>
+        <div class="grid-2">
+          <div class="field">
+            <label for="bewohnerTextHobby">🎨 Hobby / Leidenschaft</label>
+            <input id="bewohnerTextHobby" maxlength="120" placeholder="z. B. Bouldern, Kochen..." />
+          </div>
+          <div class="field">
+            <label for="bewohnerTextFood">🍴 Lieblingsessen</label>
+            <input id="bewohnerTextFood" maxlength="120" placeholder="z. B. Pasta mit Kürbis" />
+          </div>
+        </div>
+        <div class="grid-2">
+          <div class="field">
+            <label for="bewohnerTextMotto">💬 Motto</label>
+            <input id="bewohnerTextMotto" maxlength="140" placeholder="z. B. Morgen ist auch noch ein See da" />
+          </div>
+          <div class="field">
+            <label for="bewohnerTextLink">🔗 Link (Spotify, Insta, Website...)</label>
+            <input id="bewohnerTextLink" type="url" maxlength="300" placeholder="https://..." />
+          </div>
+        </div>
+        <div class="form-actions">
+          <button type="submit" class="btn btn-primary">Speichern</button>
+          <button type="button" class="btn btn-ghost" id="profileEditCancel">Abbrechen</button>
+          <button type="button" class="btn btn-danger" id="bewohnerTextReset">Zurücksetzen</button>
+        </div>
+      </form>
+    </div>
   </dialog>
 
   <!-- Lightbox -->

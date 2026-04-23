@@ -595,7 +595,23 @@ function getBewohnerText(name) {
   return {
     role: override.role ?? base.role ?? "",
     bio: override.bio ?? base.bio ?? "",
+    longBio: override.longBio ?? "",
+    hobby: override.hobby ?? "",
+    food: override.food ?? "",
+    motto: override.motto ?? "",
+    link: override.link ?? "",
   };
+}
+
+function escapeAttr(s) { return escapeHtml(String(s || "")); }
+function normalizeUrl(u) {
+  if (!u) return "";
+  try {
+    const s = String(u).trim();
+    if (!s) return "";
+    if (/^(https?:|mailto:|tel:)/i.test(s)) return s;
+    return "https://" + s;
+  } catch { return ""; }
 }
 
 function renderBewohner() {
@@ -607,22 +623,24 @@ function renderBewohner() {
       ? `<img src="${escapeHtml(photo)}" alt="${escapeHtml(b.name)}" loading="lazy" />`
       : `<span class="avatar-emoji">${b.emoji}</span>`;
     const text = getBewohnerText(b.name);
+    const hasMore = !!(text.longBio || text.hobby || text.food || text.motto || text.link);
     return `
-      <article class="bewohner-card ${b.kid ? 'is-kid' : ''}" data-name="${escapeHtml(b.name)}">
+      <article class="bewohner-card ${b.kid ? 'is-kid' : ''}" data-name="${escapeHtml(b.name)}" tabindex="0" role="button" aria-label="Profil von ${escapeHtml(b.name)} öffnen">
         <div class="bewohner-avatar">
           ${avatar}
           ${auth.isMember ? `
-            <button class="avatar-edit" data-name="${escapeHtml(b.name)}" title="Foto ändern">📷</button>
+            <button class="avatar-edit" data-name="${escapeHtml(b.name)}" title="Foto ändern" aria-label="Foto ändern">📷</button>
           ` : ""}
+          ${hasMore ? `<span class="profile-indicator" title="Ausführliches Profil">👤</span>` : ""}
         </div>
         <div class="bewohner-info">
           <h3>
             ${escapeHtml(b.name)}
             ${b.kid ? '<span class="kid-badge" title="Jüngstes Mitglied">Kid</span>' : ''}
-            ${auth.isMember ? `<button class="bewohner-text-edit" data-name="${escapeHtml(b.name)}" title="Beschreibung bearbeiten">✏️</button>` : ""}
           </h3>
           <span class="bewohner-role">${escapeHtml(text.role)}</span>
           <p class="bewohner-bio">${escapeHtml(text.bio)}</p>
+          <span class="bewohner-open-hint">Tippen für Profil →</span>
         </div>
       </article>
     `;
@@ -635,88 +653,180 @@ function renderBewohner() {
       uploadBewohnerFoto(btn.dataset.name);
     });
   });
-  grid.querySelectorAll(".bewohner-text-edit").forEach(btn => {
-    btn.addEventListener("click", (e) => {
-      e.stopPropagation();
-      openBewohnerTextDialog(btn.dataset.name);
+  grid.querySelectorAll(".bewohner-card").forEach(card => {
+    const openProfile = () => openBewohnerProfile(card.dataset.name);
+    card.addEventListener("click", (e) => {
+      if (e.target.closest("button")) return;
+      openProfile();
+    });
+    card.addEventListener("keydown", (e) => {
+      if (e.key === "Enter" || e.key === " ") { e.preventDefault(); openProfile(); }
     });
   });
 }
 
-function openBewohnerTextDialog(name) {
-  if (!requireMember("Beschreibung bearbeiten")) return;
-  const dlg = $("bewohnerTextDialog");
+function openBewohnerProfile(name) {
+  const dlg = $("bewohnerProfileDialog");
   if (!dlg) return;
+  renderBewohnerProfileView(name);
+  setBewohnerProfileMode("view");
+  try { dlg.showModal(); } catch { dlg.setAttribute("open", ""); }
+}
+
+function setBewohnerProfileMode(mode) {
+  const view = $("profileView");
+  const edit = $("bewohnerTextForm");
+  if (!view || !edit) return;
+  if (mode === "edit") { view.hidden = true; edit.hidden = false; }
+  else { view.hidden = false; edit.hidden = true; }
+}
+
+function renderBewohnerProfileView(name) {
+  const base = BEWOHNER.find(b => b.name === name);
+  if (!base) return;
+  const text = getBewohnerText(name);
+  const photo = bewohnerfotosCache[name]?.src;
+  const avatar = photo
+    ? `<img src="${escapeHtml(photo)}" alt="${escapeHtml(name)}" />`
+    : `<span class="avatar-emoji">${base.emoji}</span>`;
+  $("profileAvatar").innerHTML = avatar;
+  $("profileName").textContent = name + (base.kid ? " 👶" : "");
+  $("profileRole").textContent = text.role;
+  $("profileBio").textContent = text.bio;
+
+  const sections = [];
+  if (text.longBio) sections.push(`<div class="profile-section profile-long"><h4>Über mich</h4><p>${escapeHtml(text.longBio).replace(/\n/g, "<br>")}</p></div>`);
+  if (text.hobby) sections.push(`<div class="profile-section"><h4>🎨 Hobby</h4><p>${escapeHtml(text.hobby)}</p></div>`);
+  if (text.food) sections.push(`<div class="profile-section"><h4>🍴 Lieblingsessen</h4><p>${escapeHtml(text.food)}</p></div>`);
+  if (text.motto) sections.push(`<div class="profile-section profile-motto"><h4>💬 Motto</h4><p>„${escapeHtml(text.motto)}"</p></div>`);
+  if (text.link) {
+    const url = normalizeUrl(text.link);
+    sections.push(`<div class="profile-section"><h4>🔗 Link</h4><p><a href="${escapeAttr(url)}" target="_blank" rel="noopener noreferrer">${escapeHtml(text.link)}</a></p></div>`);
+  }
+  if (!sections.length) {
+    sections.push(`<div class="profile-empty">${auth.isMember ? "Noch kein ausführliches Profil. Klick auf „Profil bearbeiten" um was zu erzählen." : `${name} hat hier noch kein ausführliches Profil hinterlegt.`}</div>`);
+  }
+  $("profileSections").innerHTML = sections.join("");
+
+  const editBtn = $("profileEditBtn");
+  if (editBtn) {
+    editBtn.hidden = !auth.isMember;
+    editBtn.onclick = () => openBewohnerEditMode(name);
+  }
+}
+
+function openBewohnerEditMode(name) {
+  if (!requireMember("Profil bearbeiten")) return;
   const text = getBewohnerText(name);
   $("bewohnerTextTarget").value = name;
   $("bewohnerTextName").textContent = name;
-  $("bewohnerTextRole").value = text.role;
-  $("bewohnerTextBio").value = text.bio;
-  dlg.showModal();
+  $("bewohnerTextRole").value = text.role || "";
+  $("bewohnerTextBio").value = text.bio || "";
+  $("bewohnerTextLong").value = text.longBio || "";
+  $("bewohnerTextHobby").value = text.hobby || "";
+  $("bewohnerTextFood").value = text.food || "";
+  $("bewohnerTextMotto").value = text.motto || "";
+  $("bewohnerTextLink").value = text.link || "";
+  setBewohnerProfileMode("edit");
 }
 
 async function saveBewohnerText(name, payload) {
+  // Optimistisches Update – sofort im UI zeigen
+  bewohnertexteCache = { ...(bewohnertexteCache || {}), [name]: { ...payload, updatedAt: Date.now() } };
+  renderBewohner();
+
   if (firebaseReady) {
     try {
-      await setDoc(doc(db, "bewohnertexte", name), { ...payload, updatedBy: auth.member, updatedAt: serverTimestamp() }, { merge: true });
-    } catch (e) { console.error(e); showToast("Speichern fehlgeschlagen.", "error"); return false; }
+      await setDoc(doc(db, "bewohnertexte", name), { ...payload, updatedBy: auth.member || null, updatedAt: serverTimestamp() }, { merge: true });
+    } catch (e) {
+      console.error("saveBewohnerText:", e);
+      const msg = (e?.code === "permission-denied")
+        ? "Keine Berechtigung. Bitte firestore.rules in Firebase deployen (Collection: bewohnertexte)."
+        : `Speichern fehlgeschlagen: ${e?.message || e?.code || "Unbekannt"}`;
+      showToast(msg, "error");
+      return false;
+    }
   } else {
     localStore.bewohnertexte[name] = { ...payload, updatedAt: Date.now() };
-    bewohnertexteCache = localStore.bewohnertexte;
     saveLocal("bewohnertexte", localStore.bewohnertexte);
-    renderBewohner();
   }
   return true;
 }
 
 async function resetBewohnerText(name) {
+  if (bewohnertexteCache && bewohnertexteCache[name]) {
+    const copy = { ...bewohnertexteCache };
+    delete copy[name];
+    bewohnertexteCache = copy;
+    renderBewohner();
+  }
   if (firebaseReady) {
     try { await deleteDoc(doc(db, "bewohnertexte", name)); }
-    catch (e) { console.error(e); showToast("Zurücksetzen fehlgeschlagen.", "error"); return false; }
+    catch (e) {
+      console.error("resetBewohnerText:", e);
+      const msg = (e?.code === "permission-denied")
+        ? "Keine Berechtigung. Bitte firestore.rules deployen."
+        : `Zurücksetzen fehlgeschlagen: ${e?.message || e?.code || "Unbekannt"}`;
+      showToast(msg, "error");
+      return false;
+    }
   } else {
     delete localStore.bewohnertexte[name];
-    bewohnertexteCache = localStore.bewohnertexte;
     saveLocal("bewohnertexte", localStore.bewohnertexte);
-    renderBewohner();
   }
   return true;
 }
 
 $("bewohnerTextForm")?.addEventListener("submit", async (e) => {
   e.preventDefault();
-  if (!requireMember("Beschreibung speichern")) return;
+  if (!requireMember("Profil speichern")) return;
   const name = $("bewohnerTextTarget").value;
   if (!name) return;
-  const role = $("bewohnerTextRole").value.trim();
-  const bio = $("bewohnerTextBio").value.trim();
-  if (!role && !bio) {
-    // Nichts eingegeben → als Reset behandeln
+  const payload = {
+    role: $("bewohnerTextRole").value.trim(),
+    bio: $("bewohnerTextBio").value.trim(),
+    longBio: $("bewohnerTextLong").value.trim(),
+    hobby: $("bewohnerTextHobby").value.trim(),
+    food: $("bewohnerTextFood").value.trim(),
+    motto: $("bewohnerTextMotto").value.trim(),
+    link: $("bewohnerTextLink").value.trim(),
+  };
+  const allEmpty = Object.values(payload).every(v => !v);
+  if (allEmpty) {
     if (await resetBewohnerText(name)) {
-      $("bewohnerTextDialog").close();
-      showToast("Zurückgesetzt.", "success");
+      renderBewohnerProfileView(name);
+      setBewohnerProfileMode("view");
+      showToast("Profil zurückgesetzt.", "success");
     }
     return;
   }
-  if (await saveBewohnerText(name, { role, bio })) {
-    $("bewohnerTextDialog").close();
-    showToast("Gespeichert. ✨", "success");
+  if (await saveBewohnerText(name, payload)) {
+    renderBewohnerProfileView(name);
+    setBewohnerProfileMode("view");
+    showToast("Profil gespeichert. ✨", "success");
   }
 });
 
-document.querySelector("#bewohnerTextDialog .dialog-close")?.addEventListener("click", () => {
-  $("bewohnerTextDialog").close();
+$("profileEditCancel")?.addEventListener("click", () => {
+  const name = $("bewohnerTextTarget").value;
+  if (name) renderBewohnerProfileView(name);
+  setBewohnerProfileMode("view");
 });
-$("bewohnerTextDialog")?.addEventListener("click", (e) => {
-  if (e.target === $("bewohnerTextDialog")) $("bewohnerTextDialog").close();
+
+$("profileClose")?.addEventListener("click", () => $("bewohnerProfileDialog").close());
+$("profileCloseBtn")?.addEventListener("click", () => $("bewohnerProfileDialog").close());
+$("bewohnerProfileDialog")?.addEventListener("click", (e) => {
+  if (e.target === $("bewohnerProfileDialog")) $("bewohnerProfileDialog").close();
 });
 
 $("bewohnerTextReset")?.addEventListener("click", async () => {
   if (!requireMember("Zurücksetzen")) return;
   const name = $("bewohnerTextTarget").value;
   if (!name) return;
-  if (!confirm(`Text für ${name} auf Original zurücksetzen?`)) return;
+  if (!confirm(`Profil für ${name} auf Original zurücksetzen?`)) return;
   if (await resetBewohnerText(name)) {
-    $("bewohnerTextDialog").close();
+    renderBewohnerProfileView(name);
+    setBewohnerProfileMode("view");
     showToast("Zurückgesetzt.", "success");
   }
 });
@@ -3207,6 +3317,7 @@ function renderSchaeden() {
           ${s.addedBy ? `<span>· gemeldet von ${escapeHtml(s.addedBy)}</span>` : ""}
         </div>
         ${s.beschreibung ? `<p class="schaden-body">${escapeHtml(s.beschreibung)}</p>` : ""}
+        ${s.image ? `<div class="schaden-foto"><img src="${s.image}" alt="Foto zum Schaden: ${escapeAttr(s.titel || "")}" loading="lazy" /></div>` : ""}
         <div class="schaden-actions">
           <div class="schaden-actions-left">
             <select class="status-select-inline" data-id="${s.id}" data-action="status">
@@ -3236,6 +3347,12 @@ function renderSchaeden() {
       const s = schaedenCache.find(x => x.id === btn.dataset.id);
       if (!s) return;
       if (confirm(`Schaden "${s.titel}" wirklich löschen?`)) deleteSchaden(btn.dataset.id);
+    });
+  });
+
+  list.querySelectorAll(".schaden-foto img").forEach((img) => {
+    img.addEventListener("click", () => {
+      openLightbox({ src: img.src, caption: img.alt || "" });
     });
   });
 }
@@ -3281,6 +3398,18 @@ $("schadenForm")?.addEventListener("submit", async (e) => {
     addedBy: auth.member,
     createdAt: Date.now()
   };
+
+  const fotoInput = $("schadFoto");
+  const fotoFile = fotoInput?.files?.[0];
+  if (fotoFile) {
+    try {
+      entry.image = await resizeImage(fotoFile, 1200);
+    } catch (err) {
+      console.warn("Foto-Resize fehlgeschlagen:", err);
+      showToast("Foto konnte nicht verarbeitet werden.", "warning");
+    }
+  }
+
   if (firebaseReady) {
     try { await addDoc(collection(db, "schaeden"), { ...entry, createdAt: serverTimestamp() }); }
     catch (err) { showToast("Speichern fehlgeschlagen.", "error"); return; }
@@ -3422,8 +3551,12 @@ $("kontaktForm")?.addEventListener("submit", async (e) => {
     try {
       await addDoc(collection(db, "nachrichten"), { ...entry, createdAt: serverTimestamp() });
     } catch (err) {
-      console.error(err);
-      showToast("Senden fehlgeschlagen.", "error");
+      console.error("kontaktForm submit:", err);
+      const code = err?.code || "";
+      const msg = code === "permission-denied"
+        ? "Keine Berechtigung – Firestore-Rules für 'nachrichten' sind noch nicht deployt. Bitte in der Firebase-Konsole die Rules aus firestore.rules veröffentlichen."
+        : `Senden fehlgeschlagen (${code || err?.message || "unbekannt"}).`;
+      showToast(msg, "error");
       if (submitBtn) submitBtn.disabled = false;
       return;
     }
@@ -3436,7 +3569,7 @@ $("kontaktForm")?.addEventListener("submit", async (e) => {
   }
   e.target.reset();
   if (submitBtn) submitBtn.disabled = false;
-  updateBewerbungVisibility();
+  syncBewerbungToggleVisibility();
   showToast(isBewerbung ? "Danke! Bewerbung ist raus. 🚪" : "Danke! Nachricht ist raus. 💌", "success");
 });
 
@@ -3581,19 +3714,23 @@ $("roomPhotos")?.addEventListener("change", async (e) => {
 
 /* --- Bewerbungs-Modus im Kontaktformular --- */
 
-function updateBewerbungVisibility() {
+function syncBewerbungToggleVisibility() {
   const toggle = $("bewerbungToggle");
+  const cb = $("kontaktIsBewerbung");
+  const active = !!roomOfferCache?.active;
+  if (toggle) toggle.hidden = !active;
+  if (!active && cb) cb.checked = false;
+  updateBewerbungVisibility();
+}
+
+function updateBewerbungVisibility() {
   const cb = $("kontaktIsBewerbung");
   const bewerbungFields = document.querySelectorAll(".bewerbung-only");
   const heading = $("kontaktHeading");
   const intro = $("kontaktIntro");
   const message = $("kontaktMessage");
-  const active = !!roomOfferCache?.active;
-
-  if (toggle) toggle.hidden = !active;
-  if (!active && cb) cb.checked = false;
-
   const isBewerbung = !!(cb && cb.checked);
+
   bewerbungFields.forEach(el => el.classList.toggle("hidden", !isBewerbung));
 
   if (heading) heading.textContent = isBewerbung ? "🚪 Bewerbung fürs Zimmer" : "✉️ Schreib uns";
@@ -3799,7 +3936,7 @@ function setupListeners() {
     renderGuestsList();
     renderNachrichten();
     renderRoomOffer();
-    updateBewerbungVisibility();
+    syncBewerbungToggleVisibility();
     return;
   }
 
@@ -3889,7 +4026,7 @@ function setupListeners() {
   onSnapshot(doc(db, "config", "roomOffer"), (snap) => {
     roomOfferCache = snap.exists() ? snap.data() : null;
     renderRoomOffer();
-    updateBewerbungVisibility();
+    syncBewerbungToggleVisibility();
   }, (err) => console.warn("roomOffer listener:", err.message));
 
   onSnapshot(collection(db, "bewohnertexte"), (snap) => {

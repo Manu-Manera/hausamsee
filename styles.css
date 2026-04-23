@@ -493,6 +493,17 @@ a:hover { color: var(--terracotta); }
   transform: translateY(-2px);
 }
 
+.btn-danger {
+  background: rgba(185, 74, 61, 0.1);
+  color: var(--berry, #b94a3d);
+  border: 1px solid rgba(185, 74, 61, 0.4);
+}
+.btn-danger:hover {
+  background: var(--berry, #b94a3d);
+  color: white;
+  transform: translateY(-2px);
+}
+
 /* ============================================
    Sections
    ============================================ */
@@ -598,7 +609,114 @@ a:hover { color: var(--terracotta); }
   transition: transform 0.3s var(--ease);
 }
 
-.bewohner-card:hover { transform: translateY(-6px); }
+.bewohner-card:hover { transform: translateY(-6px); cursor: pointer; }
+.bewohner-card:focus-visible { outline: 3px solid var(--terracotta); outline-offset: 3px; }
+
+.profile-indicator {
+  position: absolute;
+  left: 10px;
+  bottom: 10px;
+  background: rgba(61, 40, 23, 0.72);
+  color: #fff;
+  border-radius: 999px;
+  width: 30px;
+  height: 30px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 0.85rem;
+  box-shadow: 0 4px 12px rgba(0,0,0,0.22);
+}
+.bewohner-open-hint {
+  display: inline-block;
+  margin-top: 8px;
+  font-size: 0.78rem;
+  color: var(--terracotta-dark);
+  font-weight: 500;
+  opacity: 0.85;
+}
+
+/* Profile Dialog */
+.profile-dialog {
+  border: none;
+  padding: 0;
+  background: transparent;
+  border-radius: var(--r-lg);
+  max-width: 560px;
+  width: 94vw;
+  max-height: 92vh;
+}
+.profile-dialog::backdrop {
+  background: rgba(46, 32, 21, 0.78);
+  backdrop-filter: blur(6px);
+}
+.profile-shell {
+  position: relative;
+  background: linear-gradient(160deg, #fffaf0, #f6ead4);
+  border-radius: var(--r-lg);
+  border: 1px solid var(--card-border);
+  box-shadow: 0 30px 60px -20px rgba(61, 40, 23, 0.45);
+  max-height: 92vh;
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+}
+.profile-view, .profile-edit { padding: 30px 28px 26px; display: flex; flex-direction: column; gap: 14px; }
+.profile-edit[hidden], .profile-view[hidden] { display: none; }
+
+.profile-header { display: flex; gap: 18px; align-items: center; }
+.profile-avatar {
+  width: 96px; height: 96px;
+  border-radius: 50%;
+  overflow: hidden;
+  background: linear-gradient(135deg, var(--cream-2), var(--sand));
+  display: flex; align-items: center; justify-content: center;
+  font-size: 3rem;
+  flex-shrink: 0;
+  border: 3px solid rgba(198, 122, 80, 0.35);
+}
+.profile-avatar img { width: 100%; height: 100%; object-fit: cover; }
+.profile-head-text h2 { margin: 0; font-size: 1.6rem; }
+.profile-role {
+  display: inline-block;
+  margin-top: 4px;
+  font-size: 0.82rem;
+  color: var(--terracotta-dark);
+  background: rgba(198, 122, 80, 0.12);
+  border-radius: 999px;
+  padding: 3px 10px;
+}
+.profile-bio { font-size: 1rem; margin: 0; color: var(--cocoa); }
+.profile-sections { display: flex; flex-direction: column; gap: 10px; }
+.profile-section {
+  background: rgba(255,255,255,0.6);
+  border: 1px solid rgba(198, 122, 80, 0.18);
+  border-radius: var(--r-sm);
+  padding: 12px 14px;
+}
+.profile-section h4 { margin: 0 0 4px; font-size: 0.9rem; color: var(--terracotta-dark); }
+.profile-section p { margin: 0; font-size: 0.95rem; line-height: 1.5; word-break: break-word; }
+.profile-section a { color: var(--terracotta-dark); text-decoration: underline; }
+.profile-motto p { font-style: italic; }
+.profile-long p { white-space: pre-wrap; }
+.profile-empty {
+  text-align: center;
+  color: var(--text-soft);
+  font-size: 0.9rem;
+  padding: 14px 10px;
+  background: rgba(255,255,255,0.5);
+  border-radius: var(--r-sm);
+  border: 1px dashed rgba(198, 122, 80, 0.25);
+}
+.profile-actions { display: flex; gap: 10px; flex-wrap: wrap; margin-top: 8px; }
+.profile-actions .btn { flex: 1 1 auto; }
+
+.profile-edit .grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+@media (max-width: 600px) {
+  .profile-edit .grid-2 { grid-template-columns: 1fr; }
+  .profile-avatar { width: 72px; height: 72px; font-size: 2.3rem; }
+  .profile-head-text h2 { font-size: 1.3rem; }
+  .profile-view, .profile-edit { padding: 24px 18px 20px; }
+}
 
 .bewohner-avatar {
   position: relative;
@@ -1769,12 +1887,60 @@ textarea { resize: vertical; font-family: inherit; }
 .toggle-row {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 10px;
   margin-bottom: 12px;
   cursor: pointer;
   font-weight: 500;
+  user-select: none;
+  -webkit-user-select: none;
+  -webkit-tap-highlight-color: rgba(198, 122, 80, 0.2);
+  position: relative;
+  z-index: 1;
 }
-.toggle-row input[type="checkbox"] { width: 16px; height: 16px; }
+.toggle-row[hidden] { display: none !important; }
+.toggle-row input[type="checkbox"] {
+  width: 22px;
+  height: 22px;
+  flex-shrink: 0;
+  cursor: pointer;
+  margin: 0;
+  padding: 0;
+  pointer-events: auto;
+  -webkit-appearance: none;
+  appearance: none;
+  background: var(--linen);
+  border: 2px solid rgba(139, 94, 60, 0.35);
+  border-radius: 6px;
+  position: relative;
+  transition: all 0.15s var(--ease);
+}
+.toggle-row input[type="checkbox"]:hover {
+  border-color: var(--terracotta);
+}
+.toggle-row input[type="checkbox"]:checked {
+  background: var(--terracotta);
+  border-color: var(--terracotta);
+}
+.toggle-row input[type="checkbox"]:checked::after {
+  content: "";
+  position: absolute;
+  left: 5px;
+  top: 1px;
+  width: 6px;
+  height: 11px;
+  border: solid white;
+  border-width: 0 2.5px 2.5px 0;
+  transform: rotate(45deg);
+}
+.toggle-row input[type="checkbox"]:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 3px rgba(198, 122, 80, 0.25);
+}
+.toggle-row span {
+  cursor: pointer;
+  pointer-events: auto;
+  flex: 1;
+}
 
 /* Bewerbungs-Felder im Kontaktformular */
 .kontakt-form .toggle-row {
@@ -2021,7 +2187,11 @@ textarea { resize: vertical; font-family: inherit; }
   display: flex;
   flex-direction: column;
   gap: 14px;
+  max-height: 85vh;
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
 }
+.auth-dialog { max-height: 90vh; }
 
 .dialog-close {
   position: absolute;
@@ -2827,6 +2997,23 @@ body.is-playing .vinyl {
   color: var(--text-soft);
   line-height: 1.55;
   white-space: pre-wrap;
+}
+
+.schaden-foto {
+  margin: 4px 0 2px;
+  border-radius: var(--r-sm);
+  overflow: hidden;
+  max-width: 360px;
+  border: 1px solid var(--card-border);
+  background: var(--linen);
+  cursor: zoom-in;
+}
+.schaden-foto img {
+  display: block;
+  width: 100%;
+  height: auto;
+  max-height: 280px;
+  object-fit: cover;
 }
 
 .schaden-actions {

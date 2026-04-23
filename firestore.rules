@@ -55,5 +55,11 @@ service cloud.firestore {
     match /bewohnertexte/{document=**} {
       allow read, write: if true;
     }
+    match /whatsapp_debug/{document=**} {
+      allow read, write: if true;
+    }
+    match /erinnerungen/{document=**} {
+      allow read, write: if true;
+    }
   }
 }
