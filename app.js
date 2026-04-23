@@ -1266,6 +1266,22 @@ function downloadEventIcs(ev, hash = "events") {
   showToast("Termin-Datei heruntergeladen.", "success");
 }
 
+function dataUrlToFile(dataUrl, filename) {
+  try {
+    const [header, base64] = dataUrl.split(",");
+    const mimeMatch = header.match(/data:([^;]+)/);
+    const mime = mimeMatch ? mimeMatch[1] : "application/octet-stream";
+    const bin = atob(base64);
+    const bytes = new Uint8Array(bin.length);
+    for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+    const ext = mime.split("/")[1] || "bin";
+    const cleanName = (filename || "flyer").replace(/[^a-z0-9äöüß -]/gi, "").trim().replace(/\s+/g, "-").toLowerCase() || "flyer";
+    return new File([bytes], `${cleanName}.${ext}`, { type: mime });
+  } catch {
+    return null;
+  }
+}
+
 function buildShareText(ev, hash = "events") {
   const d = new Date(ev.date);
   const when = d.toLocaleString("de-CH", {
@@ -1292,29 +1308,47 @@ function buildShareText(ev, hash = "events") {
 }
 
 async function shareEvent(ev, hash = "events") {
-  const text = buildShareText(ev, hash);
+  const fullText = buildShareText(ev, hash);
   const url = eventPermalink(ev, hash);
+  // Für native share: Permalink entfernen, da er ins url-Feld geht (sonst doppelt)
+  const textWithoutLink = fullText.replace(/\n*\s*https?:\/\/\S+$/, "").trimEnd();
+
   // 1. Native Web-Share-API (iOS/Android Share-Sheet)
   if (navigator.share) {
+    const shareData = { title: `${ev.title} · Haus am See`, text: textWithoutLink, url };
+
+    // Flyer als Datei anhängen, wenn vorhanden und vom Browser unterstützt
+    if (ev.flyerSrc && typeof ev.flyerSrc === "string" && ev.flyerSrc.startsWith("data:")) {
+      const file = dataUrlToFile(ev.flyerSrc, ev.title);
+      if (file && navigator.canShare && navigator.canShare({ files: [file] })) {
+        shareData.files = [file];
+      }
+    }
+
     try {
-      await navigator.share({
-        title: `${ev.title} · Haus am See`,
-        text,
-        url,
-      });
+      await navigator.share(shareData);
       return;
     } catch (err) {
-      // Nutzer hat abgebrochen → still kein Fallback
       if (err?.name === "AbortError") return;
+      // Bei anderen Fehlern (z. B. "permission denied" für files): erneut ohne Datei versuchen
+      if (shareData.files) {
+        try {
+          delete shareData.files;
+          await navigator.share(shareData);
+          return;
+        } catch (err2) {
+          if (err2?.name === "AbortError") return;
+        }
+      }
     }
   }
-  // 2. Fallback: direkt WhatsApp
-  const waUrl = `https://wa.me/?text=${encodeURIComponent(text)}`;
+  // 2. Fallback: direkt WhatsApp (volltext mit Link)
+  const waUrl = `https://wa.me/?text=${encodeURIComponent(fullText)}`;
   const win = window.open(waUrl, "_blank", "noopener");
   if (!win) {
     // 3. Letzter Fallback: Zwischenablage
     try {
-      await navigator.clipboard.writeText(text);
+      await navigator.clipboard.writeText(fullText);
       showToast("In Zwischenablage kopiert.", "success");
     } catch {
       showToast("Teilen nicht möglich.", "error");
