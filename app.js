@@ -1216,12 +1216,12 @@ function foldIcsLine(line) {
   return out.join("\r\n");
 }
 
-function eventPermalink(ev) {
+function eventPermalink(ev, hash = "events") {
   const base = location.href.split("#")[0];
-  return `${base}#events`;
+  return `${base}#${hash}`;
 }
 
-function buildIcs(ev) {
+function buildIcs(ev, hash = "events") {
   const start = new Date(ev.date);
   if (isNaN(start.getTime())) return null;
   let end = ev.endDate ? new Date(ev.endDate) : null;
@@ -1244,15 +1244,15 @@ function buildIcs(ev) {
     foldIcsLine(`SUMMARY:${icsEscape((ev.emoji ? ev.emoji + " " : "") + ev.title)}`),
     foldIcsLine(`LOCATION:${icsEscape(ev.location || "Haus am See, Pilatusstrasse 40, Pfäffikon ZH")}`),
   ];
-  const description = [ev.description || "", eventPermalink(ev)].filter(Boolean).join("\n\n");
+  const description = [ev.description || "", eventPermalink(ev, hash)].filter(Boolean).join("\n\n");
   if (description) lines.push(foldIcsLine(`DESCRIPTION:${icsEscape(description)}`));
-  lines.push(foldIcsLine(`URL:${eventPermalink(ev)}`));
+  lines.push(foldIcsLine(`URL:${eventPermalink(ev, hash)}`));
   lines.push("END:VEVENT", "END:VCALENDAR");
   return lines.join("\r\n");
 }
 
-function downloadEventIcs(ev) {
-  const ics = buildIcs(ev);
+function downloadEventIcs(ev, hash = "events") {
+  const ics = buildIcs(ev, hash);
   if (!ics) { showToast("Datum ungültig.", "error"); return; }
   const blob = new Blob([ics], { type: "text/calendar;charset=utf-8" });
   const url = URL.createObjectURL(blob);
@@ -1266,7 +1266,7 @@ function downloadEventIcs(ev) {
   showToast("Termin-Datei heruntergeladen.", "success");
 }
 
-function buildShareText(ev) {
+function buildShareText(ev, hash = "events") {
   const d = new Date(ev.date);
   const when = d.toLocaleString("de-CH", {
     weekday: "long", day: "2-digit", month: "long", hour: "2-digit", minute: "2-digit",
@@ -1287,13 +1287,13 @@ function buildShareText(ev) {
     `📍 ${ev.location || "Pilatusstrasse 40, Pfäffikon ZH"}`,
   ];
   if (ev.description) parts.push("", ev.description);
-  parts.push("", eventPermalink(ev));
+  parts.push("", eventPermalink(ev, hash));
   return parts.join("\n");
 }
 
-async function shareEvent(ev) {
-  const text = buildShareText(ev);
-  const url = eventPermalink(ev);
+async function shareEvent(ev, hash = "events") {
+  const text = buildShareText(ev, hash);
+  const url = eventPermalink(ev, hash);
   // 1. Native Web-Share-API (iOS/Android Share-Sheet)
   if (navigator.share) {
     try {
@@ -1943,6 +1943,10 @@ function renderTermine() {
               </div>
             </div>
           ` : `<p class="form-note" style="text-align:left;margin-top:10px;">Zum Zu-/Absagen bitte anmelden.</p>`}
+          <div class="event-share termin-share">
+            <button class="event-share-btn termin-share-btn" data-action="ical" data-id="${t.id}" title="In Kalender speichern">📅 Kalender</button>
+            <button class="event-share-btn termin-share-btn" data-action="share" data-id="${t.id}" title="Termin teilen">📤 Teilen</button>
+          </div>
         </div>
         ${auth.isAuthed ? `<button class="mini-btn danger termin-delete" data-id="${t.id}">Löschen</button>` : ""}
       </div>
@@ -1956,6 +1960,22 @@ function renderTermine() {
     btn.addEventListener("click", () => {
       if (!requireAuth("Termine löschen")) return;
       if (confirm("Termin wirklich löschen?")) deleteTermin(btn.dataset.id);
+    });
+  });
+  list.querySelectorAll(".termin-share-btn").forEach(btn => {
+    btn.addEventListener("click", () => {
+      const t = termineCache.find(x => x.id === btn.dataset.id);
+      if (!t) return;
+      const ev = {
+        id: t.id,
+        title: t.title,
+        date: t.date,
+        description: t.note || "",
+        emoji: "📅",
+        location: "Haus am See, Pilatusstrasse 40, Pfäffikon ZH",
+      };
+      if (btn.dataset.action === "ical") downloadEventIcs(ev, "kalender");
+      else if (btn.dataset.action === "share") shareEvent(ev, "kalender");
     });
   });
 }

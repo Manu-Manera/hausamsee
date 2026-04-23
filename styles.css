@@ -1488,6 +1488,11 @@ textarea { resize: vertical; font-family: inherit; }
   margin: 0 0 12px;
 }
 
+.termin-share {
+  justify-content: flex-start;
+  margin-top: 12px;
+}
+
 .termin-body .termin-creator {
   font-size: 0.78rem;
   color: var(--text-muted);
