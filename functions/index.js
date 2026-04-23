@@ -1162,7 +1162,9 @@ exports.onNewNachricht = onDocumentCreated("nachrichten/{id}", async (event) => 
   const data = event.data?.data();
   if (!data) return;
   const isBewerbung = data.type === "bewerbung";
-  const header = isBewerbung ? "🚪 *Neue Bewerbung – Zimmer frei*" : "✉️ *Neue Nachricht auf hausamsee*";
+  const header = isBewerbung
+    ? "🚪 *Bewerbung über Kontaktformular:*"
+    : "✉️ *Nachricht über Kontaktformular:*";
   const lines = [
     header, "",
     `*Von:* ${data.name || "Anonym"}`,
@@ -1172,7 +1174,7 @@ exports.onNewNachricht = onDocumentCreated("nachrichten/{id}", async (event) => 
     "",
     data.message || data.nachricht || "",
     "",
-    `→ ${WEBSITE_URL}/#kontakt`,
+    `→ ${WEBSITE_URL}/#wg-intern`,
   ].filter(Boolean);
   await broadcast(lines.join("\n"));
 });

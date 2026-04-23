@@ -704,7 +704,7 @@ function renderBewohnerProfileView(name) {
     sections.push(`<div class="profile-section"><h4>🔗 Link</h4><p><a href="${escapeAttr(url)}" target="_blank" rel="noopener noreferrer">${escapeHtml(text.link)}</a></p></div>`);
   }
   if (!sections.length) {
-    sections.push(`<div class="profile-empty">${auth.isMember ? "Noch kein ausführliches Profil. Klick auf „Profil bearbeiten" um was zu erzählen." : `${name} hat hier noch kein ausführliches Profil hinterlegt.`}</div>`);
+    sections.push(`<div class="profile-empty">${auth.isMember ? "Noch kein ausführliches Profil. Klick auf „Profil bearbeiten“ um was zu erzählen." : `${escapeHtml(name)} hat hier noch kein ausführliches Profil hinterlegt.`}</div>`);
   }
   $("profileSections").innerHTML = sections.join("");
 
