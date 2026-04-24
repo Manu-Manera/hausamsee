@@ -2568,10 +2568,25 @@ body.is-playing .vinyl {
   max-width: 100%;
   height: 300px;
 }
+/* Spotify Embed (offizielle Höhen je Typ) */
+.player-youtube-embed.is-spotify {
+  aspect-ratio: auto;
+  max-width: 100%;
+  height: 152px;
+}
+.player-youtube-embed.is-spotify.is-spotify-tall {
+  height: 352px;
+}
+.player-youtube-embed.is-spotify.is-spotify-episode {
+  height: 232px;
+}
 body.is-youtube-track .vinyl {
   animation: none;
 }
 body.is-soundcloud-track .vinyl {
+  animation: none;
+}
+body.is-spotify-track .vinyl {
   animation: none;
 }
 .playlist-item.is-youtube {
@@ -2579,6 +2594,9 @@ body.is-soundcloud-track .vinyl {
 }
 .playlist-item.is-soundcloud {
   border-left: 3px solid #ff5500;
+}
+.playlist-item.is-spotify {
+  border-left: 3px solid #1db954;
 }
 
 .player-controls {

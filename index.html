@@ -16,7 +16,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,400;0,9..144,600;0,9..144,700;1,9..144,400&family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet" />
-  <link rel="stylesheet" href="styles.css?v=20260425e" />
+  <link rel="stylesheet" href="styles.css?v=20260425f" />
   <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Ctext y='.9em' font-size='90'%3E🏡%3C/text%3E%3C/svg%3E" />
 </head>
 <body>
@@ -153,7 +153,7 @@
       <span class="eyebrow">Unser Lied</span>
       <h2>Soundtrack vom Haus am See</h2>
       <p class="section-lead">
-        Eine kleine Playlist – <strong>MP3-Links</strong> im Audio-Player, <strong>YouTube</strong> und <strong>SoundCloud</strong> als eingebetteter Player. Klick auf einen Eintrag zum Starten.
+        Eine kleine Playlist – <strong>MP3-Links</strong> im Audio-Player, <strong>YouTube</strong>, <strong>SoundCloud</strong> und <strong>Spotify</strong> (open.spotify.com-Link) als eingebetteter Player. Klick auf einen Eintrag zum Starten.
       </p>
     </div>
 
@@ -974,9 +974,9 @@
     <form method="dialog" id="songUrlForm" class="auth-form">
       <button type="button" class="dialog-close" aria-label="Schliessen">×</button>
       <h2 class="auth-title">🎵 Song per Link hinzufügen</h2>
-      <p class="auth-sub">Direkter Link zu <strong>MP3/M4A/WAV</strong> (Dropbox, Hosting), ein <strong>YouTube</strong>-Video oder eine <strong>SoundCloud</strong>-Track-/Playlist-URL – eingebettet, nicht über das Audio-Element.</p>
+      <p class="auth-sub">Direkter Link zu <strong>MP3/M4A/WAV</strong> (Dropbox, Hosting), <strong>YouTube</strong>, <strong>SoundCloud</strong> oder <strong>Spotify</strong> (<code>open.spotify.com/…</code> oder <code>spotify:track:…</code>) – eingebettet, nicht über das Audio-Element.</p>
       <div class="field">
-        <label for="songUrlInput">Audio-, YouTube- oder SoundCloud-URL</label>
+        <label for="songUrlInput">Audio-, YouTube-, SoundCloud- oder Spotify-URL</label>
         <input id="songUrlInput" type="url" required placeholder="https://…" />
       </div>
       <div class="row">
@@ -990,7 +990,7 @@
         </div>
       </div>
       <button type="submit" class="btn btn-primary">Zur Playlist hinzufügen</button>
-      <p class="form-note">Tipp: Dropbox <code>?dl=0</code> → <code>?raw=1</code>. YouTube/SoundCloud: normale Browser-URL vom Track (kein Embed-Code).</p>
+      <p class="form-note">Tipp: Dropbox <code>?dl=0</code> → <code>?raw=1</code>. Spotify: in der App „Teilen“ → Link kopieren (<code>open.spotify.com</code>). Kurzlinks <code>spotify.link</code> gehen nicht – erst im Browser öffnen und die lange URL nutzen.</p>
     </form>
   </dialog>
 
@@ -1073,6 +1073,6 @@
   <!-- Toast -->
   <div id="toast" class="toast hidden"></div>
 
-  <script type="module" src="app.js?v=20260425e"></script>
+  <script type="module" src="app.js?v=20260425f"></script>
 </body>
 </html>

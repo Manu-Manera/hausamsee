@@ -3264,6 +3264,33 @@ function soundcloudWidgetSrc(pageUrl, autoplay) {
   return u.toString();
 }
 
+/** Spotify: open.spotify.com/… oder spotify:track:… → Embed-Pfad. */
+function extractSpotifyEmbedRef(url) {
+  if (!url || typeof url !== "string") return null;
+  const t = url.trim();
+  const uriMatch = t.match(/^spotify:(track|album|playlist|episode):([a-zA-Z0-9]+)\s*$/i);
+  if (uriMatch) return { type: uriMatch[1].toLowerCase(), id: uriMatch[2] };
+  try {
+    const u = new URL(t);
+    if (u.hostname.toLowerCase() !== "open.spotify.com") return null;
+    let path = u.pathname.replace(/\/+$/, "");
+    path = path.replace(/^\/intl-[a-z]{2}(?=\/)/i, "");
+    const m = path.match(/^\/(track|album|playlist|episode)\/([^/?#]+)/i);
+    if (!m) return null;
+    const id = decodeURIComponent(m[2]).split("?")[0];
+    if (!id) return null;
+    return { type: m[1].toLowerCase(), id };
+  } catch {
+    return null;
+  }
+}
+
+function spotifyEmbedSrc(ref, autoplay) {
+  const u = new URL(`https://open.spotify.com/embed/${ref.type}/${ref.id}`);
+  if (autoplay) u.searchParams.set("autoplay", "1");
+  return u.toString();
+}
+
 function songGetYouTubeId(song) {
   if (!song) return null;
   if (song.youtubeId && /^[a-zA-Z0-9_-]{11}$/.test(song.youtubeId)) return song.youtubeId;
@@ -3278,9 +3305,19 @@ function songGetSoundCloudUrl(song) {
   return extractSoundCloudPageUrl(song.src || "");
 }
 
+function songGetSpotify(song) {
+  if (!song) return null;
+  if (song.kind === "spotify" && song.spotifyType && song.spotifyId) {
+    const t = String(song.spotifyType).toLowerCase();
+    if (/^(track|album|playlist|episode)$/.test(t)) return { type: t, id: String(song.spotifyId) };
+  }
+  return extractSpotifyEmbedRef(song.src || "");
+}
+
 function songEmbedPlaylistInfo(s) {
   if (songGetYouTubeId(s)) return { cls: "is-youtube", icon: "📺", title: "YouTube" };
   if (songGetSoundCloudUrl(s)) return { cls: "is-soundcloud", icon: "☁️", title: "SoundCloud" };
+  if (songGetSpotify(s)) return { cls: "is-spotify", icon: "💚", title: "Spotify" };
   return { cls: "", icon: null, title: "" };
 }
 
@@ -3294,8 +3331,13 @@ function isCurrentTrackSoundCloud() {
   return !!songGetSoundCloudUrl(musikCache[currentSongIdx]);
 }
 
+function isCurrentTrackSpotify() {
+  if (currentSongIdx < 0 || !musikCache.length) return false;
+  return !!songGetSpotify(musikCache[currentSongIdx]);
+}
+
 function isCurrentTrackExternalEmbed() {
-  return isCurrentTrackYouTube() || isCurrentTrackSoundCloud();
+  return isCurrentTrackYouTube() || isCurrentTrackSoundCloud() || isCurrentTrackSpotify();
 }
 
 // Gespeicherte Lautstärke wiederherstellen
@@ -3378,8 +3420,13 @@ function clearExternalEmbed() {
   if (playerYoutubeFrame) playerYoutubeFrame.src = "about:blank";
   playerYoutubeWrap?.classList.add("hidden");
   playerYoutubeWrap?.setAttribute("aria-hidden", "true");
-  document.body.classList.remove("is-youtube-track", "is-soundcloud-track");
-  playerEmbedBox?.classList.remove("is-soundcloud");
+  document.body.classList.remove("is-youtube-track", "is-soundcloud-track", "is-spotify-track");
+  playerEmbedBox?.classList.remove(
+    "is-soundcloud",
+    "is-spotify",
+    "is-spotify-tall",
+    "is-spotify-episode"
+  );
 }
 
 function setCurrentSong(idx, { autoplay = false, silent = false } = {}) {
@@ -3402,13 +3449,19 @@ function setCurrentSong(idx, { autoplay = false, silent = false } = {}) {
   const song = musikCache[idx];
   const yid = songGetYouTubeId(song);
   const scUrl = !yid ? songGetSoundCloudUrl(song) : null;
+  const spRef = !yid && !scUrl ? songGetSpotify(song) : null;
   nowTitle.textContent = song.title || "Ohne Titel";
   nowArtist.textContent = song.artist || "";
   if (yid) {
     audio.pause();
     audio.removeAttribute("src");
     audio.load();
-    playerEmbedBox?.classList.remove("is-soundcloud");
+    playerEmbedBox?.classList.remove(
+      "is-soundcloud",
+      "is-spotify",
+      "is-spotify-tall",
+      "is-spotify-episode"
+    );
     if (playerEmbedHint) {
       playerEmbedHint.innerHTML =
         "Dieser Track läuft über <strong>YouTube</strong> (eingebettet). Lautstärke und Fortschritt steuerst du im Kasten – nicht mit dem Lautstärkeregler darunter.";
@@ -3421,7 +3474,7 @@ function setCurrentSong(idx, { autoplay = false, silent = false } = {}) {
       playerYoutubeFrame.src = `https://www.youtube.com/embed/${yid}?rel=0&modestbranding=1&playsinline=1&autoplay=${ap}`;
     }
     document.body.classList.add("is-youtube-track");
-    document.body.classList.remove("is-soundcloud-track");
+    document.body.classList.remove("is-soundcloud-track", "is-spotify-track");
     if (progressBar) {
       progressBar.disabled = true;
       progressBar.value = 0;
@@ -3445,7 +3498,7 @@ function setCurrentSong(idx, { autoplay = false, silent = false } = {}) {
       playerYoutubeFrame.title = "SoundCloud";
       playerYoutubeFrame.src = soundcloudWidgetSrc(scUrl, autoplay);
     }
-    document.body.classList.remove("is-youtube-track");
+    document.body.classList.remove("is-youtube-track", "is-spotify-track");
     document.body.classList.add("is-soundcloud-track");
     if (progressBar) {
       progressBar.disabled = true;
@@ -3455,6 +3508,35 @@ function setCurrentSong(idx, { autoplay = false, silent = false } = {}) {
     if (volumeBar) volumeBar.disabled = true;
     if (timeCurrent) timeCurrent.textContent = "∿";
     if (timeTotal) timeTotal.textContent = "SoundCloud";
+  } else if (spRef) {
+    audio.pause();
+    audio.removeAttribute("src");
+    audio.load();
+    playerEmbedBox?.classList.remove("is-soundcloud");
+    playerEmbedBox?.classList.add("is-spotify");
+    playerEmbedBox?.classList.remove("is-spotify-tall", "is-spotify-episode");
+    if (spRef.type === "episode") playerEmbedBox?.classList.add("is-spotify-episode");
+    else if (spRef.type !== "track") playerEmbedBox?.classList.add("is-spotify-tall");
+    if (playerEmbedHint) {
+      playerEmbedHint.innerHTML =
+        "Dieser Eintrag läuft über den <strong>Spotify</strong>-Embed. Abspielen im Kasten – der untere Balken gilt nur für direkte Audio-URLs.";
+    }
+    playerYoutubeWrap?.classList.remove("hidden");
+    playerYoutubeWrap?.setAttribute("aria-hidden", "false");
+    if (playerYoutubeFrame) {
+      playerYoutubeFrame.title = "Spotify";
+      playerYoutubeFrame.src = spotifyEmbedSrc(spRef, autoplay);
+    }
+    document.body.classList.remove("is-youtube-track", "is-soundcloud-track");
+    document.body.classList.add("is-spotify-track");
+    if (progressBar) {
+      progressBar.disabled = true;
+      progressBar.value = 0;
+      updateSliderFill(progressBar);
+    }
+    if (volumeBar) volumeBar.disabled = true;
+    if (timeCurrent) timeCurrent.textContent = "∿";
+    if (timeTotal) timeTotal.textContent = "Spotify";
   } else {
     clearExternalEmbed();
     document.body.classList.remove("is-youtube-track");
@@ -3489,6 +3571,13 @@ function updatePlayPauseUI() {
     document.body.classList.add("is-playing", "is-soundcloud-track");
     return;
   }
+  if (isCurrentTrackSpotify()) {
+    btnPlayPause.textContent = "🎬";
+    btnPlayPause.title =
+      "Spotify-Player oben; dort abspielen. Tipp: nochmal tippen lädt das Embed neu.";
+    document.body.classList.add("is-playing", "is-spotify-track");
+    return;
+  }
   const playing = !audio.paused && !audio.ended && audio.readyState > 2;
   btnPlayPause.textContent = playing ? "⏸" : "▶";
   btnPlayPause.title = "";
@@ -3516,6 +3605,11 @@ btnPlayPause?.addEventListener("click", () => {
   if (isCurrentTrackSoundCloud() && playerYoutubeFrame) {
     const sc = songGetSoundCloudUrl(musikCache[currentSongIdx]);
     if (sc) playerYoutubeFrame.src = soundcloudWidgetSrc(sc, true);
+    return;
+  }
+  if (isCurrentTrackSpotify() && playerYoutubeFrame) {
+    const sp = songGetSpotify(musikCache[currentSongIdx]);
+    if (sp) playerYoutubeFrame.src = spotifyEmbedSrc(sp, true);
     return;
   }
   if (audio.paused) {
@@ -3597,13 +3691,15 @@ $("songUrlForm")?.addEventListener("submit", async (e) => {
   if (/dropbox\.com/.test(url) && /\?dl=0/.test(url)) url = url.replace("?dl=0", "?raw=1");
   const yid = extractYouTubeId(url);
   const scUrl = !yid ? extractSoundCloudPageUrl(url) : null;
+  const spRef = !yid && !scUrl ? extractSpotifyEmbedRef(url) : null;
   const entry = {
     title: $("songTitleInput").value.trim() || "Ohne Titel",
     artist: $("songArtistInput").value.trim(),
     src: url,
-    kind: yid ? "youtube" : scUrl ? "soundcloud" : "url",
+    kind: yid ? "youtube" : scUrl ? "soundcloud" : spRef ? "spotify" : "url",
     ...(yid ? { youtubeId: yid } : {}),
     ...(scUrl ? { soundcloudUrl: scUrl } : {}),
+    ...(spRef ? { spotifyType: spRef.type, spotifyId: spRef.id } : {}),
     addedBy: auth.member,
     createdAt: Date.now()
   };
