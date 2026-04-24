@@ -194,6 +194,11 @@ async function sha256(text) {
   return Array.from(new Uint8Array(buf)).map(x => x.toString(16).padStart(2, "0")).join("");
 }
 
+/** Eingabe vor SHA-256 (iOS, Autofill, Unicode) – muss identisch für Speichern und Login sein */
+function normPasswordInput(s) {
+  return String(s ?? "").normalize("NFC").trim();
+}
+
 /* ==========================================================================
    Auth (WG-Login + Gast-Zugänge)
    ========================================================================== */
@@ -323,9 +328,18 @@ function hashMatchesWgLoginFallback(hash) {
 function applyMemberPasswordsDoc(data) {
   authConfig.memberHashes = {};
   if (!data || typeof data !== "object") return;
+  const skipKeys = new Set(["updatedAt", "updatedBy", "createdAt"]);
   for (const [k, v] of Object.entries(data)) {
-    if (!ADULT_NAMES.has(k) || typeof v !== "string" || !/^[a-f0-9]{64}$/.test(v)) continue;
-    authConfig.memberHashes[k] = v;
+    if (skipKeys.has(k)) continue;
+    if (v == null) continue;
+    if (typeof v !== "string") continue;
+    const raw = v.trim().toLowerCase();
+    if (!/^[a-f0-9]{64}$/.test(raw)) continue;
+    const kTrim = k.trim();
+    let canonical = [...ADULT_NAMES].find((n) => n === kTrim);
+    if (!canonical) canonical = [...ADULT_NAMES].find((n) => n.toLowerCase() === kTrim.toLowerCase());
+    if (!canonical) continue;
+    authConfig.memberHashes[canonical] = raw;
   }
 }
 
@@ -599,7 +613,7 @@ function populateProfileEmojiSelect() {
 
 /** Login für eine konkrete Bewohner:in: eigenes Passwort, sonst gemeinsames Fallback. */
 async function verifyMemberPassword(memberName, pw) {
-  const hash = await sha256(pw);
+  const hash = await sha256(normPasswordInput(pw));
   const personal = authConfig.memberHashes[memberName];
   if (personal) {
     if (hash === personal) return { ok: true, kind: "member" };
@@ -611,7 +625,7 @@ async function verifyMemberPassword(memberName, pw) {
 
 // Hash für ein Passwort: nur Gäste + gemeinsames WG-Passwort (für generische Gast-Option)
 async function verifyPassword(pw) {
-  const hash = await sha256(pw);
+  const hash = await sha256(normPasswordInput(pw));
   if (hashMatchesWgLoginFallback(hash)) return { ok: true, kind: "member" };
   const now = Date.now();
   for (const g of guestsCache) {
@@ -714,7 +728,7 @@ $("loginForm")?.addEventListener("submit", async (e) => {
     if (!guest) { showError("Gast-Zugang nicht gefunden."); return; }
     const now = Date.now();
     if (guest.expiresAt && guest.expiresAt < now) { showError("Dieser Gast-Zugang ist abgelaufen."); return; }
-    const hash = await sha256(password);
+    const hash = await sha256(normPasswordInput(password));
     if (hash !== guest.hash) { showError("Falsches Passwort · versuch's nochmal."); return; }
     auth.login(guest.name, { isGuest: true });
     $("loginDialog").close();
@@ -4393,7 +4407,7 @@ $("changePasswordForm")?.addEventListener("submit", async (e) => {
   const newPw2 = $("newPassword2").value;
   if (newPw !== newPw2) { showToast("Die neuen Passwörter stimmen nicht überein.", "error"); return; }
   if (newPw.length < 4) { showToast("Mindestens 4 Zeichen.", "error"); return; }
-  const currentHash = await sha256(current);
+  const currentHash = await sha256(normPasswordInput(current));
   const personal = authConfig.memberHashes[auth.member];
   const currentOk = personal
     ? currentHash === personal
@@ -4402,11 +4416,16 @@ $("changePasswordForm")?.addEventListener("submit", async (e) => {
     showToast(personal ? "Aktuelles (persönliches) Passwort ist falsch." : "Aktuelles Passwort ist falsch (gemeinsames Passwort: Cloud oder z. B. «hausamsee»).", "error");
     return;
   }
-  const newHash = await sha256(newPw);
+  const newHash = await sha256(normPasswordInput(newPw));
   if (firebaseReady) {
     try {
       await setDoc(doc(db, "config", "memberPasswords"), { [auth.member]: newHash, updatedBy: auth.member, updatedAt: serverTimestamp() }, { merge: true });
-      authConfig.memberHashes[auth.member] = newHash;
+      const verSnap = await getDoc(doc(db, "config", "memberPasswords"));
+      if (verSnap.exists()) applyMemberPasswordsDoc(verSnap.data());
+      if (!authConfig.memberHashes[auth.member]) {
+        authConfig.memberHashes[auth.member] = newHash;
+        console.warn("[auth] memberPasswords: lokalen Hash gesetzt, Server-Lesung fehlte für", auth.member);
+      }
       e.target.reset();
       showToast(`Passwort für ${auth.member} gespeichert. Nur du nutzt dieses Passwort zum Login. 🔑`, "success");
     } catch (err) {
@@ -4417,6 +4436,7 @@ $("changePasswordForm")?.addEventListener("submit", async (e) => {
     authConfig.memberHashes[auth.member] = newHash;
     localStore.memberPasswords = { ...localStore.memberPasswords, [auth.member]: newHash };
     saveLocal("memberPasswords", localStore.memberPasswords);
+    applyMemberPasswordsDoc(localStore.memberPasswords);
     e.target.reset();
     showToast("Passwort lokal gespeichert (Demo).", "success");
   }
@@ -4431,12 +4451,12 @@ $("changeSharedPasswordForm")?.addEventListener("submit", async (e) => {
   const newPw2 = $("sharedNewPassword2").value;
   if (newPw !== newPw2) { showToast("Die neuen Passwörter stimmen nicht überein.", "error"); return; }
   if (newPw.length < 4) { showToast("Mindestens 4 Zeichen.", "error"); return; }
-  const currentHash = await sha256(current);
+  const currentHash = await sha256(normPasswordInput(current));
   if (!hashMatchesWgLoginFallback(currentHash)) {
     showToast("Aktuelles gemeinsames Passwort ist falsch (Cloud-Stand oder «hausamsee»).", "error");
     return;
   }
-  const newHash = await sha256(newPw);
+  const newHash = await sha256(normPasswordInput(newPw));
   if (Object.values(authConfig.memberHashes).includes(newHash)) {
     showToast("Dieses Passwort ist schon als persönliches Passwort vergeben.", "error");
     return;
@@ -4467,7 +4487,7 @@ $("guestForm")?.addEventListener("submit", async (e) => {
   const pw = $("guestPassword").value;
   const expires = $("guestExpires").value;
   if (!name || pw.length < 4) return;
-  const hash = await sha256(pw);
+  const hash = await sha256(normPasswordInput(pw));
   // Prüfen ob nicht mit Haupt-Passwort identisch
   if (hashMatchesWgLoginFallback(hash) || Object.values(authConfig.memberHashes).includes(hash)) {
     showToast("Dieses Passwort ist schon vergeben (WG oder persönlich) – bitte ein anderes wählen.", "error");
