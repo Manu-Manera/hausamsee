@@ -4435,50 +4435,13 @@ function resetRoomOfferPageMeta() {
   setOrCreateMeta("name", "twitter:description", "Unsere WG am Pfäffikersee – Events, Kalender, Gemeinschaft.");
 }
 
-function hydrateRoomShareUI(ro) {
-  const wrap = $("roomOfferSocial");
-  const bg = $("roomShareCardBg");
-  if (!wrap) return;
-  if (!ro?.active) {
-    wrap.classList.add("hidden");
-    return;
-  }
-  wrap.classList.remove("hidden");
-  const url = getRoomShareUrl();
-  const title = (ro.title || "Wir suchen eine:n Mitbewohner:in").trim();
-  const tEl = $("roomShareCardTitle");
-  if (tEl) tEl.textContent = title;
-  const factItems = [];
-  if (ro.miete) factItems.push(`💰 ${ro.miete}`);
-  if (ro.groesse) factItems.push(`📐 ${ro.groesse}`);
-  if (ro.freiAb) factItems.push(`📅 ${ro.freiAb}`);
-  const factsEl = $("roomShareCardFacts");
-  if (factsEl) {
-    factsEl.innerHTML = factItems.map((f) => `<li>${escapeHtml(f)}</li>`).join("");
-  }
-  const desc = (ro.description || "").trim();
-  const hook = desc.length > 240 ? `${desc.slice(0, 237)}…` : desc;
-  const hookEl = $("roomShareCardHook");
-  if (hookEl) hookEl.textContent = hook || "Mehr Infos und Bewerbung – Link unten.";
-  const urlEl = $("roomShareCardUrl");
-  if (urlEl) urlEl.textContent = url;
-  if (bg) {
-    const photos = Array.isArray(ro.photos) ? ro.photos : [];
-    const first = photos[0];
-    if (first && typeof first === "string") {
-      bg.style.backgroundImage = `url(${JSON.stringify(first)})`;
-    } else {
-      bg.style.backgroundImage = "";
-    }
-  }
-  const wa = $("roomWhatsAppBtn");
-  if (wa) wa.href = `https://wa.me/?text=${encodeURIComponent(buildRoomShareText(ro))}`;
-  syncRoomOfferPageMeta(ro);
+/** Meta-Tags / Titel für Inserat – ohne sichtbare „Social-Kachel“. */
+function syncRoomOfferShareBackground(ro) {
+  if (ro?.active) syncRoomOfferPageMeta(ro);
 }
 
 function setupRoomShareUI() {
   const shareBtn = $("roomShareBtn");
-  const copyBtn = $("roomCopyLinkBtn");
   if (!shareBtn || shareBtn.dataset.roomShareBound) return;
   shareBtn.dataset.roomShareBound = "1";
   shareBtn.addEventListener("click", async () => {
@@ -4502,15 +4465,6 @@ function setupRoomShareUI() {
       showToast("Teilen nicht möglich.", "error");
     }
   });
-  copyBtn?.addEventListener("click", async () => {
-    if (!roomOfferCache?.active) return;
-    try {
-      await navigator.clipboard.writeText(getRoomShareUrl());
-      showToast("Link kopiert.", "success");
-    } catch {
-      showToast("Kopieren fehlgeschlagen.", "error");
-    }
-  });
 }
 
 function renderRoomOffer() {
@@ -4521,7 +4475,6 @@ function renderRoomOffer() {
 
   section.classList.toggle("hidden", !active);
   if (!active) {
-    $("roomOfferSocial")?.classList.add("hidden");
     resetRoomOfferPageMeta();
     populateRoomForm();
     renderRoomAdminPhotos();
@@ -4556,7 +4509,7 @@ function renderRoomOffer() {
     });
   }
 
-  hydrateRoomShareUI(ro);
+  syncRoomOfferShareBackground(ro);
   renderRoomAdminPhotos();
   populateRoomForm();
 }
