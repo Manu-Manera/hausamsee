@@ -286,6 +286,11 @@ const auth = {
 
 const ADULT_NAMES = new Set(BEWOHNER.filter((b) => !b.kid).map((b) => b.name));
 
+/** Gemeinsames Login ohne persönliches Passwort: Hash aus Firestore ODER eingebautes Standard-«hausamsee» */
+function hashMatchesWgLoginFallback(hash) {
+  return hash === authConfig.passwordHash || hash === WG_PASSWORD_HASH;
+}
+
 function applyMemberPasswordsDoc(data) {
   authConfig.memberHashes = {};
   if (!data || typeof data !== "object") return;
@@ -377,14 +382,14 @@ async function verifyMemberPassword(memberName, pw) {
     if (hash === personal) return { ok: true, kind: "member" };
     return { ok: false, reason: "wrong" };
   }
-  if (hash === authConfig.passwordHash) return { ok: true, kind: "member" };
+  if (hashMatchesWgLoginFallback(hash)) return { ok: true, kind: "member" };
   return { ok: false, reason: "wrong" };
 }
 
 // Hash für ein Passwort: nur Gäste + gemeinsames WG-Passwort (für generische Gast-Option)
 async function verifyPassword(pw) {
   const hash = await sha256(pw);
-  if (hash === authConfig.passwordHash) return { ok: true, kind: "member" };
+  if (hashMatchesWgLoginFallback(hash)) return { ok: true, kind: "member" };
   const now = Date.now();
   for (const g of guestsCache) {
     if (g.hash !== hash) continue;
@@ -4140,9 +4145,9 @@ $("changePasswordForm")?.addEventListener("submit", async (e) => {
   const personal = authConfig.memberHashes[auth.member];
   const currentOk = personal
     ? currentHash === personal
-    : currentHash === authConfig.passwordHash;
+    : hashMatchesWgLoginFallback(currentHash);
   if (!currentOk) {
-    showToast(personal ? "Aktuelles (persönliches) Passwort ist falsch." : "Aktuelles Passwort ist falsch (gemeinsames WG-Passwort).", "error");
+    showToast(personal ? "Aktuelles (persönliches) Passwort ist falsch." : "Aktuelles Passwort ist falsch (gemeinsames Passwort: Cloud oder z. B. «hausamsee»).", "error");
     return;
   }
   const newHash = await sha256(newPw);
@@ -4175,8 +4180,8 @@ $("changeSharedPasswordForm")?.addEventListener("submit", async (e) => {
   if (newPw !== newPw2) { showToast("Die neuen Passwörter stimmen nicht überein.", "error"); return; }
   if (newPw.length < 4) { showToast("Mindestens 4 Zeichen.", "error"); return; }
   const currentHash = await sha256(current);
-  if (currentHash !== authConfig.passwordHash) {
-    showToast("Aktuelles gemeinsames Passwort ist falsch.", "error");
+  if (!hashMatchesWgLoginFallback(currentHash)) {
+    showToast("Aktuelles gemeinsames Passwort ist falsch (Cloud-Stand oder «hausamsee»).", "error");
     return;
   }
   const newHash = await sha256(newPw);
@@ -4212,7 +4217,7 @@ $("guestForm")?.addEventListener("submit", async (e) => {
   if (!name || pw.length < 4) return;
   const hash = await sha256(pw);
   // Prüfen ob nicht mit Haupt-Passwort identisch
-  if (hash === authConfig.passwordHash || Object.values(authConfig.memberHashes).includes(hash)) {
+  if (hashMatchesWgLoginFallback(hash) || Object.values(authConfig.memberHashes).includes(hash)) {
     showToast("Dieses Passwort ist schon vergeben (WG oder persönlich) – bitte ein anderes wählen.", "error");
     return;
   }
