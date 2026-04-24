@@ -150,6 +150,7 @@ const localStore = {
   gartenPlan: JSON.parse(localStorage.getItem("has_gartenPlan") || "null"),
   memberPasswords: JSON.parse(localStorage.getItem("has_memberPasswords") || "{}"),
   memberPrefs: JSON.parse(localStorage.getItem("has_memberPrefs") || "{}"),
+  movedOut: JSON.parse(localStorage.getItem("has_movedOut") || "[]"),
 };
 function saveLocal(key, value) { localStorage.setItem(`has_${key}`, JSON.stringify(value)); }
 
@@ -212,6 +213,8 @@ let authConfig = {
   ready: false,
 };
 let guestsCache = [];
+/** @type {Set<string>} Namen, die in der App als ausgezogen gelten (Firestore config/movedOut) */
+let movedOutNames = new Set();
 
 const auth = {
   member: null,
@@ -231,7 +234,7 @@ const auth = {
         this.member = session.member;
         this.isGuest = true;
         this.apply();
-      } else if (BEWOHNER.find(b => b.name === session.member)) {
+      } else if (BEWOHNER.find(b => b.name === session.member) && !movedOutNames.has(session.member)) {
         this.member = session.member;
         this.isGuest = false;
         this.apply();
@@ -281,10 +284,36 @@ const auth = {
     populateSchadenZustaendigSelect();
     syncKalenderTabs();
     fillMemberProfileForm();
+    renderSettingsBewohnerRoster();
   }
 };
 
 const ADULT_NAMES = new Set(BEWOHNER.filter((b) => !b.kid).map((b) => b.name));
+
+function applyMovedOutDoc(data) {
+  const arr = (data && Array.isArray(data.names)) ? data.names : [];
+  movedOutNames = new Set(arr.filter((n) => BEWOHNER_NAME_SET.has(n)));
+}
+
+function isMovedOut(name) {
+  return movedOutNames.has(name);
+}
+
+function getActiveBewohner() {
+  return BEWOHNER.filter((b) => !movedOutNames.has(b.name));
+}
+
+function getActiveAdults() {
+  return getActiveBewohner().filter((b) => !b.kid);
+}
+
+/** Erwachsene für Termin-Badges: aktiv, oder ausgezogen aber mit gespeichertem RSVP */
+function bewohnerFuerTerminBadges(responses) {
+  return BEWOHNER.filter(
+    (b) => !b.kid
+      && (!movedOutNames.has(b.name) || (responses && Object.prototype.hasOwnProperty.call(responses, b.name)))
+  );
+}
 
 /** Gemeinsames Login ohne persönliches Passwort: Hash aus Firestore ODER eingebautes Standard-«hausamsee» */
 function hashMatchesWgLoginFallback(hash) {
@@ -341,6 +370,200 @@ function onMemberPrefsChanged() {
   populateLoginMemberSelect();
   populatePutzWhoSelect();
   populateSchadenZustaendigSelect();
+  renderSettingsBewohnerRoster();
+}
+
+function onMovedOutChanged() {
+  renderBewohner();
+  renderAnwesend();
+  renderTermine();
+  renderSchaeden();
+  populateLoginMemberSelect();
+  populatePutzWhoSelect();
+  populateSchadenZustaendigSelect();
+  updateLoginChip();
+  renderSettingsBewohnerRoster();
+  $("statBewohner") && ($("statBewohner").textContent = String(getActiveBewohner().length));
+  populateAdminPasswordSelect();
+}
+
+async function clearMemberAppPrefsInCloud(name) {
+  if (!ADULT_NAMES.has(name)) return;
+  if (!firebaseReady) {
+    if (localStore.memberPasswords[name]) {
+      const { [name]: _r, ...rest } = localStore.memberPasswords;
+      localStore.memberPasswords = rest;
+      saveLocal("memberPasswords", localStore.memberPasswords);
+    }
+    if (localStore.memberPrefs[name]) {
+      const { [name]: _p, ...r2 } = localStore.memberPrefs;
+      localStore.memberPrefs = r2;
+      saveLocal("memberPrefs", localStore.memberPrefs);
+    }
+    applyMemberPasswordsDoc(localStore.memberPasswords);
+    applyMemberPrefsDoc(localStore.memberPrefs);
+    return;
+  }
+  await setDoc(doc(db, "config", "memberPasswords"), { [name]: deleteField() }, { merge: true });
+  await setDoc(doc(db, "config", "memberPrefs"), { [name]: deleteField() }, { merge: true });
+  delete authConfig.memberHashes[name];
+  if (authConfig.memberPrefs[name]) delete authConfig.memberPrefs[name];
+}
+
+async function saveMovedOutNamesArray(names) {
+  const uniq = [...new Set(names.filter((n) => BEWOHNER_NAME_SET.has(n)))].sort();
+  applyMovedOutDoc({ names: uniq });
+  if (firebaseReady) {
+    await setDoc(doc(db, "config", "movedOut"), {
+      names: uniq,
+      updatedBy: auth.member,
+      updatedAt: serverTimestamp()
+    }, { merge: true });
+  } else {
+    localStore.movedOut = uniq;
+    saveLocal("movedOut", uniq);
+  }
+  onMovedOutChanged();
+}
+
+function populateAdminPasswordSelect() {
+  const sel = $("adminClearPersonalSelect");
+  if (!sel) return;
+  const prev = sel.value;
+  const adults = getActiveAdults();
+  sel.innerHTML = `<option value="">Person wählen…</option>` +
+    adults.map((b) => `<option value="${escapeAttr(b.name)}">${mEmoji(b.name)} ${escapeHtml(mLabel(b.name))}</option>`).join("");
+  if (prev && Array.from(sel.options).some((o) => o.value === prev)) sel.value = prev;
+}
+
+function buildWgInviteText() {
+  const u = new URL(window.location.href);
+  u.searchParams.set("openLogin", "1");
+  const url = u.toString();
+  const text = `Hi! Unsere Wohn-Website (Infos, Kalender, …):
+${url}
+
+Zum Anmelden: in der Leiste deinen vollen Namen wählen (wie in der WG-Liste) und Passwort eingeben.
+Initiales Gruppenpasswort (nur solange es die WG nicht geändert hat): ${DEFAULT_WG_PASSWORD_PLAINTEXT}
+Danach: unter «WG-Intern → Einstellungen» dein persönliches Passwort, Anzeigename und Icon setzen.`;
+  return { url, text, shareTitle: "Haus am See – WG-Zugang" };
+}
+
+async function shareWgInviteFromSheet() {
+  if (!requireMember("Einladung teilen")) return;
+  const { text, shareTitle, url } = buildWgInviteText();
+  const re = new RegExp(`\\n*\\s*${url.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}$`);
+  const textNoUrl = text.replace(re, "").trimEnd();
+  if (navigator.share) {
+    try {
+      await navigator.share({ title: shareTitle, text: textNoUrl, url });
+      return;
+    } catch (err) {
+      if (err?.name === "AbortError") return;
+    }
+  }
+  try {
+    await navigator.clipboard.writeText(text);
+    showToast("Einladung in die Zwischenablage kopiert.", "success");
+  } catch {
+    showToast("Teilen war nicht möglich.", "error");
+  }
+}
+
+function openWgInviteWhatsApp() {
+  if (!requireMember("Einladung teilen")) return;
+  const { text } = buildWgInviteText();
+  const win = window.open(`https://wa.me/?text=${encodeURIComponent(text)}`, "_blank", "noopener");
+  if (!win) showToast("Popup blockiert – bitte Teilen oder Kopieren nutzen.", "error");
+}
+
+function copyWgInviteToClipboard() {
+  if (!requireMember("Einladung teilen")) return;
+  const { text } = buildWgInviteText();
+  navigator.clipboard.writeText(text).then(
+    () => showToast("Einladungstext in die Zwischenablage.", "success"),
+    () => showToast("Kopieren nicht möglich.", "error")
+  );
+}
+
+function renderSettingsBewohnerRoster() {
+  const host = $("settingsBewohnerRoster");
+  if (!host) return;
+  if (!auth.isMember) {
+    host.innerHTML = "<p class=\"form-note\" style=\"margin:0;\">Nur sichtbar, wenn du als Bewohner:in angemeldet bist.</p>";
+    return;
+  }
+  const active = getActiveBewohner();
+  const moved = BEWOHNER.filter((b) => movedOutNames.has(b.name));
+  const activeRows = active.map((b) => `
+    <div class="settings-roster-row">
+      <span class="settings-roster-name">${mEmoji(b.name)} ${escapeHtml(mLabel(b.name))}${b.kid ? ' <span class="kid-badge">Kid</span>' : ""}</span>
+      <button type="button" class="event-share-btn" data-moved="out" data-name="${escapeAttr(b.name)}">Auszug</button>
+    </div>
+  `).join("");
+  const movedRows = moved.map((b) => `
+    <div class="settings-roster-row is-movedout">
+      <span class="settings-roster-name muted">${b.emoji} ${escapeHtml(b.name)}</span>
+      <button type="button" class="event-share-btn" data-moved="in" data-name="${escapeAttr(b.name)}">Wieder da</button>
+    </div>
+  `).join("");
+
+  host.innerHTML = `
+    <div class="settings-roster-block">
+      <div class="settings-roster-h">Aktuell in der Liste</div>
+      ${activeRows || "<p class='form-note' style='margin:0;'>—</p>"}
+    </div>
+    ${moved.length ? `<div class="settings-roster-block" style="margin-top:10px">
+      <div class="settings-roster-h">Ausgezogen (kein Login)</div>
+      ${movedRows}
+    </div>` : ""}
+    <p class="form-note" style="margin-top:10px;">Nach «Auszug» verschwindet der Name in Login, Kacheln und Wochenend-Status. Gäste und alte Event-Daten bleiben.</p>
+  `;
+  host.querySelectorAll("button[data-moved]").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      const name = btn.getAttribute("data-name");
+      if (btn.getAttribute("data-moved") === "out") markBewohnerMovedOut(name);
+      else markBewohnerZurueck(name);
+    });
+  });
+  populateAdminPasswordSelect();
+}
+
+async function markBewohnerMovedOut(name) {
+  if (!requireMember("Besetzung ändern")) return;
+  if (!BEWOHNER_NAME_SET.has(name) || isMovedOut(name)) return;
+  if (getActiveBewohner().length <= 1) {
+    showToast("Wenigstens eine Person muss in der Liste bleiben.", "error");
+    return;
+  }
+  if (!confirm(`${name} als ausgezogen markieren? (Login und Listen weg; persönliches Passwort wird entfernt.)`)) return;
+  try {
+    await clearMemberAppPrefsInCloud(name);
+    const wasMe = auth.member === name;
+    await saveMovedOutNamesArray([...movedOutNames, name]);
+    if (wasMe) {
+      showToast("Auszug für dich gespeichert. Du wirst abgemeldet. «Wieder da» holt dich in die Liste zurück.", "success");
+      auth.logout();
+    } else {
+      showToast(`${name} ist als ausgezogen gespeichert.`, "success");
+    }
+  } catch (e) {
+    console.error(e);
+    showToast("Speichern fehlgeschlagen.", "error");
+  }
+}
+
+async function markBewohnerZurueck(name) {
+  if (!requireMember("Besetzung ändern")) return;
+  if (!isMovedOut(name)) return;
+  if (!confirm(`${name} wieder zur aktiven Besetzung hinzufügen?`)) return;
+  try {
+    await saveMovedOutNamesArray([...movedOutNames].filter((n) => n !== name));
+    showToast(`${name} erscheint wieder in der WG-Liste.`, "success");
+  } catch (e) {
+    console.error(e);
+    showToast("Speichern fehlgeschlagen.", "error");
+  }
 }
 
 function fillMemberProfileForm() {
@@ -416,7 +639,7 @@ function populateLoginMemberSelect() {
   const select = $("loginMember");
   if (!select) return;
   const previous = select.value;
-  const adults = BEWOHNER.filter(b => !b.kid);
+  const adults = getActiveAdults();
   const now = Date.now();
   const activeGuests = (guestsCache || []).filter(g => !g.expiresAt || g.expiresAt > now);
 
@@ -446,7 +669,7 @@ function populatePutzWhoSelect() {
   const select = $("putzWho");
   if (!select) return;
   const current = select.value;
-  const adults = BEWOHNER.filter(b => !b.kid);
+  const adults = getActiveAdults();
   select.innerHTML = `<option value="">Wer?</option>` +
     adults.map(b => `<option value="${b.name}">${mEmoji(b.name)} ${escapeHtml(mLabel(b.name))}</option>`).join("");
   if (current) select.value = current;
@@ -739,7 +962,7 @@ function normalizeUrl(u) {
 function renderBewohner() {
   const grid = $("bewohnerGrid");
   if (!grid) return;
-  grid.innerHTML = BEWOHNER.map(b => {
+  grid.innerHTML = getActiveBewohner().map(b => {
     const photo = bewohnerfotosCache[b.name]?.src;
     const text = getBewohnerText(b.name);
     const hasMore = !!(text.longBio || text.hobby || text.food || text.motto || text.link);
@@ -767,7 +990,7 @@ function renderBewohner() {
       </article>
     `;
   }).join("");
-  $("statBewohner").textContent = BEWOHNER.length;
+  $("statBewohner").textContent = String(getActiveBewohner().length);
 
   grid.querySelectorAll(".avatar-edit").forEach(btn => {
     btn.addEventListener("click", (e) => {
@@ -2070,7 +2293,7 @@ function renderTermine() {
     const myResponse = auth.isAuthed ? responses[auth.member] : null;
 
     // Response-Badges: Erwachsene Bewohner mit Status
-    const badges = BEWOHNER.filter(b => !b.kid).map(b => {
+    const badges = bewohnerFuerTerminBadges(responses).map((b) => {
       const status = responses[b.name];
       const classes = status ? status : "pending";
       const icon = status === "yes" ? "✓" : status === "no" ? "✗" : status === "maybe" ? "?" : "…";
@@ -2221,7 +2444,7 @@ function renderAnwesend() {
   const grid = $("anwesendGrid");
   const weekendKey = getWeekendKey();
   const weekendData = anwesendCache[weekendKey] || {};
-  grid.innerHTML = BEWOHNER.map(b => {
+  grid.innerHTML = getActiveBewohner().map(b => {
     const status = weekendData[b.name] || "unknown";
     const canEdit = auth.isAuthed && auth.member === b.name;
     return `
@@ -3597,7 +3820,7 @@ function populateSchadenZustaendigSelect() {
   const select = $("schadZustaendig");
   if (!select) return;
   const current = select.value;
-  const adults = BEWOHNER.filter(b => !b.kid);
+  const adults = getActiveAdults();
   select.innerHTML = `<option value="">Noch offen</option>` +
     adults.map(b => `<option value="${b.name}">${mEmoji(b.name)} ${escapeHtml(mLabel(b.name))}</option>`).join("");
   if (current) select.value = current;
@@ -3623,7 +3846,7 @@ function renderSchaeden() {
   list.innerHTML = sorted.map(s => {
     const prio = s.prio || "medium";
     const status = s.status || "offen";
-    const zustaendigBewohner = s.zustaendig ? BEWOHNER.find(b => b.name === s.zustaendig) : null;
+    const zustaendigBewohner = s.zustaendig ? BEWOHNER.find((b) => b.name === s.zustaendig) : null;
     const zustaendigLabel = zustaendigBewohner
       ? `${mEmoji(zustaendigBewohner.name)} ${escapeHtml(mLabel(zustaendigBewohner.name))}`
       : s.zustaendig ? escapeHtml(mLabel(s.zustaendig) || s.zustaendig) : "noch niemand";
@@ -3655,7 +3878,7 @@ function renderSchaeden() {
             </select>
             <select class="status-select-inline" data-id="${s.id}" data-action="zustaendig">
               <option value="">— Noch offen —</option>
-              ${BEWOHNER.filter(b => !b.kid).map(b => `<option value="${b.name}" ${s.zustaendig===b.name?'selected':''}>${mEmoji(b.name)} ${escapeHtml(mLabel(b.name))}</option>`).join("")}
+              ${getActiveAdults().map(b => `<option value="${b.name}" ${s.zustaendig===b.name?'selected':''}>${mEmoji(b.name)} ${escapeHtml(mLabel(b.name))}</option>`).join("")}
             </select>
           </div>
           <button class="mini-btn danger" data-id="${s.id}" data-action="delete">Löschen</button>
@@ -4115,21 +4338,50 @@ $("memberProfileForm")?.addEventListener("submit", async (e) => {
   }
 });
 
-$("copyWgInviteBtn")?.addEventListener("click", async () => {
-  if (!requireMember("Einladung teilen")) return;
-  const u = new URL(window.location.href);
-  u.searchParams.set("openLogin", "1");
-  const line = `Hi! Unsere Wohn-Website (Infos, Kalender, …):
-${u.toString()}
+$("wgInviteShareNative")?.addEventListener("click", () => shareWgInviteFromSheet());
+$("wgInviteWhatsApp")?.addEventListener("click", () => openWgInviteWhatsApp());
+$("wgInviteCopy")?.addEventListener("click", () => copyWgInviteToClipboard());
 
-Zum Anmelden: in der Leiste deinen vollen Namen wählen (wie in der WG-Liste) und Passwort eingeben.
-Initiales Gruppenpasswort (nur solange es die WG nicht geändert hat): ${DEFAULT_WG_PASSWORD_PLAINTEXT}
-Danach: unter «WG-Intern → Einstellungen» dein persönliches Passwort, Anzeigename und Icon setzen.`;
+$("adminSetWgPasswordToHausamsee")?.addEventListener("click", async () => {
+  if (!requireMember("Gruppenpasswort setzen")) return;
+  if (!confirm("Das gemeinsame Passwort in der Cloud wirklich auf «hausamsee» setzen? Alle ohne persönliches Passwort loggen so ein.")) return;
+  if (firebaseReady) {
+    try {
+      await setDoc(doc(db, "config", "auth"), { passwordHash: WG_PASSWORD_HASH, updatedBy: auth.member, updatedAt: serverTimestamp() }, { merge: true });
+      authConfig.passwordHash = WG_PASSWORD_HASH;
+      showToast("Gruppenpasswort ist jetzt «hausamsee» (in der Cloud).", "success");
+    } catch (e) {
+      console.error(e);
+      showToast("Speichern fehlgeschlagen.", "error");
+    }
+  } else {
+    authConfig.passwordHash = WG_PASSWORD_HASH;
+    localStore.config = { ...localStore.config, passwordHash: WG_PASSWORD_HASH };
+    saveLocal("config", localStore.config);
+    showToast("Lokal: Gruppenpasswort auf «hausamsee».", "success");
+  }
+});
+
+$("adminClearPersonalBtn")?.addEventListener("click", async () => {
+  if (!requireMember("Passwort entfernen")) return;
+  const name = ($("adminClearPersonalSelect")?.value || "").trim();
+  if (!name || !ADULT_NAMES.has(name)) {
+    showToast("Bitte eine Person auswählen.", "error");
+    return;
+  }
+  if (!confirm(`Persönliches Passwort von ${name} wirklich entfernen? ${name} loggt mit dem Gruppenpasswort ein (und hausamsee, falls das gilt).`)) return;
   try {
-    await navigator.clipboard.writeText(line);
-    showToast("Einladungstext in die Zwischenablage kopiert.", "success");
-  } catch {
-    showToast("Kopieren nicht möglich – Browser verweigert die Zwischenablage.", "error");
+    await clearMemberAppPrefsInCloud(name);
+    if (firebaseReady) {
+      onMemberPrefsChanged();
+      showToast("Persönliches Passwort entfernt – Login mit Gruppenpasswort.", "success");
+    } else {
+      onMemberPrefsChanged();
+      showToast("Lokal: Passwort-Profil entfernt.", "success");
+    }
+  } catch (e) {
+    console.error(e);
+    showToast("Speichern fehlgeschlagen.", "error");
   }
 });
 
@@ -4323,6 +4575,15 @@ async function loadAuthConfig() {
         if (!memberPrefsListenerPrimed) { memberPrefsListenerPrimed = true; return; }
         onMemberPrefsChanged();
       }, (err) => console.warn("memberPrefs listener:", err.message));
+
+      const moSnap = await getDoc(doc(db, "config", "movedOut"));
+      if (moSnap.exists()) applyMovedOutDoc(moSnap.data());
+      let movedOutListenerPrimed = false;
+      onSnapshot(doc(db, "config", "movedOut"), (d) => {
+        applyMovedOutDoc(d.exists() ? d.data() : { names: [] });
+        if (!movedOutListenerPrimed) { movedOutListenerPrimed = true; return; }
+        onMovedOutChanged();
+      }, (err) => console.warn("movedOut listener:", err.message));
     } catch (e) {
       console.warn("Auth-Config konnte nicht geladen werden, nutze Default.", e.message);
     }
@@ -4330,6 +4591,7 @@ async function loadAuthConfig() {
     if (localStore.config?.passwordHash) authConfig.passwordHash = localStore.config.passwordHash;
     applyMemberPasswordsDoc(localStore.memberPasswords);
     applyMemberPrefsDoc(localStore.memberPrefs);
+    applyMovedOutDoc({ names: localStore.movedOut || [] });
   }
   authConfig.ready = true;
 }
@@ -4508,6 +4770,7 @@ setupScrollAnim();
 // Auth-Config zuerst laden (wichtig für korrekte Passwort-Prüfung beim Auto-Login)
 loadAuthConfig().then(() => {
   auth.init();
+  onMovedOutChanged();
   populateLoginMemberSelect();
   populatePutzWhoSelect();
   setupListeners();

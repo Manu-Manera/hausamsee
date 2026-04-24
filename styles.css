@@ -1045,6 +1045,36 @@ a:hover { color: var(--terracotta); }
   background: rgba(198, 122, 80, 0.06);
 }
 
+/* WG-Einstellungen: Einladung (wie Event-Karten) */
+.invite-settings-share {
+  margin: 0 0 4px 0;
+}
+
+.settings-bewohner-roster { margin-top: 4px; }
+.settings-roster-h {
+  font-size: 0.75rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--text-muted, #6b5c52);
+  margin-bottom: 6px;
+}
+.settings-roster-block + .settings-roster-block { margin-top: 10px; }
+.settings-roster-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 8px 10px;
+  background: rgba(255, 255, 255, 0.5);
+  border: 1px solid var(--card-border, rgba(0,0,0,0.08));
+  border-radius: 12px;
+  margin-bottom: 6px;
+}
+.settings-roster-row.is-movedout { opacity: 0.9; }
+.settings-roster-name { font-size: 0.9rem; }
+.settings-roster-name.muted { color: var(--text-muted); }
+
 .event-admin {
   display: flex;
   gap: 6px;

@@ -417,8 +417,36 @@
       <!-- Einstellungen -->
       <div class="kalender-panel hidden" id="ternTabEinstellungen">
         <p class="section-lead" style="text-align:left;margin-top:0;">
-          Profil, persönliches Passwort, gemeinsames Fallback, Gäste und Einladung.
+          Profil, Besetzung, Zugang, Gäste und Einladen teilen.
         </p>
+
+        <div class="settings-card" id="settingsBewohnerCard">
+          <h3>🏠 Besetzung (ein- und ausgezogen)</h3>
+          <p class="form-note" style="margin-bottom:10px;">
+            Ausgezogene Personen: kein Login, keine Kachel. <strong>Daten in Events bleiben</strong> sichtbar.
+          </p>
+          <div id="settingsBewohnerRoster" class="settings-bewohner-roster"></div>
+        </div>
+
+        <div class="settings-card" id="settingsWgAccessCard">
+          <h3>🛡️ Zugang verwalten</h3>
+          <p class="form-note" style="margin-bottom:10px;">
+            Gruppenpasswort in der Cloud auf <strong>hausamsee</strong> setzen, oder jemandes persönliches Passwort löschen
+            (z. B. nach fehlgeschlagenem Handy-Wechsel).
+          </p>
+          <div class="form-actions" style="margin-bottom:12px;">
+            <button type="button" class="btn btn-ghost" id="adminSetWgPasswordToHausamsee">Gruppenpasswort → «hausamsee» in Cloud</button>
+          </div>
+          <div class="field" style="max-width:100%;">
+            <label for="adminClearPersonalSelect">Persönliches Passwort entfernen für</label>
+            <div class="row" style="align-items:center;gap:8px;flex-wrap:wrap;margin-top:6px;">
+              <select id="adminClearPersonalSelect" style="min-width:160px;flex:1;">
+                <option value="">Person wählen…</option>
+              </select>
+              <button type="button" class="event-share-btn" id="adminClearPersonalBtn" title="Zurück auf Gruppen-Login">↩️ Nur Gruppen-Login</button>
+            </div>
+          </div>
+        </div>
 
         <div class="settings-card">
           <h3>👤 Name &amp; Icon</h3>
@@ -441,12 +469,15 @@
 
         <div class="settings-card">
           <h3>✉️ Mitbewohner:innen einladen</h3>
-          <p class="form-note" style="margin-bottom:12px;">
-            Erzeugt einen fertigen Text mit Seitenlink, Login-Hinweis und initialem Gruppenpasswort (nur so lange, wie die WG
-            es noch nicht ersetzt hat). Der Link öffnet für neue Nutzer:innen direkt die Anmeldemaske
-            <code class="form-note" style="font-size:0.9em;">?openLogin=1</code>.
+          <p class="form-note" style="margin-bottom:10px;">
+            Wie bei Events: System-Dialog, WhatsApp, oder in die Zwischenablage. Inkl. Link mit
+            <code class="form-note" style="font-size:0.9em;">?openLogin=1</code> und initialem Gruppenpasswort.
           </p>
-          <button type="button" class="btn btn-ghost" id="copyWgInviteBtn">Einladungstext in die Zwischenablage</button>
+          <div class="event-share invite-settings-share" aria-label="Einladung teilen">
+            <button type="button" class="event-share-btn" id="wgInviteShareNative" title="iOS &amp; Android Teilen-Dialog">📤 Teilen</button>
+            <button type="button" class="event-share-btn" id="wgInviteWhatsApp" title="WhatsApp">💬 WhatsApp</button>
+            <button type="button" class="event-share-btn" id="wgInviteCopy" title="Gesamter Text in Zwischenablage">📋 Alles kopieren</button>
+          </div>
         </div>
 
         <div class="settings-card">
@@ -999,6 +1030,6 @@
   <!-- Toast -->
   <div id="toast" class="toast hidden"></div>
 
-  <script type="module" src="app.js?v=20260424f"></script>
+  <script type="module" src="app.js?v=20260424g"></script>
 </body>
 </html>
