@@ -145,7 +145,7 @@
       <span class="eyebrow">Unser Lied</span>
       <h2>Soundtrack vom Haus am See</h2>
       <p class="section-lead">
-        Eine kleine Playlist – <strong>MP3-Links</strong> im Audio-Player, <strong>YouTube-Links</strong> als eingebettetes Video. Klick auf einen Eintrag zum Starten.
+        Eine kleine Playlist – <strong>MP3-Links</strong> im Audio-Player, <strong>YouTube</strong> und <strong>SoundCloud</strong> als eingebetteter Player. Klick auf einen Eintrag zum Starten.
       </p>
     </div>
 
@@ -162,9 +162,9 @@
       </div>
 
       <div id="playerYoutubeWrap" class="player-youtube-wrap hidden" aria-hidden="true">
-        <p class="player-youtube-hint">Dieser Track läuft über <strong>YouTube</strong> (eingebettet). Lautstärke und Fortschritt steuerst du im Kasten – nicht mit dem alten Lautstärkeregler daneben.</p>
-        <div class="player-youtube-embed">
-          <iframe id="playerYoutubeFrame" title="YouTube" loading="lazy" allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share" allowfullscreen=""></iframe>
+        <p id="playerEmbedHint" class="player-youtube-hint"></p>
+        <div id="playerEmbedBox" class="player-youtube-embed">
+          <iframe id="playerYoutubeFrame" title="Eingebetteter Player" loading="lazy" allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share" allowfullscreen=""></iframe>
         </div>
       </div>
 
@@ -965,9 +965,9 @@
     <form method="dialog" id="songUrlForm" class="auth-form">
       <button type="button" class="dialog-close" aria-label="Schliessen">×</button>
       <h2 class="auth-title">🎵 Song per Link hinzufügen</h2>
-      <p class="auth-sub">Direkter Link zu <strong>MP3/M4A/WAV</strong> (Dropbox, Hosting) <strong>oder</strong> ein normaler <strong>YouTube</strong>-Link (wird hier eingebettet, nicht im Audio-Element).</p>
+      <p class="auth-sub">Direkter Link zu <strong>MP3/M4A/WAV</strong> (Dropbox, Hosting), ein <strong>YouTube</strong>-Video oder eine <strong>SoundCloud</strong>-Track-/Playlist-URL – eingebettet, nicht über das Audio-Element.</p>
       <div class="field">
-        <label for="songUrlInput">Audio- oder YouTube-URL</label>
+        <label for="songUrlInput">Audio-, YouTube- oder SoundCloud-URL</label>
         <input id="songUrlInput" type="url" required placeholder="https://…" />
       </div>
       <div class="row">
@@ -981,7 +981,7 @@
         </div>
       </div>
       <button type="submit" class="btn btn-primary">Zur Playlist hinzufügen</button>
-      <p class="form-note">Tipp: Dropbox <code>?dl=0</code> → <code>?raw=1</code>. YouTube: einfach die Video-URL einfügen.</p>
+      <p class="form-note">Tipp: Dropbox <code>?dl=0</code> → <code>?raw=1</code>. YouTube/SoundCloud: normale Browser-URL vom Track (kein Embed-Code).</p>
     </form>
   </dialog>
 
@@ -1064,6 +1064,6 @@
   <!-- Toast -->
   <div id="toast" class="toast hidden"></div>
 
-  <script type="module" src="app.js?v=20260425a"></script>
+  <script type="module" src="app.js?v=20260425b"></script>
 </body>
 </html>

@@ -3223,6 +3223,8 @@ const nowTitle = $("nowTitle");
 const nowArtist = $("nowArtist");
 const playlistEl = $("playlist");
 const playerYoutubeWrap = $("playerYoutubeWrap");
+const playerEmbedBox = $("playerEmbedBox");
+const playerEmbedHint = $("playerEmbedHint");
 const playerYoutubeFrame = $("playerYoutubeFrame");
 
 function extractYouTubeId(url) {
@@ -3234,15 +3236,66 @@ function extractYouTubeId(url) {
   return m ? m[1] : null;
 }
 
+/** Öffentliche SoundCloud-Track-/Set-URL (kein Widget w.soundcloud.com). */
+function extractSoundCloudPageUrl(url) {
+  if (!url || typeof url !== "string") return null;
+  try {
+    const u = new URL(url.trim());
+    const h = u.hostname.toLowerCase();
+    if (!/^([a-z0-9-]+\.)?soundcloud\.com$/i.test(h)) return null;
+    if (/^w\./i.test(h)) return null;
+    return u.origin + u.pathname + u.search;
+  } catch {
+    return null;
+  }
+}
+
+function soundcloudWidgetSrc(pageUrl, autoplay) {
+  const u = new URL("https://w.soundcloud.com/player/");
+  u.searchParams.set("url", pageUrl);
+  u.searchParams.set("color", "#ff5500");
+  u.searchParams.set("auto_play", autoplay ? "true" : "false");
+  u.searchParams.set("hide_related", "true");
+  u.searchParams.set("show_comments", "false");
+  u.searchParams.set("show_user", "true");
+  u.searchParams.set("show_reposts", "false");
+  u.searchParams.set("show_teaser", "false");
+  u.searchParams.set("visual", "true");
+  return u.toString();
+}
+
 function songGetYouTubeId(song) {
   if (!song) return null;
   if (song.youtubeId && /^[a-zA-Z0-9_-]{11}$/.test(song.youtubeId)) return song.youtubeId;
   return extractYouTubeId(song.src || "");
 }
 
+function songGetSoundCloudUrl(song) {
+  if (!song) return null;
+  const fromField =
+    typeof song.soundcloudUrl === "string" ? extractSoundCloudPageUrl(song.soundcloudUrl) : null;
+  if (fromField) return fromField;
+  return extractSoundCloudPageUrl(song.src || "");
+}
+
+function songEmbedPlaylistInfo(s) {
+  if (songGetYouTubeId(s)) return { cls: "is-youtube", icon: "📺", title: "YouTube" };
+  if (songGetSoundCloudUrl(s)) return { cls: "is-soundcloud", icon: "☁️", title: "SoundCloud" };
+  return { cls: "", icon: null, title: "" };
+}
+
 function isCurrentTrackYouTube() {
   if (currentSongIdx < 0 || !musikCache.length) return false;
   return !!songGetYouTubeId(musikCache[currentSongIdx]);
+}
+
+function isCurrentTrackSoundCloud() {
+  if (currentSongIdx < 0 || !musikCache.length) return false;
+  return !!songGetSoundCloudUrl(musikCache[currentSongIdx]);
+}
+
+function isCurrentTrackExternalEmbed() {
+  return isCurrentTrackYouTube() || isCurrentTrackSoundCloud();
 }
 
 // Gespeicherte Lautstärke wiederherstellen
@@ -3283,16 +3336,21 @@ function renderPlaylist() {
 
   btnPlayPause.disabled = false;
 
-  playlistEl.innerHTML = musikCache.map((s, i) => `
-    <li class="playlist-item ${i === currentSongIdx ? 'active' : ''} ${songGetYouTubeId(s) ? "is-youtube" : ""}" data-idx="${i}">
-      <span class="pi-icon" title="${songGetYouTubeId(s) ? "YouTube" : ""}">${songGetYouTubeId(s) ? "📺" : (i === currentSongIdx ? "♪" : (i + 1))}</span>
+  playlistEl.innerHTML = musikCache.map((s, i) => {
+    const emb = songEmbedPlaylistInfo(s);
+    const iconSpan = emb.icon
+      ? `<span class="pi-icon" title="${emb.title}">${emb.icon}</span>`
+      : `<span class="pi-icon">${i === currentSongIdx ? "♪" : i + 1}</span>`;
+    return `
+    <li class="playlist-item ${i === currentSongIdx ? "active" : ""} ${emb.cls}" data-idx="${i}">
+      ${iconSpan}
       <div class="pi-meta">
         <span class="pi-title">${escapeHtml(s.title || 'Ohne Titel')}</span>
         <span class="pi-sub">${escapeHtml(s.artist || '')}${s.addedBy ? ` · hinzugefügt von ${escapeHtml(s.addedBy)}` : ''}</span>
       </div>
-      ${auth.isAuthed ? `<button class="pi-delete" data-del="${i}" aria-label="Entfernen" title="Entfernen">✕</button>` : ''}
-    </li>
-  `).join("");
+      ${auth.isAuthed ? `<button class="pi-delete" data-del="${i}" aria-label="Entfernen" title="Entfernen">✕</button>` : ""}
+    </li>`;
+  }).join("");
 
   playlistEl.querySelectorAll(".playlist-item").forEach(li => {
     li.addEventListener("click", (e) => {
@@ -3316,18 +3374,19 @@ function renderPlaylist() {
   btnNext.disabled = musikCache.length <= 1;
 }
 
-function clearYouTubeEmbed() {
+function clearExternalEmbed() {
   if (playerYoutubeFrame) playerYoutubeFrame.src = "about:blank";
   playerYoutubeWrap?.classList.add("hidden");
   playerYoutubeWrap?.setAttribute("aria-hidden", "true");
-  document.body.classList.remove("is-youtube-track");
+  document.body.classList.remove("is-youtube-track", "is-soundcloud-track");
+  playerEmbedBox?.classList.remove("is-soundcloud");
 }
 
 function setCurrentSong(idx, { autoplay = false, silent = false } = {}) {
   if (!audio) return;
   if (idx < 0 || idx >= musikCache.length) {
     currentSongIdx = -1;
-    clearYouTubeEmbed();
+    clearExternalEmbed();
     audio.removeAttribute("src");
     audio.load();
     nowTitle.textContent = "Noch kein Song ausgewählt";
@@ -3342,19 +3401,27 @@ function setCurrentSong(idx, { autoplay = false, silent = false } = {}) {
   currentSongIdx = idx;
   const song = musikCache[idx];
   const yid = songGetYouTubeId(song);
+  const scUrl = !yid ? songGetSoundCloudUrl(song) : null;
   nowTitle.textContent = song.title || "Ohne Titel";
   nowArtist.textContent = song.artist || "";
   if (yid) {
     audio.pause();
     audio.removeAttribute("src");
     audio.load();
+    playerEmbedBox?.classList.remove("is-soundcloud");
+    if (playerEmbedHint) {
+      playerEmbedHint.innerHTML =
+        "Dieser Track läuft über <strong>YouTube</strong> (eingebettet). Lautstärke und Fortschritt steuerst du im Kasten – nicht mit dem Lautstärkeregler darunter.";
+    }
     playerYoutubeWrap?.classList.remove("hidden");
     playerYoutubeWrap?.setAttribute("aria-hidden", "false");
     if (playerYoutubeFrame) {
+      playerYoutubeFrame.title = "YouTube";
       const ap = autoplay ? "1" : "0";
       playerYoutubeFrame.src = `https://www.youtube.com/embed/${yid}?rel=0&modestbranding=1&playsinline=1&autoplay=${ap}`;
     }
     document.body.classList.add("is-youtube-track");
+    document.body.classList.remove("is-soundcloud-track");
     if (progressBar) {
       progressBar.disabled = true;
       progressBar.value = 0;
@@ -3363,8 +3430,33 @@ function setCurrentSong(idx, { autoplay = false, silent = false } = {}) {
     if (volumeBar) volumeBar.disabled = true;
     if (timeCurrent) timeCurrent.textContent = "∿";
     if (timeTotal) timeTotal.textContent = "YouTube";
+  } else if (scUrl) {
+    audio.pause();
+    audio.removeAttribute("src");
+    audio.load();
+    playerEmbedBox?.classList.add("is-soundcloud");
+    if (playerEmbedHint) {
+      playerEmbedHint.innerHTML =
+        "Dieser Track läuft über <strong>SoundCloud</strong> (eingebetteter Player). Bedienung im Kasten – der untere Fortschrittsbalken gilt nur für direkte Audio-URLs.";
+    }
+    playerYoutubeWrap?.classList.remove("hidden");
+    playerYoutubeWrap?.setAttribute("aria-hidden", "false");
+    if (playerYoutubeFrame) {
+      playerYoutubeFrame.title = "SoundCloud";
+      playerYoutubeFrame.src = soundcloudWidgetSrc(scUrl, autoplay);
+    }
+    document.body.classList.remove("is-youtube-track");
+    document.body.classList.add("is-soundcloud-track");
+    if (progressBar) {
+      progressBar.disabled = true;
+      progressBar.value = 0;
+      updateSliderFill(progressBar);
+    }
+    if (volumeBar) volumeBar.disabled = true;
+    if (timeCurrent) timeCurrent.textContent = "∿";
+    if (timeTotal) timeTotal.textContent = "SoundCloud";
   } else {
-    clearYouTubeEmbed();
+    clearExternalEmbed();
     document.body.classList.remove("is-youtube-track");
     if (progressBar) progressBar.disabled = false;
     if (volumeBar) volumeBar.disabled = false;
@@ -3385,8 +3477,16 @@ function updatePlayPauseUI() {
   if (!btnPlayPause) return;
   if (isCurrentTrackYouTube()) {
     btnPlayPause.textContent = "🎬";
-    btnPlayPause.title = "YouTube-Video spielt im Kasten oben; Play/Pause dort steuern. Tipp: nochmal tippen lädt die Einbettung neu.";
+    btnPlayPause.title =
+      "YouTube-Video im Kasten oben; Play/Pause dort steuern. Tipp: nochmal tippen lädt die Einbettung neu (Autoplay-Retry).";
     document.body.classList.add("is-playing", "is-youtube-track");
+    return;
+  }
+  if (isCurrentTrackSoundCloud()) {
+    btnPlayPause.textContent = "🎬";
+    btnPlayPause.title =
+      "SoundCloud-Player oben; dort abspielen. Tipp: nochmal tippen lädt den Player neu (Autoplay-Retry).";
+    document.body.classList.add("is-playing", "is-soundcloud-track");
     return;
   }
   const playing = !audio.paused && !audio.ended && audio.readyState > 2;
@@ -3411,6 +3511,11 @@ btnPlayPause?.addEventListener("click", () => {
       u.searchParams.set("playsinline", "1");
       playerYoutubeFrame.src = u.toString();
     }
+    return;
+  }
+  if (isCurrentTrackSoundCloud() && playerYoutubeFrame) {
+    const sc = songGetSoundCloudUrl(musikCache[currentSongIdx]);
+    if (sc) playerYoutubeFrame.src = soundcloudWidgetSrc(sc, true);
     return;
   }
   if (audio.paused) {
@@ -3445,22 +3550,22 @@ audio?.addEventListener("ended", () => {
   }
 });
 audio?.addEventListener("timeupdate", () => {
-  if (isCurrentTrackYouTube() || !audio.duration) return;
+  if (isCurrentTrackExternalEmbed() || !audio.duration) return;
   const pct = (audio.currentTime / audio.duration) * 100;
   if (progressBar) progressBar.value = pct;
   updateSliderFill(progressBar);
   if (timeCurrent) timeCurrent.textContent = fmtTime(audio.currentTime);
 });
 audio?.addEventListener("loadedmetadata", () => {
-  if (timeTotal && !isCurrentTrackYouTube()) timeTotal.textContent = fmtTime(audio.duration);
+  if (timeTotal && !isCurrentTrackExternalEmbed()) timeTotal.textContent = fmtTime(audio.duration);
 });
 audio?.addEventListener("error", () => {
-  if (isCurrentTrackYouTube()) return;
+  if (isCurrentTrackExternalEmbed()) return;
   if (audio.src) showToast("Song konnte nicht geladen werden.", "error");
 });
 
 progressBar?.addEventListener("input", () => {
-  if (isCurrentTrackYouTube() || !audio?.duration) return;
+  if (isCurrentTrackExternalEmbed() || !audio?.duration) return;
   const t = (parseFloat(progressBar.value) / 100) * audio.duration;
   audio.currentTime = t;
   updateSliderFill(progressBar);
@@ -3491,12 +3596,14 @@ $("songUrlForm")?.addEventListener("submit", async (e) => {
   // Convenience: Dropbox share link → raw
   if (/dropbox\.com/.test(url) && /\?dl=0/.test(url)) url = url.replace("?dl=0", "?raw=1");
   const yid = extractYouTubeId(url);
+  const scUrl = !yid ? extractSoundCloudPageUrl(url) : null;
   const entry = {
     title: $("songTitleInput").value.trim() || "Ohne Titel",
     artist: $("songArtistInput").value.trim(),
     src: url,
-    kind: yid ? "youtube" : "url",
+    kind: yid ? "youtube" : scUrl ? "soundcloud" : "url",
     ...(yid ? { youtubeId: yid } : {}),
+    ...(scUrl ? { soundcloudUrl: scUrl } : {}),
     addedBy: auth.member,
     createdAt: Date.now()
   };
