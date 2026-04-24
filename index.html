@@ -417,13 +417,45 @@
       <!-- Einstellungen -->
       <div class="kalender-panel hidden" id="ternTabEinstellungen">
         <p class="section-lead" style="text-align:left;margin-top:0;">
-          WG-Passwort verwalten und Gäste-Zugänge erstellen.
+          Profil, persönliches Passwort, gemeinsames Fallback, Gäste und Einladung.
         </p>
 
         <div class="settings-card">
-          <h3>🔑 WG-Passwort ändern</h3>
+          <h3>👤 Name &amp; Icon</h3>
           <p class="form-note" style="margin-bottom:12px;">
-            Das neue Passwort gilt dann für alle WG-Mitglieder. Gib's danach weiter.
+            So erscheinst du in der Seitenleiste, in Listen und auf den Bewohner-Kacheln. Dein <strong>Login-Name in der Auswahlliste</strong> bleibt der
+            in der WG vereinbarte Vorname.
+          </p>
+          <form id="memberProfileForm" class="form-card inline">
+            <div class="field">
+              <label for="profileDisplayName">Anzeigename</label>
+              <input id="profileDisplayName" type="text" required maxlength="32" placeholder="Wie du genannt werden willst" autocomplete="nickname" />
+            </div>
+            <div class="field">
+              <label for="profileEmoji">Icon</label>
+              <select id="profileEmoji" required aria-label="Icon wählen"></select>
+            </div>
+            <button type="submit" class="btn btn-primary">Profil speichern</button>
+          </form>
+        </div>
+
+        <div class="settings-card">
+          <h3>✉️ Mitbewohner:innen einladen</h3>
+          <p class="form-note" style="margin-bottom:12px;">
+            Erzeugt einen fertigen Text mit Seitenlink, Login-Hinweis und initialem Gruppenpasswort (nur so lange, wie die WG
+            es noch nicht ersetzt hat). Der Link öffnet für neue Nutzer:innen direkt die Anmeldemaske
+            <code class="form-note" style="font-size:0.9em;">?openLogin=1</code>.
+          </p>
+          <button type="button" class="btn btn-ghost" id="copyWgInviteBtn">Einladungstext in die Zwischenablage</button>
+        </div>
+
+        <div class="settings-card">
+          <h3>🔑 Mein Passwort</h3>
+          <p class="form-note" style="margin-bottom:12px;">
+            <strong>Nur für deinen Login</strong>, unabhängig von den anderen. <strong>Erstes Mal?</strong> Nutze als aktuelles Passwort das
+            gemeinsame WG-Passwort – Standard in einer frischen App ist: <code class="form-note" style="font-size:0.9em;">hausamsee</code> (nur, falls
+            es in den Einstellungen nie geändert wurde). Wenn du schon ein persönliches Passwort setzt, ist «Aktuelles» dein
+            <strong>persönliches</strong>, keines von jemand anders.
           </p>
           <form id="changePasswordForm" class="form-card inline">
             <div class="field">
@@ -438,9 +470,32 @@
               <label for="newPassword2">Wiederholen</label>
               <input id="newPassword2" type="password" required minlength="4" autocomplete="new-password" />
             </div>
-            <button type="submit" class="btn btn-primary">Passwort speichern</button>
+            <button type="submit" class="btn btn-primary">Mein Passwort speichern</button>
           </form>
         </div>
+
+        <details class="settings-card admin-toggle">
+          <summary>Gemeinsames WG-Passwort (Fallback)</summary>
+          <p class="form-note" style="margin-bottom:12px;margin-top:8px;">
+            Das ist das Passwort für alle, die <strong>noch kein persönliches Passwort</strong> gesetzt haben.
+            Ändern nur, wenn ihr das aktuelle gemeinsame Passwort kennt – z. B. nach einem Umzug oder wenn es geleakt wurde.
+          </p>
+          <form id="changeSharedPasswordForm" class="form-card inline">
+            <div class="field">
+              <label for="sharedCurrentPassword">Aktuelles gemeinsames Passwort</label>
+              <input id="sharedCurrentPassword" type="password" required autocomplete="current-password" />
+            </div>
+            <div class="field">
+              <label for="sharedNewPassword">Neues gemeinsames Passwort</label>
+              <input id="sharedNewPassword" type="password" required minlength="4" autocomplete="new-password" />
+            </div>
+            <div class="field">
+              <label for="sharedNewPassword2">Wiederholen</label>
+              <input id="sharedNewPassword2" type="password" required minlength="4" autocomplete="new-password" />
+            </div>
+            <button type="submit" class="btn btn-ghost">Gemeinsames Passwort ersetzen</button>
+          </form>
+        </details>
 
         <div class="settings-card">
           <h3>🎟️ Gäste-Zugänge</h3>
@@ -940,6 +995,6 @@
   <!-- Toast -->
   <div id="toast" class="toast hidden"></div>
 
-  <script type="module" src="app.js?v=20260424b"></script>
+  <script type="module" src="app.js?v=20260424e"></script>
 </body>
 </html>

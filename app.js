@@ -88,6 +88,18 @@ const BEWOHNER = [
 //     crypto.subtle.digest("SHA-256", new TextEncoder().encode("neuesPasswort")).then(b=>console.log(Array.from(new Uint8Array(b)).map(x=>x.toString(16).padStart(2,"0")).join("")))
 // Default "hausamsee":
 const WG_PASSWORD_HASH = "a89881e9359c985da03b139154082072ba21de07e264891470ac67b2be1bd28f";
+/** Klartext-Standard (für Initiale, Einladungstext, niemals im öffentlich sichtbaren Login-Platzhalter) */
+const DEFAULT_WG_PASSWORD_PLAINTEXT = "hausamsee";
+
+// Kürzere Anzeigenamen + Icon (Wahl in WG-Intern → Einstellungen, gespeichert in config/memberPrefs)
+const EMOJI_CHOICES = [
+  ...new Set([
+    ...BEWOHNER.map((b) => b.emoji),
+    "🌿", "🌳", "🌲", "🌸", "🌷", "🌺", "🦋", "🐾", "🌙", "☀️", "⭐", "🌊", "⛰️", "🏔️", "🍀", "🌈", "🎸", "🎧", "🎬", "🍕", "☕", "🥂", "🍰", "🚴", "⛵", "🦆", "🦢", "🪷", "🦔", "🦫", "🦦"
+  ])
+];
+const EMOJI_CHOICES_SET = new Set(EMOJI_CHOICES);
+const BEWOHNER_NAME_SET = new Set(BEWOHNER.map((b) => b.name));
 
 // Gallery-Konstanten
 const MAX_GALLERY_IMAGES = 20;
@@ -136,6 +148,8 @@ const localStore = {
   roomOffer: JSON.parse(localStorage.getItem("has_roomOffer") || "null"),
   bewohnertexte: JSON.parse(localStorage.getItem("has_bewohnertexte") || "{}"),
   gartenPlan: JSON.parse(localStorage.getItem("has_gartenPlan") || "null"),
+  memberPasswords: JSON.parse(localStorage.getItem("has_memberPasswords") || "{}"),
+  memberPrefs: JSON.parse(localStorage.getItem("has_memberPrefs") || "{}"),
 };
 function saveLocal(key, value) { localStorage.setItem(`has_${key}`, JSON.stringify(value)); }
 
@@ -186,11 +200,16 @@ async function sha256(text) {
 const SESSION_KEY = "has_wg_session";
 const SESSION_DURATION = 30 * 24 * 60 * 60 * 1000; // 30 Tage
 
-// Laufzeit-Cache für Auth-Config (Passwort-Hash + Gästezugänge)
-// Werden aus Firestore gelesen, Fallback auf hart-codierten Default-Hash
+// Laufzeit-Cache für Auth-Config (gemeinsamer Hash + persönliche Hashes + Gäste)
+// — Persönliches Passwort: doc "config/memberPasswords" { "Manu": "hex64", ... }
+// — Fallback für alle ohne eigenes Passwort: doc "config/auth" { passwordHash }
 let authConfig = {
   passwordHash: WG_PASSWORD_HASH,
-  ready: false
+  /** @type {Record<string, string>} Nur Erwachsene; sobald gesetzt, gilt nur noch dieses Passwort für Login */
+  memberHashes: {},
+  /** @type {Record<string, { displayName?: string, emoji?: string }>} */
+  memberPrefs: {},
+  ready: false,
 };
 let guestsCache = [];
 
@@ -230,7 +249,7 @@ const auth = {
       until: Date.now() + SESSION_DURATION
     }));
     this.apply();
-    const greeting = isGuest ? `Willkommen als Gast, ${member} 🎟️` : `Willkommen zurück, ${member} 🌿`;
+    const greeting = isGuest ? `Willkommen als Gast, ${member} 🎟️` : `Willkommen zurück, ${mLabel(member)} 🌿`;
     showToast(greeting, "success");
   },
   logout() {
@@ -261,15 +280,111 @@ const auth = {
     renderRoomOffer();
     populateSchadenZustaendigSelect();
     syncKalenderTabs();
+    fillMemberProfileForm();
   }
 };
 
-// Hash für ein Passwort in authConfig oder guestsCache prüfen
+const ADULT_NAMES = new Set(BEWOHNER.filter((b) => !b.kid).map((b) => b.name));
+
+function applyMemberPasswordsDoc(data) {
+  authConfig.memberHashes = {};
+  if (!data || typeof data !== "object") return;
+  for (const [k, v] of Object.entries(data)) {
+    if (!ADULT_NAMES.has(k) || typeof v !== "string" || !/^[a-f0-9]{64}$/.test(v)) continue;
+    authConfig.memberHashes[k] = v;
+  }
+}
+
+function applyMemberPrefsDoc(data) {
+  const next = {};
+  if (data && typeof data === "object") {
+    for (const [k, v] of Object.entries(data)) {
+      if (!BEWOHNER_NAME_SET.has(k) || !v || typeof v !== "object") continue;
+      const rawName = v.displayName != null ? String(v.displayName) : "";
+      const displayName = rawName.replace(/\s+/g, " ").trim().slice(0, 32);
+      const rawEmoji = v.emoji != null ? String(v.emoji).trim() : "";
+      if (rawEmoji && !EMOJI_CHOICES_SET.has(rawEmoji)) continue;
+      const o = {};
+      if (displayName) o.displayName = displayName;
+      if (rawEmoji) o.emoji = rawEmoji;
+      if (Object.keys(o).length) next[k] = o;
+    }
+  }
+  authConfig.memberPrefs = next;
+}
+
+function mLabel(name) {
+  if (!name) return "";
+  const p = authConfig.memberPrefs[name];
+  return (p?.displayName && String(p.displayName).trim()) || name;
+}
+
+function mEmoji(name) {
+  if (!name) return "🌿";
+  const p = authConfig.memberPrefs[name];
+  if (p?.emoji && EMOJI_CHOICES_SET.has(p.emoji)) return p.emoji;
+  return BEWOHNER.find((b) => b.name === name)?.emoji || "🌿";
+}
+
+function onMemberPrefsChanged() {
+  updateLoginChip();
+  fillMemberProfileForm();
+  renderBewohner();
+  renderAnwesend();
+  renderTermine();
+  renderSchaeden();
+  populateLoginMemberSelect();
+  populatePutzWhoSelect();
+  populateSchadenZustaendigSelect();
+}
+
+function fillMemberProfileForm() {
+  const elName = $("profileDisplayName");
+  const elEmoji = $("profileEmoji");
+  if (!elName || !elEmoji) return;
+  if (!auth.isMember) {
+    elName.value = "";
+    if (elEmoji.options.length) elEmoji.selectedIndex = 0;
+    return;
+  }
+  const p = authConfig.memberPrefs[auth.member];
+  const base = BEWOHNER.find((b) => b.name === auth.member);
+  elName.value = p?.displayName || auth.member;
+  const want = p?.emoji && EMOJI_CHOICES_SET.has(p.emoji) ? p.emoji : (base?.emoji || EMOJI_CHOICES[0]);
+  if (Array.from(elEmoji.options).some((o) => o.value === want)) elEmoji.value = want;
+  else {
+    const opt = document.createElement("option");
+    opt.value = want;
+    opt.textContent = `${want} (sonstig)`;
+    elEmoji.appendChild(opt);
+    elEmoji.value = want;
+  }
+}
+
+function populateProfileEmojiSelect() {
+  const sel = $("profileEmoji");
+  if (!sel) return;
+  const keep = sel.value;
+  sel.innerHTML = EMOJI_CHOICES.map((e) => `<option value="${e}">${e}</option>`).join("");
+  if (keep && Array.from(sel.options).some((o) => o.value === keep)) sel.value = keep;
+}
+
+/** Login für eine konkrete Bewohner:in: eigenes Passwort, sonst gemeinsames Fallback. */
+async function verifyMemberPassword(memberName, pw) {
+  const hash = await sha256(pw);
+  const personal = authConfig.memberHashes[memberName];
+  if (personal) {
+    if (hash === personal) return { ok: true, kind: "member" };
+    return { ok: false, reason: "wrong" };
+  }
+  if (hash === authConfig.passwordHash) return { ok: true, kind: "member" };
+  return { ok: false, reason: "wrong" };
+}
+
+// Hash für ein Passwort: nur Gäste + gemeinsames WG-Passwort (für generische Gast-Option)
 async function verifyPassword(pw) {
   const hash = await sha256(pw);
-  // Mitglied: Haupt-Passwort
   if (hash === authConfig.passwordHash) return { ok: true, kind: "member" };
-  // Gast-Zugang?
   const now = Date.now();
   for (const g of guestsCache) {
     if (g.hash !== hash) continue;
@@ -283,8 +398,9 @@ function updateLoginChip() {
   const btn = $("loginBtn");
   if (auth.isAuthed) {
     btn.classList.add("logged-in");
-    const icon = auth.isGuest ? "🎟️" : "👋";
-    btn.innerHTML = `<span class="login-icon">${icon}</span><span class="login-label">${escapeHtml(auth.member)} · Abmelden</span>`;
+    const label = auth.isGuest ? auth.member : mLabel(auth.member);
+    const icon = auth.isGuest ? "🎟️" : mEmoji(auth.member);
+    btn.innerHTML = `<span class="login-icon">${icon}</span><span class="login-label">${escapeHtml(label)} · Abmelden</span>`;
   } else {
     btn.classList.remove("logged-in");
     btn.innerHTML = `<span class="login-icon">🔑</span><span class="login-label">Anmelden</span>`;
@@ -300,7 +416,7 @@ function populateLoginMemberSelect() {
   const activeGuests = (guestsCache || []).filter(g => !g.expiresAt || g.expiresAt > now);
 
   const memberOpts = adults
-    .map(b => `<option value="${escapeHtml(b.name)}">${b.emoji} ${b.name}</option>`)
+    .map(b => `<option value="${escapeHtml(b.name)}">${mEmoji(b.name)} ${escapeHtml(mLabel(b.name))}</option>`)
     .join("");
 
   // Jeder Gast bekommt einen eigenen Eintrag mit Namen
@@ -327,7 +443,7 @@ function populatePutzWhoSelect() {
   const current = select.value;
   const adults = BEWOHNER.filter(b => !b.kid);
   select.innerHTML = `<option value="">Wer?</option>` +
-    adults.map(b => `<option value="${b.name}">${b.emoji} ${b.name}</option>`).join("");
+    adults.map(b => `<option value="${b.name}">${mEmoji(b.name)} ${escapeHtml(mLabel(b.name))}</option>`).join("");
   if (current) select.value = current;
 }
 
@@ -378,24 +494,24 @@ $("loginForm")?.addEventListener("submit", async (e) => {
   }
 
   // Fall 2: Generische Gast-Option (keine Gäste im Cache konfiguriert oder Fallback)
-  const result = await verifyPassword(password);
-  if (!result.ok) {
-    showError(result.reason === "expired"
-      ? "Dieser Gast-Zugang ist abgelaufen."
-      : "Falsches Passwort · versuch's nochmal.");
-    return;
-  }
-
   if (selected === "__guest__") {
+    const result = await verifyPassword(password);
+    if (!result.ok) {
+      showError(result.reason === "expired"
+        ? "Dieser Gast-Zugang ist abgelaufen."
+        : "Falsches Passwort · versuch's nochmal.");
+      return;
+    }
     if (result.kind !== "guest") { showError("Das ist kein Gast-Passwort."); return; }
     auth.login(result.guestName, { isGuest: true });
     $("loginDialog").close();
     return;
   }
 
-  // Fall 3: WG-Mitglied gewählt → muss Member-Hash matchen
-  if (result.kind !== "member") {
-    showError("Dieses Passwort ist nur für Gäste. Für Mitglieder bitte das WG-Passwort nutzen.");
+  // Fall 3: WG-Mitglied — eigenes Passwort oder gemeinsames Fallback (siehe verifyMemberPassword)
+  const mres = await verifyMemberPassword(selected, password);
+  if (!mres.ok) {
+    showError("Falsches Passwort · versuch's nochmal.");
     return;
   }
   auth.login(selected, { isGuest: false });
@@ -620,15 +736,15 @@ function renderBewohner() {
   if (!grid) return;
   grid.innerHTML = BEWOHNER.map(b => {
     const photo = bewohnerfotosCache[b.name]?.src;
-    const avatar = photo
-      ? `<img src="${escapeHtml(photo)}" alt="${escapeHtml(b.name)}" loading="lazy" />`
-      : `<span class="avatar-emoji">${b.emoji}</span>`;
     const text = getBewohnerText(b.name);
     const hasMore = !!(text.longBio || text.hobby || text.food || text.motto || text.link);
+    const dlabel = mLabel(b.name);
     return `
-      <article class="bewohner-card ${b.kid ? 'is-kid' : ''}" data-name="${escapeHtml(b.name)}" tabindex="0" role="button" aria-label="Profil von ${escapeHtml(b.name)} öffnen">
+      <article class="bewohner-card ${b.kid ? 'is-kid' : ''}" data-name="${escapeHtml(b.name)}" tabindex="0" role="button" aria-label="Profil von ${escapeHtml(dlabel)} öffnen">
         <div class="bewohner-avatar">
-          ${avatar}
+          ${photo
+      ? `<img src="${escapeHtml(photo)}" alt="${escapeHtml(dlabel)}" loading="lazy" />`
+      : `<span class="avatar-emoji">${mEmoji(b.name)}</span>`}
           ${auth.isMember ? `
             <button class="avatar-edit" data-name="${escapeHtml(b.name)}" title="Foto ändern" aria-label="Foto ändern">📷</button>
           ` : ""}
@@ -636,7 +752,7 @@ function renderBewohner() {
         </div>
         <div class="bewohner-info">
           <h3>
-            ${escapeHtml(b.name)}
+            ${escapeHtml(dlabel)}
             ${b.kid ? '<span class="kid-badge" title="Jüngstes Mitglied">Kid</span>' : ''}
           </h3>
           <span class="bewohner-role">${escapeHtml(text.role)}</span>
@@ -688,10 +804,10 @@ function renderBewohnerProfileView(name) {
   const text = getBewohnerText(name);
   const photo = bewohnerfotosCache[name]?.src;
   const avatar = photo
-    ? `<img src="${escapeHtml(photo)}" alt="${escapeHtml(name)}" />`
-    : `<span class="avatar-emoji">${base.emoji}</span>`;
+    ? `<img src="${escapeHtml(photo)}" alt="${escapeHtml(mLabel(name))}" />`
+    : `<span class="avatar-emoji">${mEmoji(name)}</span>`;
   $("profileAvatar").innerHTML = avatar;
-  $("profileName").textContent = name + (base.kid ? " 👶" : "");
+  $("profileName").textContent = mLabel(name) + (base.kid ? " 👶" : "");
   $("profileRole").textContent = text.role;
   $("profileBio").textContent = text.bio;
 
@@ -705,7 +821,7 @@ function renderBewohnerProfileView(name) {
     sections.push(`<div class="profile-section"><h4>🔗 Link</h4><p><a href="${escapeAttr(url)}" target="_blank" rel="noopener noreferrer">${escapeHtml(text.link)}</a></p></div>`);
   }
   if (!sections.length) {
-    sections.push(`<div class="profile-empty">${auth.isMember ? "Noch kein ausführliches Profil. Klick auf „Profil bearbeiten“ um was zu erzählen." : `${escapeHtml(name)} hat hier noch kein ausführliches Profil hinterlegt.`}</div>`);
+    sections.push(`<div class="profile-empty">${auth.isMember ? "Noch kein ausführliches Profil. Klick auf „Profil bearbeiten“ um was zu erzählen." : `${escapeHtml(mLabel(name))} hat hier noch kein ausführliches Profil hinterlegt.`}</div>`);
   }
   $("profileSections").innerHTML = sections.join("");
 
@@ -1953,7 +2069,7 @@ function renderTermine() {
       const status = responses[b.name];
       const classes = status ? status : "pending";
       const icon = status === "yes" ? "✓" : status === "no" ? "✗" : status === "maybe" ? "?" : "…";
-      return `<span class="response-badge ${classes}">${b.emoji} ${escapeHtml(b.name)} ${icon}</span>`;
+      return `<span class="response-badge ${classes}">${mEmoji(b.name)} ${escapeHtml(mLabel(b.name))} ${icon}</span>`;
     }).join("");
 
     return `
@@ -1966,11 +2082,11 @@ function renderTermine() {
         <div class="termin-body">
           <h3>${escapeHtml(t.title)}</h3>
           ${t.note ? `<p class="termin-note">${escapeHtml(t.note)}</p>` : ""}
-          ${t.createdBy ? `<p class="termin-creator">Erstellt von ${escapeHtml(t.createdBy)}</p>` : ""}
+          ${t.createdBy ? `<p class="termin-creator">Erstellt von ${escapeHtml(mLabel(t.createdBy))}</p>` : ""}
           <div class="termin-responses">${badges}</div>
           ${auth.isAuthed ? `
             <div class="termin-my-response">
-              <span class="label">Deine Antwort (${escapeHtml(auth.member)}):</span>
+              <span class="label">Deine Antwort (${escapeHtml(mLabel(auth.member))}):</span>
               <div class="response-buttons">
                 <button class="response-btn yes ${myResponse === 'yes' ? 'active' : ''}" data-id="${t.id}" data-response="yes">✓ Zusage</button>
                 <button class="response-btn maybe ${myResponse === 'maybe' ? 'active' : ''}" data-id="${t.id}" data-response="maybe">? Vielleicht</button>
@@ -2105,8 +2221,8 @@ function renderAnwesend() {
     const canEdit = auth.isAuthed && auth.member === b.name;
     return `
       <div class="anwesend-card">
-        <div class="anwesend-emoji">${b.emoji}</div>
-        <strong>${escapeHtml(b.name)}</strong>
+        <div class="anwesend-emoji">${mEmoji(b.name)}</div>
+        <strong>${escapeHtml(mLabel(b.name))}</strong>
         <div class="anwesend-btn">
           <button class="da ${status==='da'?'active':''}" data-name="${escapeHtml(b.name)}" data-status="da" ${canEdit?"":"disabled"}>Da</button>
           <button class="weg ${status==='weg'?'active':''}" data-name="${escapeHtml(b.name)}" data-status="weg" ${canEdit?"":"disabled"}>Weg</button>
@@ -3329,11 +3445,7 @@ function renderKandidaten() {
     const status = k.status || "offen";
 
     const votersChips = ["yes","maybe","no"].flatMap(v =>
-      voters[v].map(n => {
-        const b = BEWOHNER.find(x => x.name === n);
-        const emoji = b?.emoji || "👤";
-        return `<span class="voter-chip ${v}">${emoji} ${escapeHtml(n)}</span>`;
-      })
+      voters[v].map(n => `<span class="voter-chip ${v}">${mEmoji(n)} ${escapeHtml(mLabel(n))}</span>`)
     ).join("");
 
     return `
@@ -3343,7 +3455,7 @@ function renderKandidaten() {
             <h3 class="kandidat-title">${escapeHtml(k.name)}${k.alter ? `<span class="alter">· ${k.alter} Jahre</span>` : ""}</h3>
             <div class="kandidat-meta">
               <span class="status-badge ${status}">${STATUS_LABEL[status] || status}</span>
-              ${k.addedBy ? `<span>· eingetragen von ${escapeHtml(k.addedBy)}</span>` : ""}
+              ${k.addedBy ? `<span>· eingetragen von ${escapeHtml(mLabel(k.addedBy) || k.addedBy)}</span>` : ""}
             </div>
           </div>
         </div>
@@ -3482,7 +3594,7 @@ function populateSchadenZustaendigSelect() {
   const current = select.value;
   const adults = BEWOHNER.filter(b => !b.kid);
   select.innerHTML = `<option value="">Noch offen</option>` +
-    adults.map(b => `<option value="${b.name}">${b.emoji} ${b.name}</option>`).join("");
+    adults.map(b => `<option value="${b.name}">${mEmoji(b.name)} ${escapeHtml(mLabel(b.name))}</option>`).join("");
   if (current) select.value = current;
 }
 
@@ -3508,8 +3620,8 @@ function renderSchaeden() {
     const status = s.status || "offen";
     const zustaendigBewohner = s.zustaendig ? BEWOHNER.find(b => b.name === s.zustaendig) : null;
     const zustaendigLabel = zustaendigBewohner
-      ? `${zustaendigBewohner.emoji} ${escapeHtml(zustaendigBewohner.name)}`
-      : s.zustaendig ? escapeHtml(s.zustaendig) : "noch niemand";
+      ? `${mEmoji(zustaendigBewohner.name)} ${escapeHtml(mLabel(zustaendigBewohner.name))}`
+      : s.zustaendig ? escapeHtml(mLabel(s.zustaendig) || s.zustaendig) : "noch niemand";
 
     return `
       <article class="schaden-card prio-${prio} status-${status}">
@@ -3525,7 +3637,7 @@ function renderSchaeden() {
         <div class="schaden-meta">
           ${s.ort ? `<span>📍 ${escapeHtml(s.ort)}</span>` : ""}
           <span>👤 Kümmert sich: ${zustaendigLabel}</span>
-          ${s.addedBy ? `<span>· gemeldet von ${escapeHtml(s.addedBy)}</span>` : ""}
+          ${s.addedBy ? `<span>· gemeldet von ${escapeHtml(mLabel(s.addedBy) || s.addedBy)}</span>` : ""}
         </div>
         ${s.beschreibung ? `<p class="schaden-body">${escapeHtml(s.beschreibung)}</p>` : ""}
         ${s.image ? `<div class="schaden-foto"><img src="${s.image}" alt="Foto zum Schaden: ${escapeAttr(s.titel || "")}" loading="lazy" /></div>` : ""}
@@ -3538,7 +3650,7 @@ function renderSchaeden() {
             </select>
             <select class="status-select-inline" data-id="${s.id}" data-action="zustaendig">
               <option value="">— Noch offen —</option>
-              ${BEWOHNER.filter(b => !b.kid).map(b => `<option value="${b.name}" ${s.zustaendig===b.name?'selected':''}>${b.emoji} ${b.name}</option>`).join("")}
+              ${BEWOHNER.filter(b => !b.kid).map(b => `<option value="${b.name}" ${s.zustaendig===b.name?'selected':''}>${mEmoji(b.name)} ${escapeHtml(mLabel(b.name))}</option>`).join("")}
             </select>
           </div>
           <button class="mini-btn danger" data-id="${s.id}" data-action="delete">Löschen</button>
@@ -3966,39 +4078,128 @@ $("roomApplyBtn")?.addEventListener("click", () => {
 });
 
 /* ==========================================================================
-   Einstellungen · Passwort ändern + Gäste-Zugänge
+   Einstellungen · Profil, Passwort, Einladung, Gäste
    ========================================================================== */
+
+$("memberProfileForm")?.addEventListener("submit", async (e) => {
+  e.preventDefault();
+  if (!requireMember("Profil speichern")) return;
+  const displayName = $("profileDisplayName")?.value.replace(/\s+/g, " ").trim().slice(0, 32) || "";
+  const emoji = $("profileEmoji")?.value || "";
+  if (!displayName) { showToast("Bitte einen Anzeigenamen eintragen.", "error"); return; }
+  if (!EMOJI_CHOICES_SET.has(emoji)) { showToast("Bitte ein Icon aus der Liste wählen.", "error"); return; }
+  if (firebaseReady) {
+    try {
+      await setDoc(doc(db, "config", "memberPrefs"), {
+        [auth.member]: { displayName, emoji, updatedBy: auth.member, updatedAt: serverTimestamp() }
+      }, { merge: true });
+      authConfig.memberPrefs[auth.member] = { displayName, emoji };
+      showToast("Profil gespeichert.", "success");
+      onMemberPrefsChanged();
+    } catch (err) {
+      console.error(err);
+      showToast("Speichern fehlgeschlagen.", "error");
+    }
+  } else {
+    const next = { ...localStore.memberPrefs, [auth.member]: { displayName, emoji } };
+    localStore.memberPrefs = next;
+    saveLocal("memberPrefs", next);
+    applyMemberPrefsDoc(next);
+    onMemberPrefsChanged();
+    showToast("Profil lokal gespeichert.", "success");
+  }
+});
+
+$("copyWgInviteBtn")?.addEventListener("click", async () => {
+  if (!requireMember("Einladung teilen")) return;
+  const u = new URL(window.location.href);
+  u.searchParams.set("openLogin", "1");
+  const line = `Hi! Unsere Wohn-Website (Infos, Kalender, …):
+${u.toString()}
+
+Zum Anmelden: in der Leiste deinen vollen Namen wählen (wie in der WG-Liste) und Passwort eingeben.
+Initiales Gruppenpasswort (nur solange es die WG nicht geändert hat): ${DEFAULT_WG_PASSWORD_PLAINTEXT}
+Danach: unter «WG-Intern → Einstellungen» dein persönliches Passwort, Anzeigename und Icon setzen.`;
+  try {
+    await navigator.clipboard.writeText(line);
+    showToast("Einladungstext in die Zwischenablage kopiert.", "success");
+  } catch {
+    showToast("Kopieren nicht möglich – Browser verweigert die Zwischenablage.", "error");
+  }
+});
 
 $("changePasswordForm")?.addEventListener("submit", async (e) => {
   e.preventDefault();
-  if (!requireMember("WG-Passwort ändern")) return;
+  if (!requireMember("Passwort ändern")) return;
   const current = $("currentPassword").value;
   const newPw = $("newPassword").value;
   const newPw2 = $("newPassword2").value;
   if (newPw !== newPw2) { showToast("Die neuen Passwörter stimmen nicht überein.", "error"); return; }
   if (newPw.length < 4) { showToast("Mindestens 4 Zeichen.", "error"); return; }
   const currentHash = await sha256(current);
-  if (currentHash !== authConfig.passwordHash) {
-    showToast("Aktuelles Passwort ist falsch.", "error");
+  const personal = authConfig.memberHashes[auth.member];
+  const currentOk = personal
+    ? currentHash === personal
+    : currentHash === authConfig.passwordHash;
+  if (!currentOk) {
+    showToast(personal ? "Aktuelles (persönliches) Passwort ist falsch." : "Aktuelles Passwort ist falsch (gemeinsames WG-Passwort).", "error");
     return;
   }
   const newHash = await sha256(newPw);
   if (firebaseReady) {
     try {
+      await setDoc(doc(db, "config", "memberPasswords"), { [auth.member]: newHash, updatedBy: auth.member, updatedAt: serverTimestamp() }, { merge: true });
+      authConfig.memberHashes[auth.member] = newHash;
+      e.target.reset();
+      showToast(`Passwort für ${auth.member} gespeichert. Nur du nutzt dieses Passwort zum Login. 🔑`, "success");
+    } catch (err) {
+      console.error(err);
+      showToast("Speichern fehlgeschlagen.", "error");
+    }
+  } else {
+    authConfig.memberHashes[auth.member] = newHash;
+    localStore.memberPasswords = { ...localStore.memberPasswords, [auth.member]: newHash };
+    saveLocal("memberPasswords", localStore.memberPasswords);
+    e.target.reset();
+    showToast("Passwort lokal gespeichert (Demo).", "success");
+  }
+});
+
+/** Optionales gemeinsames Fallback (nur für Mitglieder ohne eigenes Passwort) – nur wer das aktuelle kennt */
+$("changeSharedPasswordForm")?.addEventListener("submit", async (e) => {
+  e.preventDefault();
+  if (!requireMember("Gemeinsames Passwort ändern")) return;
+  const current = $("sharedCurrentPassword").value;
+  const newPw = $("sharedNewPassword").value;
+  const newPw2 = $("sharedNewPassword2").value;
+  if (newPw !== newPw2) { showToast("Die neuen Passwörter stimmen nicht überein.", "error"); return; }
+  if (newPw.length < 4) { showToast("Mindestens 4 Zeichen.", "error"); return; }
+  const currentHash = await sha256(current);
+  if (currentHash !== authConfig.passwordHash) {
+    showToast("Aktuelles gemeinsames Passwort ist falsch.", "error");
+    return;
+  }
+  const newHash = await sha256(newPw);
+  if (Object.values(authConfig.memberHashes).includes(newHash)) {
+    showToast("Dieses Passwort ist schon als persönliches Passwort vergeben.", "error");
+    return;
+  }
+  if (firebaseReady) {
+    try {
       await setDoc(doc(db, "config", "auth"), { passwordHash: newHash, updatedBy: auth.member, updatedAt: serverTimestamp() }, { merge: true });
       authConfig.passwordHash = newHash;
       e.target.reset();
-      showToast("WG-Passwort aktualisiert. Bitte allen Mitgliedern mitteilen! 🔑", "success");
+      showToast("Gemeinsames Fallback-Passwort aktualisiert. Nur Leute ohne eigenes Passwort brauchen das Neue.", "success");
     } catch (err) {
       console.error(err);
       showToast("Speichern fehlgeschlagen.", "error");
     }
   } else {
     authConfig.passwordHash = newHash;
-    localStore.config = { passwordHash: newHash };
+    localStore.config = { ...localStore.config, passwordHash: newHash };
     saveLocal("config", localStore.config);
     e.target.reset();
-    showToast("WG-Passwort lokal aktualisiert.", "success");
+    showToast("Gemeinsames Passwort lokal aktualisiert.", "success");
   }
 });
 
@@ -4011,8 +4212,8 @@ $("guestForm")?.addEventListener("submit", async (e) => {
   if (!name || pw.length < 4) return;
   const hash = await sha256(pw);
   // Prüfen ob nicht mit Haupt-Passwort identisch
-  if (hash === authConfig.passwordHash) {
-    showToast("Dieses Passwort ist schon das WG-Passwort – bitte ein anderes wählen.", "error");
+  if (hash === authConfig.passwordHash || Object.values(authConfig.memberHashes).includes(hash)) {
+    showToast("Dieses Passwort ist schon vergeben (WG oder persönlich) – bitte ein anderes wählen.", "error");
     return;
   }
   const entry = {
@@ -4091,25 +4292,39 @@ async function deleteGuest(id) {
    ========================================================================== */
 
 async function loadAuthConfig() {
-  // Aus Firestore: config/auth (passwordHash), Fallback: lokaler Default-Hash
   if (firebaseReady) {
     try {
       const snap = await getDoc(doc(db, "config", "auth"));
       if (snap.exists() && snap.data().passwordHash) {
         authConfig.passwordHash = snap.data().passwordHash;
       } else {
-        // Erstmalig: Default-Hash in Firestore schreiben
         await setDoc(doc(db, "config", "auth"), { passwordHash: WG_PASSWORD_HASH, createdAt: serverTimestamp() }, { merge: true });
       }
-      // Live-Listener für spätere Änderungen
       onSnapshot(doc(db, "config", "auth"), (d) => {
         if (d.exists() && d.data().passwordHash) authConfig.passwordHash = d.data().passwordHash;
       });
+
+      const mp = await getDoc(doc(db, "config", "memberPasswords"));
+      if (mp.exists()) applyMemberPasswordsDoc(mp.data());
+      onSnapshot(doc(db, "config", "memberPasswords"), (d) => {
+        applyMemberPasswordsDoc(d.exists() ? d.data() : {});
+      }, (err) => console.warn("memberPasswords listener:", err.message));
+
+      const mPrefSnap = await getDoc(doc(db, "config", "memberPrefs"));
+      if (mPrefSnap.exists()) applyMemberPrefsDoc(mPrefSnap.data());
+      let memberPrefsListenerPrimed = false;
+      onSnapshot(doc(db, "config", "memberPrefs"), (d) => {
+        applyMemberPrefsDoc(d.exists() ? d.data() : {});
+        if (!memberPrefsListenerPrimed) { memberPrefsListenerPrimed = true; return; }
+        onMemberPrefsChanged();
+      }, (err) => console.warn("memberPrefs listener:", err.message));
     } catch (e) {
       console.warn("Auth-Config konnte nicht geladen werden, nutze Default.", e.message);
     }
-  } else if (localStore.config?.passwordHash) {
-    authConfig.passwordHash = localStore.config.passwordHash;
+  } else {
+    if (localStore.config?.passwordHash) authConfig.passwordHash = localStore.config.passwordHash;
+    applyMemberPasswordsDoc(localStore.memberPasswords);
+    applyMemberPrefsDoc(localStore.memberPrefs);
   }
   authConfig.ready = true;
 }
@@ -4276,6 +4491,7 @@ function setupScrollAnim() {
    Init
    ========================================================================== */
 
+populateProfileEmojiSelect();
 populateLoginMemberSelect();
 populatePutzWhoSelect();
 populateSchadenZustaendigSelect();
@@ -4287,6 +4503,11 @@ setupScrollAnim();
 // Auth-Config zuerst laden (wichtig für korrekte Passwort-Prüfung beim Auto-Login)
 loadAuthConfig().then(() => {
   auth.init();
+  populateLoginMemberSelect();
+  populatePutzWhoSelect();
   setupListeners();
-  updateLoginChip();
+  if (new URLSearchParams(window.location.search).get("openLogin") === "1" ||
+      new URLSearchParams(window.location.search).get("login") === "1") {
+    requestAnimationFrame(() => { try { $("loginDialog")?.showModal(); } catch (_) { /* */ } });
+  }
 });
