@@ -493,6 +493,44 @@ function isBewerberListCommand(raw) {
   return /^(bewerber(\s*liste)?|bewerberinnen|kandidat(en|innen)?(\s*liste)?|zimmer\s*bewerber)\s*[?.!]*$/i.test(String(raw).trim());
 }
 
+/** WhatsApp: «Zimmer teilen» → formatierter Inserat-Text (Broadcast an WG-Empfänger). */
+function isZimmerShareCommand(raw) {
+  const s = String(raw || "").trim();
+  return (
+    /^(zimmer|wg-zimmer)\s+(teilen|link|inserat|post|share)\s*$/i.test(s) ||
+    /^inserat\s+zimmer\s*$/i.test(s) ||
+    /^zimmer\s+inserat\s*$/i.test(s) ||
+    /^wg-inserat\s*$/i.test(s)
+  );
+}
+
+function buildZimmerBroadcastMessage(ro) {
+  const url = `${WEBSITE_URL}/#zimmer`;
+  const titleLine = `🚪 *${(ro.title || "Zimmer frei – Haus am See").trim()}*`;
+  const factBits = [];
+  if (ro.miete) factBits.push(`💰 ${ro.miete}`);
+  if (ro.groesse) factBits.push(`📐 ${ro.groesse}`);
+  if (ro.freiAb) factBits.push(`📅 Frei ab ${ro.freiAb}`);
+  const factLine = factBits.join(" · ");
+  const desc = (ro.description || "").trim();
+  const shortDesc = desc.length > 350 ? `${desc.slice(0, 347)}…` : desc;
+  const lines = [
+    "📣 *Zimmer frei – zum Weiterleiten*",
+    "",
+    titleLine,
+    factLine,
+    "",
+    shortDesc,
+    "",
+    url,
+    "",
+    "_Instagram/Facebook: manuell posten oder Story mit Link (automatisch nur mit Meta Business API)._",
+  ];
+  return lines
+    .filter((line, i, arr) => !(line === "" && arr[i - 1] === ""))
+    .join("\n");
+}
+
 // "Erinner mich am 30.4. um 8:00 an: Rechnung zahlen" / "Erinner mich 23.04. um 15:40 Uhr an: …"
 // Zeit ist immer in Europe/Zurich (nicht UTC – setHours in der Cloud wäre sonst 1–2h falsch)
 function parseErinnerungMessage(raw) {
@@ -853,7 +891,8 @@ const HELP_TEXT =
   `*Zimmer-Bewerber*\n` +
   `➕ "Bewerber: Lisa, 25 | Studentin, super sympatisch | +41 79 123 45 67"\n` +
   `📸 Foto + Caption "Foto Bewerber Lisa" — Foto anhängen\n` +
-  `📋 "Bewerber"\n\n` +
+  `📋 "Bewerber"\n` +
+  `📣 "Zimmer teilen" / "Inserat Zimmer" — Inserat-Text + Link (→ WHATSAPP_GROUP_RECIPIENTS)\n\n` +
   `*Bewässerung / Smart Plugs*\n` +
   `💧 "Pumpe an" / "Pumpe aus"\n` +
   `💧 "Pumpe 15 Min" (auto-aus nach 15 Min, max. ${PUMP_MAX_MINUTES})\n` +
@@ -1071,6 +1110,40 @@ async function dispatch(ctx) {
     ].filter(Boolean).join("\n");
     await sendWhatsApp(from, `🚪 Bewerber:in gespeichert: *${bew.name}*${alter}${extra ? "\n\n" + extra : ""}\n\n💡 Foto nachreichen: schick ein Bild mit Caption "Foto Bewerber ${bew.name}"\n\n${WEBSITE_URL}/#kandidaten`);
     await debugLog("kandidat_created", { id, from, name: bew.name });
+    return true;
+  }
+
+  // 12c) Zimmer-Inserat teilen (Broadcast)
+  if (isZimmerShareCommand(rawInput)) {
+    let snap;
+    try {
+      snap = await db.doc("config/roomOffer").get();
+    } catch (e) {
+      await sendWhatsApp(from, `😕 Konnte das Inserat nicht laden: ${e.message || e}`);
+      return true;
+    }
+    const ro = snap.exists ? snap.data() : null;
+    if (!ro?.active) {
+      await sendWhatsApp(
+        from,
+        "🚪 Das Zimmer-Inserat ist gerade *nicht aktiv*. Aktiviere es unter WG-Intern → Zimmer frei, dann z.B. «Zimmer teilen» erneut."
+      );
+      return true;
+    }
+    const msg = buildZimmerBroadcastMessage(ro);
+    const { recipients } = cfg();
+    if (recipients.length) {
+      await broadcast(msg);
+      await sendWhatsApp(
+        from,
+        `✅ Inserat wurde an *${recipients.length}* eingetragene Empfänger geschickt.\n\n💡 Facebook/Instagram postet ihr am besten selbst – der Bot hat dafür keine Meta-Freigabe.`
+      );
+    } else {
+      await sendWhatsApp(
+        from,
+        `${msg}\n\n_(WHATSAPP_GROUP_RECIPIENTS ist leer – Nachricht nur an dich.)_`
+      );
+    }
     return true;
   }
 

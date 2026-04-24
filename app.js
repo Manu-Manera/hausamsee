@@ -4367,6 +4367,152 @@ $("kontaktForm")?.addEventListener("submit", async (e) => {
 
 let roomOfferCache = null;
 
+function getRoomShareUrl() {
+  let p = window.location.pathname || "/";
+  if (/\/index\.html$/i.test(p)) p = p.slice(0, -10) || "/";
+  if (p !== "/" && p.endsWith("/")) p = p.slice(0, -1);
+  return `${window.location.origin}${p}#zimmer`;
+}
+
+function buildRoomShareTitle(ro) {
+  return `${(ro.title || "Zimmer frei").trim()} · Haus am See`;
+}
+
+function buildRoomShareText(ro) {
+  const url = getRoomShareUrl();
+  const titleLine = `🚪 ${(ro.title || "Zimmer frei – Haus am See").trim()}`;
+  const factBits = [];
+  if (ro.miete) factBits.push(`💰 ${ro.miete}`);
+  if (ro.groesse) factBits.push(`📐 ${ro.groesse}`);
+  if (ro.freiAb) factBits.push(`📅 Frei ab ${ro.freiAb}`);
+  const factLine = factBits.join(" · ");
+  const desc = (ro.description || "").trim();
+  const shortDesc = desc.length > 380 ? `${desc.slice(0, 377)}…` : desc;
+  const lines = [titleLine, factLine, "", shortDesc, "", url].filter((line, i, arr) => {
+    if (line === "" && arr[i - 1] === "") return false;
+    return true;
+  });
+  return lines.join("\n");
+}
+
+function setOrCreateMeta(attr, key, content) {
+  let el = document.querySelector(`meta[${attr}="${key}"]`);
+  if (!el) {
+    el = document.createElement("meta");
+    el.setAttribute(attr, key);
+    document.head.appendChild(el);
+  }
+  el.setAttribute("content", content);
+}
+
+function syncRoomOfferPageMeta(ro) {
+  const title = buildRoomShareTitle(ro);
+  const bits = [];
+  if (ro.miete) bits.push(ro.miete);
+  if (ro.groesse) bits.push(ro.groesse);
+  if (ro.freiAb) bits.push(`ab ${ro.freiAb}`);
+  const head = bits.join(" · ");
+  const body = (ro.description || "").trim().slice(0, 180);
+  const desc = [head, body].filter(Boolean).join(" – ") || "Zimmer frei in unserer WG in Pfäffikon ZH.";
+  document.title = `${(ro.title || "Zimmer frei").trim()} · Haus am See`;
+  setOrCreateMeta("name", "description", desc);
+  setOrCreateMeta("property", "og:title", title);
+  setOrCreateMeta("property", "og:description", desc);
+  setOrCreateMeta("name", "twitter:title", title);
+  setOrCreateMeta("name", "twitter:description", desc);
+}
+
+const DEFAULT_PAGE_TITLE = "Haus am See · Pilatusstrasse 40, Pfäffikon ZH";
+const DEFAULT_META_DESC =
+  "Unsere WG an der Pilatusstrasse in Pfäffikon ZH. Events, WG-Termine, Kalender und Eindrücke aus dem Haus am See.";
+
+function resetRoomOfferPageMeta() {
+  document.title = DEFAULT_PAGE_TITLE; // sync with index.html <title>
+  setOrCreateMeta("name", "description", DEFAULT_META_DESC);
+  setOrCreateMeta("property", "og:title", "Haus am See · WG Pilatusstrasse 40, Pfäffikon ZH");
+  setOrCreateMeta("property", "og:description", "Unsere WG am Pfäffikersee – Events, Kalender, Gemeinschaft.");
+  setOrCreateMeta("name", "twitter:title", "Haus am See · WG Pfäffikon");
+  setOrCreateMeta("name", "twitter:description", "Unsere WG am Pfäffikersee – Events, Kalender, Gemeinschaft.");
+}
+
+function hydrateRoomShareUI(ro) {
+  const wrap = $("roomOfferSocial");
+  const bg = $("roomShareCardBg");
+  if (!wrap) return;
+  if (!ro?.active) {
+    wrap.classList.add("hidden");
+    return;
+  }
+  wrap.classList.remove("hidden");
+  const url = getRoomShareUrl();
+  const title = (ro.title || "Wir suchen eine:n Mitbewohner:in").trim();
+  const tEl = $("roomShareCardTitle");
+  if (tEl) tEl.textContent = title;
+  const factItems = [];
+  if (ro.miete) factItems.push(`💰 ${ro.miete}`);
+  if (ro.groesse) factItems.push(`📐 ${ro.groesse}`);
+  if (ro.freiAb) factItems.push(`📅 ${ro.freiAb}`);
+  const factsEl = $("roomShareCardFacts");
+  if (factsEl) {
+    factsEl.innerHTML = factItems.map((f) => `<li>${escapeHtml(f)}</li>`).join("");
+  }
+  const desc = (ro.description || "").trim();
+  const hook = desc.length > 240 ? `${desc.slice(0, 237)}…` : desc;
+  const hookEl = $("roomShareCardHook");
+  if (hookEl) hookEl.textContent = hook || "Mehr Infos und Bewerbung – Link unten.";
+  const urlEl = $("roomShareCardUrl");
+  if (urlEl) urlEl.textContent = url;
+  if (bg) {
+    const photos = Array.isArray(ro.photos) ? ro.photos : [];
+    const first = photos[0];
+    if (first && typeof first === "string") {
+      bg.style.backgroundImage = `url(${JSON.stringify(first)})`;
+    } else {
+      bg.style.backgroundImage = "";
+    }
+  }
+  const wa = $("roomWhatsAppBtn");
+  if (wa) wa.href = `https://wa.me/?text=${encodeURIComponent(buildRoomShareText(ro))}`;
+  syncRoomOfferPageMeta(ro);
+}
+
+function setupRoomShareUI() {
+  const shareBtn = $("roomShareBtn");
+  const copyBtn = $("roomCopyLinkBtn");
+  if (!shareBtn || shareBtn.dataset.roomShareBound) return;
+  shareBtn.dataset.roomShareBound = "1";
+  shareBtn.addEventListener("click", async () => {
+    const ro = roomOfferCache;
+    if (!ro?.active) return;
+    const url = getRoomShareUrl();
+    const text = buildRoomShareText(ro);
+    const title = buildRoomShareTitle(ro);
+    if (navigator.share) {
+      try {
+        await navigator.share({ title, text, url });
+        return;
+      } catch (e) {
+        if (e && e.name === "AbortError") return;
+      }
+    }
+    try {
+      await navigator.clipboard.writeText(text);
+      showToast("Text mit Link kopiert.", "success");
+    } catch {
+      showToast("Teilen nicht möglich.", "error");
+    }
+  });
+  copyBtn?.addEventListener("click", async () => {
+    if (!roomOfferCache?.active) return;
+    try {
+      await navigator.clipboard.writeText(getRoomShareUrl());
+      showToast("Link kopiert.", "success");
+    } catch {
+      showToast("Kopieren fehlgeschlagen.", "error");
+    }
+  });
+}
+
 function renderRoomOffer() {
   const section = $("zimmer");
   if (!section) return;
@@ -4374,7 +4520,13 @@ function renderRoomOffer() {
   const active = !!ro.active;
 
   section.classList.toggle("hidden", !active);
-  if (!active) return;
+  if (!active) {
+    $("roomOfferSocial")?.classList.add("hidden");
+    resetRoomOfferPageMeta();
+    populateRoomForm();
+    renderRoomAdminPhotos();
+    return;
+  }
 
   $("roomOfferTitle").textContent = ro.title?.trim() || "Wir suchen eine:n neue:n Mitbewohner:in";
   const desc = ro.description?.trim() || "Melde dich einfach über das Kontaktformular – wir freuen uns von dir zu hören.";
@@ -4404,6 +4556,7 @@ function renderRoomOffer() {
     });
   }
 
+  hydrateRoomShareUI(ro);
   renderRoomAdminPhotos();
   populateRoomForm();
 }
@@ -5017,6 +5170,7 @@ loadAuthConfig().then(() => {
   populateLoginMemberSelect();
   populatePutzWhoSelect();
   setupListeners();
+  setupRoomShareUI();
   if (new URLSearchParams(window.location.search).get("openLogin") === "1" ||
       new URLSearchParams(window.location.search).get("login") === "1") {
     requestAnimationFrame(() => { openLoginDialog(); });

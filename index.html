@@ -5,11 +5,18 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
   <title>Haus am See · Pilatusstrasse 40, Pfäffikon ZH</title>
   <meta name="description" content="Unsere WG an der Pilatusstrasse in Pfäffikon ZH. Events, WG-Termine, Kalender und Eindrücke aus dem Haus am See." />
+  <meta property="og:title" content="Haus am See · WG Pilatusstrasse 40, Pfäffikon ZH" />
+  <meta property="og:description" content="Unsere WG am Pfäffikersee – Events, Kalender, Gemeinschaft." />
+  <meta property="og:url" content="https://manu-manera.github.io/hausamsee/" />
+  <meta property="og:type" content="website" />
+  <meta name="twitter:card" content="summary_large_image" />
+  <meta name="twitter:title" content="Haus am See · WG Pfäffikon" />
+  <meta name="twitter:description" content="Unsere WG am Pfäffikersee – Events, Kalender, Gemeinschaft." />
   <meta name="theme-color" content="#fdf9f2" />
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,400;0,9..144,600;0,9..144,700;1,9..144,400&family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet" />
-  <link rel="stylesheet" href="styles.css?v=20260424b" />
+  <link rel="stylesheet" href="styles.css?v=20260425c" />
   <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Ctext y='.9em' font-size='90'%3E🏡%3C/text%3E%3C/svg%3E" />
 </head>
 <body>
@@ -88,6 +95,30 @@
         <div class="room-offer-cta">
           <button class="btn btn-primary" id="roomApplyBtn">✉️ Jetzt bewerben</button>
           <a class="btn btn-ghost" href="#kontakt">Fragen stellen</a>
+        </div>
+        <div id="roomOfferSocial" class="room-offer-social hidden" aria-label="Inserat teilen">
+          <p class="room-offer-social-label">Für Social &amp; Messenger</p>
+          <div class="room-share-visual">
+            <div class="room-share-card" id="roomShareCard">
+              <div class="room-share-card-bg" id="roomShareCardBg" aria-hidden="true"></div>
+              <div class="room-share-card-scrim" aria-hidden="true"></div>
+              <div class="room-share-card-inner">
+                <span class="room-share-badge">🏡 Haus am See · Zimmer frei</span>
+                <p class="room-share-card-title" id="roomShareCardTitle"></p>
+                <ul class="room-share-card-facts" id="roomShareCardFacts"></ul>
+                <p class="room-share-card-hook" id="roomShareCardHook"></p>
+                <p class="room-share-card-url" id="roomShareCardUrl"></p>
+              </div>
+            </div>
+          </div>
+          <div class="room-share-actions">
+            <button type="button" class="btn btn-primary" id="roomShareBtn">📤 Teilen</button>
+            <button type="button" class="btn btn-ghost" id="roomCopyLinkBtn">🔗 Link kopieren</button>
+            <a class="btn btn-ghost" id="roomWhatsAppBtn" href="#" target="_blank" rel="noopener noreferrer">💬 WhatsApp</a>
+          </div>
+          <p class="room-share-hint" id="roomShareHint">
+            Tipp: Auf Instagram und Facebook den Text oder Screenshot der Karte nutzen und den Link in die Bio bzw. den Beitrag setzen. Automatisches Posten braucht eine Meta-Business-Anbindung.
+          </p>
         </div>
       </div>
     </div>
@@ -638,7 +669,8 @@
       <div class="kalender-panel hidden" id="ternTabZimmer">
         <p class="section-lead" style="text-align:left;margin-top:0;">
           Wenn wir jemand suchen: hier aktivieren und Details pflegen. Sobald aktiv, erscheint
-          ganz oben auf der Seite eine Kachel „Zimmer frei" mit Bewerbungs-Button.
+          ganz oben auf der Seite eine Kachel „Zimmer frei" mit Bewerbungs-Button, Teilen-Buttons und Social-Karte.
+          Im WhatsApp-Gruppenchat: <strong>@bot zimmer teilen</strong> schickt den Inserat-Text an die konfigurierten Empfänger (siehe Functions).
         </p>
         <form id="roomForm" class="form-card">
           <label class="toggle-row">
@@ -1064,6 +1096,6 @@
   <!-- Toast -->
   <div id="toast" class="toast hidden"></div>
 
-  <script type="module" src="app.js?v=20260425b"></script>
+  <script type="module" src="app.js?v=20260425d"></script>
 </body>
 </html>

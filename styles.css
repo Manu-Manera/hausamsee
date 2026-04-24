@@ -1928,6 +1928,125 @@ textarea { resize: vertical; font-family: inherit; }
   margin-top: 6px;
 }
 
+/* Zimmer frei · Teilen / Social-Karte (4:5, feed-tauglich) */
+.room-offer-social {
+  margin-top: 22px;
+  padding-top: 20px;
+  border-top: 1px dashed var(--card-border);
+}
+.room-offer-social.hidden { display: none !important; }
+.room-offer-social-label {
+  margin: 0 0 12px 0;
+  font-size: 0.78rem;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+}
+.room-share-visual {
+  display: flex;
+  justify-content: center;
+  margin-bottom: 14px;
+}
+.room-share-card {
+  position: relative;
+  width: 100%;
+  max-width: 280px;
+  aspect-ratio: 4 / 5;
+  border-radius: 18px;
+  overflow: hidden;
+  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.18);
+  border: 1px solid rgba(255, 255, 255, 0.2);
+}
+.room-share-card-bg {
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(145deg, #3d2a22 0%, #6b4a3a 45%, #c67a50 100%);
+  background-size: cover;
+  background-position: center;
+  transform: scale(1.02);
+}
+.room-share-card-scrim {
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(to top, rgba(0, 0, 0, 0.82) 0%, rgba(0, 0, 0, 0.25) 45%, rgba(0, 0, 0, 0.35) 100%);
+  pointer-events: none;
+}
+.room-share-card-inner {
+  position: relative;
+  z-index: 1;
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-end;
+  padding: 16px 16px 18px;
+  color: #fff;
+  text-align: left;
+}
+.room-share-badge {
+  display: inline-block;
+  font-size: 0.65rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  opacity: 0.92;
+  margin-bottom: 8px;
+  max-width: 100%;
+}
+.room-share-card-title {
+  margin: 0 0 10px 0;
+  font-family: var(--font-serif, "Fraunces", Georgia, serif);
+  font-size: 1.35rem;
+  font-weight: 700;
+  line-height: 1.2;
+  text-shadow: 0 2px 12px rgba(0, 0, 0, 0.45);
+}
+.room-share-card-facts {
+  list-style: none;
+  margin: 0 0 10px 0;
+  padding: 0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.room-share-card-facts li {
+  font-size: 0.72rem;
+  background: rgba(255, 255, 255, 0.18);
+  backdrop-filter: blur(6px);
+  padding: 4px 9px;
+  border-radius: 999px;
+  border: 1px solid rgba(255, 255, 255, 0.25);
+}
+.room-share-card-hook {
+  margin: 0 0 8px 0;
+  font-size: 0.8rem;
+  line-height: 1.45;
+  opacity: 0.95;
+  display: -webkit-box;
+  -webkit-line-clamp: 4;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+.room-share-card-url {
+  margin: 0;
+  font-size: 0.68rem;
+  word-break: break-all;
+  opacity: 0.85;
+  letter-spacing: 0.02em;
+}
+.room-share-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  justify-content: center;
+}
+.room-share-hint {
+  margin: 12px 0 0 0;
+  font-size: 0.82rem;
+  line-height: 1.45;
+  color: var(--text-soft);
+}
+
 /* WG-Admin: Fotoverwaltung */
 .room-admin-photos {
   display: grid;
