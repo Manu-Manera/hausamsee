@@ -290,6 +290,7 @@ const auth = {
     syncKalenderTabs();
     fillMemberProfileForm();
     renderSettingsBewohnerRoster();
+    syncKeychainUserFields();
   }
 };
 
@@ -636,6 +637,29 @@ async function verifyPassword(pw) {
   return { ok: false, reason: "wrong" };
 }
 
+/** iOS/Safari: Konto-Name muss in einem echten <input> mit autocomplete="username" stehen, nicht im <select>. */
+function syncKeychainUserFields() {
+  const lku = $("loginKeychainUser");
+  const sel = $("loginMember");
+  if (lku && sel) {
+    const v = sel.value;
+    if (v.startsWith("__guest__:")) {
+      const key = v.slice("__guest__:".length);
+      const g = (guestsCache || []).find((x) => x.id === key || x.name === key);
+      lku.value = g ? g.name : "";
+    } else if (v === "__guest__") {
+      lku.value = "Gast (Haus am See)";
+    } else {
+      lku.value = v;
+    }
+  }
+  const cpu = $("changePwKeychainUser");
+  if (cpu) {
+    if (auth.isMember && !auth.isGuest) cpu.value = auth.member;
+    else cpu.value = "";
+  }
+}
+
 function updateLoginChip() {
   const btn = $("loginBtn");
   if (auth.isAuthed) {
@@ -677,6 +701,17 @@ function populateLoginMemberSelect() {
     guestGroup;
 
   if (previous) select.value = previous;
+  syncKeychainUserFields();
+}
+
+$("loginMember")?.addEventListener("change", () => { syncKeychainUserFields(); });
+
+function openLoginDialog() {
+  $("loginError")?.classList.add("hidden");
+  $("loginForm")?.reset();
+  populateLoginMemberSelect();
+  syncKeychainUserFields();
+  try { $("loginDialog")?.showModal(); } catch (_) { /* */ }
 }
 
 function populatePutzWhoSelect() {
@@ -693,9 +728,7 @@ $("loginBtn")?.addEventListener("click", () => {
   if (auth.isAuthed) {
     if (confirm(`${auth.member}, wirklich abmelden?`)) auth.logout();
   } else {
-    $("loginError").classList.add("hidden");
-    $("loginForm").reset();
-    $("loginDialog").showModal();
+    openLoginDialog();
   }
 });
 
@@ -764,7 +797,7 @@ $("loginForm")?.addEventListener("submit", async (e) => {
 function requireAuth(actionName = "Diese Aktion") {
   if (auth.isAuthed) return true;
   showToast(`${actionName} ist nur für angemeldete Personen.`, "error");
-  $("loginDialog").showModal();
+  openLoginDialog();
   return false;
 }
 
@@ -776,7 +809,7 @@ function requireMember(actionName = "Diese Aktion") {
     return false;
   }
   showToast(`${actionName} ist nur für angemeldete WG-Mitglieder.`, "error");
-  $("loginDialog").showModal();
+  openLoginDialog();
   return false;
 }
 
@@ -4796,6 +4829,6 @@ loadAuthConfig().then(() => {
   setupListeners();
   if (new URLSearchParams(window.location.search).get("openLogin") === "1" ||
       new URLSearchParams(window.location.search).get("login") === "1") {
-    requestAnimationFrame(() => { try { $("loginDialog")?.showModal(); } catch (_) { /* */ } });
+    requestAnimationFrame(() => { openLoginDialog(); });
   }
 });

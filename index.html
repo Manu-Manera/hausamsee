@@ -492,18 +492,32 @@
             <strong>gemeinsame</strong> Passwort für <em>jeden</em> Namen in der Liste gültig – ihr unterschiedet euch nur
             durch die Namenswahl. Wer nur sich selbst schützen will, sollte unter «Mein Passwort» ein eigenes setzen.
           </p>
-          <form id="changePasswordForm" class="form-card inline">
+          <form id="changePasswordForm" class="form-card inline" autocomplete="on" method="post" action="">
+            <p class="form-note" style="font-size:0.85rem;margin:0 0 10px 0;">iPhone: Damit <strong>Passwörter</strong> / iCloud-Keychain den Account erkennt, muss dein <strong>Login-Name</strong> im Formular stehen (nicht leer lassen).</p>
+            <div class="field">
+              <label for="changePwKeychainUser">Konto-Name (Login, z. B. Manu)</label>
+              <input
+                type="text"
+                id="changePwKeychainUser"
+                name="username"
+                required
+                readonly
+                tabindex="-1"
+                autocomplete="username"
+                data-keychain-username
+              />
+            </div>
             <div class="field">
               <label for="currentPassword">Aktuelles Passwort</label>
-              <input id="currentPassword" type="password" required autocomplete="current-password" />
+              <input id="currentPassword" name="current_password" type="password" required autocomplete="current-password" />
             </div>
             <div class="field">
               <label for="newPassword">Neues Passwort</label>
-              <input id="newPassword" type="password" required minlength="4" autocomplete="new-password" />
+              <input id="newPassword" name="new_password" type="password" required minlength="4" autocomplete="new-password" />
             </div>
             <div class="field">
               <label for="newPassword2">Wiederholen</label>
-              <input id="newPassword2" type="password" required minlength="4" autocomplete="new-password" />
+              <input id="newPassword2" name="new_password_confirm" type="password" required minlength="4" autocomplete="new-password" />
             </div>
             <button type="submit" class="btn btn-primary">Mein Passwort speichern</button>
           </form>
@@ -909,17 +923,30 @@
 
   <!-- Login Dialog -->
   <dialog id="loginDialog" class="auth-dialog">
-    <form method="dialog" id="loginForm" class="auth-form">
+    <form method="dialog" id="loginForm" class="auth-form" autocomplete="on" name="login">
       <button type="button" class="dialog-close" aria-label="Schliessen">×</button>
       <h2 class="auth-title">🔑 Login</h2>
-      <p class="auth-sub">Für Bewohner:innen – oder mit einem Gast-Zugang.</p>
+      <p class="auth-sub">Bewohner:innen und Gäste. Der zweite Konto-Name dient iOS/Passwort-App; er folgt deiner Namenswahl.</p>
       <div class="field">
         <label for="loginMember">Ich bin</label>
-        <select id="loginMember" required></select>
+        <select id="loginMember" name="account_choice" required autocomplete="off"></select>
+      </div>
+      <div class="field keychain-username-wrap">
+        <label for="loginKeychainUser">Konto-Name (für «Passwörter»/Keychain – gleich wie oben)</label>
+        <input
+          type="text"
+          id="loginKeychainUser"
+          name="username"
+          readonly
+          tabindex="-1"
+          autocomplete="username"
+          class="keychain-username"
+          data-keychain-username
+        />
       </div>
       <div class="field">
         <label for="loginPassword">Passwort</label>
-        <input id="loginPassword" type="password" required autocomplete="current-password" placeholder="••••••••" />
+        <input id="loginPassword" name="password" type="password" required autocomplete="current-password" placeholder="••••••••" />
       </div>
       <button type="submit" class="btn btn-primary">Anmelden</button>
       <p id="loginError" class="auth-error hidden">Falsches Passwort · versuch's nochmal.</p>
@@ -1030,6 +1057,6 @@
   <!-- Toast -->
   <div id="toast" class="toast hidden"></div>
 
-  <script type="module" src="app.js?v=20260424h"></script>
+  <script type="module" src="app.js?v=20260424i"></script>
 </body>
 </html>

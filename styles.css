@@ -1075,6 +1075,20 @@ a:hover { color: var(--terracotta); }
 .settings-roster-name { font-size: 0.9rem; }
 .settings-roster-name.muted { color: var(--text-muted); }
 
+/* iOS/Keychain: sichtbares, aber dezentes Konto-Textfeld (nicht display:none) */
+.keychain-username,
+.keychain-username-wrap {
+  font-size: 0.9rem;
+}
+.keychain-username[readonly] {
+  background: rgba(255, 255, 255, 0.5);
+  cursor: default;
+  color: var(--text-muted);
+}
+.auth-form .keychain-username-wrap {
+  margin-top: 4px;
+}
+
 .event-admin {
   display: flex;
   gap: 6px;
