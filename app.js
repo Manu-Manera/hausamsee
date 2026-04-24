@@ -1811,7 +1811,7 @@ function renderSignupBlock(ev) {
       <button type="button" class="btn btn-ghost small signup-match" data-eventid="${ev.id}">🎲 ${solos.length >= 2 ? `${Math.floor(solos.length/2)} Paar${Math.floor(solos.length/2) > 1 ? 'e' : ''} zufällig bilden` : 'Paare zufällig bilden'}</button>
     ` : "";
     return `
-      <details class="event-signup" open>
+      <details class="event-signup">
         <summary>🏁 Anmeldung zum Paar-Lauf · ${entries.length}</summary>
         ${listHtml}
         <form class="signup-form signup-form-pair" data-eventid="${ev.id}">
@@ -1835,7 +1835,7 @@ function renderSignupBlock(ev) {
 
   // single
   return `
-    <details class="event-signup" ${entries.length ? "open" : ""}>
+    <details class="event-signup">
       <summary>📝 Anmeldeliste · ${entries.length}</summary>
       ${entries.length ? `
         <ul class="signup-list">
@@ -3443,6 +3443,7 @@ function setCurrentSong(idx, { autoplay = false, silent = false } = {}) {
     if (volumeBar) volumeBar.disabled = false;
     if (timeCurrent) timeCurrent.textContent = "0:00";
     if (timeTotal) timeTotal.textContent = "0:00";
+    if (volumeBar) volumeBar.title = "";
     return;
   }
   currentSongIdx = idx;
@@ -3464,7 +3465,7 @@ function setCurrentSong(idx, { autoplay = false, silent = false } = {}) {
     );
     if (playerEmbedHint) {
       playerEmbedHint.innerHTML =
-        "Dieser Track läuft über <strong>YouTube</strong> (eingebettet). Lautstärke und Fortschritt steuerst du im Kasten – nicht mit dem Lautstärkeregler darunter.";
+        "Dieser Track läuft über <strong>YouTube</strong>. Play und Lautstärke im eingebetteten Video. Der <strong>Lautstärkeregler unten</strong> speichert die Stärke für MP3-/Audio-Links (nicht für das Video).";
     }
     playerYoutubeWrap?.classList.remove("hidden");
     playerYoutubeWrap?.setAttribute("aria-hidden", "false");
@@ -3480,7 +3481,6 @@ function setCurrentSong(idx, { autoplay = false, silent = false } = {}) {
       progressBar.value = 0;
       updateSliderFill(progressBar);
     }
-    if (volumeBar) volumeBar.disabled = true;
     if (timeCurrent) timeCurrent.textContent = "∿";
     if (timeTotal) timeTotal.textContent = "YouTube";
   } else if (scUrl) {
@@ -3490,7 +3490,7 @@ function setCurrentSong(idx, { autoplay = false, silent = false } = {}) {
     playerEmbedBox?.classList.add("is-soundcloud");
     if (playerEmbedHint) {
       playerEmbedHint.innerHTML =
-        "Dieser Track läuft über <strong>SoundCloud</strong> (eingebetteter Player). Bedienung im Kasten – der untere Fortschrittsbalken gilt nur für direkte Audio-URLs.";
+        "Dieser Track läuft über <strong>SoundCloud</strong> im Kasten. Der <strong>Lautstärkeregler unten</strong> gilt für MP3-/Audio-Links; im SoundCloud-Player die Lautstärke dort oder über die Gerätetasten.";
     }
     playerYoutubeWrap?.classList.remove("hidden");
     playerYoutubeWrap?.setAttribute("aria-hidden", "false");
@@ -3505,7 +3505,6 @@ function setCurrentSong(idx, { autoplay = false, silent = false } = {}) {
       progressBar.value = 0;
       updateSliderFill(progressBar);
     }
-    if (volumeBar) volumeBar.disabled = true;
     if (timeCurrent) timeCurrent.textContent = "∿";
     if (timeTotal) timeTotal.textContent = "SoundCloud";
   } else if (spRef) {
@@ -3519,7 +3518,7 @@ function setCurrentSong(idx, { autoplay = false, silent = false } = {}) {
     else if (spRef.type !== "track") playerEmbedBox?.classList.add("is-spotify-tall");
     if (playerEmbedHint) {
       playerEmbedHint.innerHTML =
-        "Dieser Eintrag läuft über den <strong>Spotify</strong>-Embed. Abspielen im Kasten – der untere Balken gilt nur für direkte Audio-URLs.";
+        "Dieser Eintrag läuft über <strong>Spotify</strong> im Kasten. Lautstärke dort im Player oder mit den Tasten deines Geräts. Der <strong>Regler unten</strong> speichert die Stärke für MP3-/Audio-Links.";
     }
     playerYoutubeWrap?.classList.remove("hidden");
     playerYoutubeWrap?.setAttribute("aria-hidden", "false");
@@ -3534,7 +3533,6 @@ function setCurrentSong(idx, { autoplay = false, silent = false } = {}) {
       progressBar.value = 0;
       updateSliderFill(progressBar);
     }
-    if (volumeBar) volumeBar.disabled = true;
     if (timeCurrent) timeCurrent.textContent = "∿";
     if (timeTotal) timeTotal.textContent = "Spotify";
   } else {
@@ -3550,6 +3548,12 @@ function setCurrentSong(idx, { autoplay = false, silent = false } = {}) {
         console.warn(err);
       });
     }
+  }
+  if (volumeBar) {
+    volumeBar.disabled = false;
+    volumeBar.title = isCurrentTrackExternalEmbed()
+      ? "Speichert die Lautstärke für MP3- und Audio-URLs. Bei Spotify, YouTube & SoundCloud: Lautstärke im eingebetteten Player oder Gerätelautstärke."
+      : "";
   }
   updatePlayPauseUI();
   renderPlaylist();
