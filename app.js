@@ -3222,6 +3222,28 @@ const timeTotal = $("timeTotal");
 const nowTitle = $("nowTitle");
 const nowArtist = $("nowArtist");
 const playlistEl = $("playlist");
+const playerYoutubeWrap = $("playerYoutubeWrap");
+const playerYoutubeFrame = $("playerYoutubeFrame");
+
+function extractYouTubeId(url) {
+  if (!url || typeof url !== "string") return null;
+  const u = url.trim();
+  const m = u.match(
+    /(?:youtu\.be\/|youtube\.com\/(?:embed\/|v\/|shorts\/)|youtube\.com\/watch\?[^#]*v=)([a-zA-Z0-9_-]{11})/i
+  );
+  return m ? m[1] : null;
+}
+
+function songGetYouTubeId(song) {
+  if (!song) return null;
+  if (song.youtubeId && /^[a-zA-Z0-9_-]{11}$/.test(song.youtubeId)) return song.youtubeId;
+  return extractYouTubeId(song.src || "");
+}
+
+function isCurrentTrackYouTube() {
+  if (currentSongIdx < 0 || !musikCache.length) return false;
+  return !!songGetYouTubeId(musikCache[currentSongIdx]);
+}
 
 // Gespeicherte Lautstärke wiederherstellen
 const savedVol = parseFloat(localStorage.getItem("has_player_vol") || "0.8");
@@ -3262,8 +3284,8 @@ function renderPlaylist() {
   btnPlayPause.disabled = false;
 
   playlistEl.innerHTML = musikCache.map((s, i) => `
-    <li class="playlist-item ${i === currentSongIdx ? 'active' : ''}" data-idx="${i}">
-      <span class="pi-icon">${i === currentSongIdx ? '♪' : (i + 1)}</span>
+    <li class="playlist-item ${i === currentSongIdx ? 'active' : ''} ${songGetYouTubeId(s) ? "is-youtube" : ""}" data-idx="${i}">
+      <span class="pi-icon" title="${songGetYouTubeId(s) ? "YouTube" : ""}">${songGetYouTubeId(s) ? "📺" : (i === currentSongIdx ? "♪" : (i + 1))}</span>
       <div class="pi-meta">
         <span class="pi-title">${escapeHtml(s.title || 'Ohne Titel')}</span>
         <span class="pi-sub">${escapeHtml(s.artist || '')}${s.addedBy ? ` · hinzugefügt von ${escapeHtml(s.addedBy)}` : ''}</span>
@@ -3294,36 +3316,82 @@ function renderPlaylist() {
   btnNext.disabled = musikCache.length <= 1;
 }
 
+function clearYouTubeEmbed() {
+  if (playerYoutubeFrame) playerYoutubeFrame.src = "about:blank";
+  playerYoutubeWrap?.classList.add("hidden");
+  playerYoutubeWrap?.setAttribute("aria-hidden", "true");
+  document.body.classList.remove("is-youtube-track");
+}
+
 function setCurrentSong(idx, { autoplay = false, silent = false } = {}) {
   if (!audio) return;
   if (idx < 0 || idx >= musikCache.length) {
     currentSongIdx = -1;
+    clearYouTubeEmbed();
     audio.removeAttribute("src");
     audio.load();
     nowTitle.textContent = "Noch kein Song ausgewählt";
     nowArtist.textContent = "";
     document.body.classList.remove("is-playing");
+    if (progressBar) progressBar.disabled = false;
+    if (volumeBar) volumeBar.disabled = false;
+    if (timeCurrent) timeCurrent.textContent = "0:00";
+    if (timeTotal) timeTotal.textContent = "0:00";
     return;
   }
   currentSongIdx = idx;
   const song = musikCache[idx];
+  const yid = songGetYouTubeId(song);
   nowTitle.textContent = song.title || "Ohne Titel";
   nowArtist.textContent = song.artist || "";
-  audio.src = song.src;
-  audio.load();
-  if (autoplay) {
-    audio.play().catch(err => {
-      if (!silent) showToast("Song konnte nicht abgespielt werden.", "error");
-      console.warn(err);
-    });
+  if (yid) {
+    audio.pause();
+    audio.removeAttribute("src");
+    audio.load();
+    playerYoutubeWrap?.classList.remove("hidden");
+    playerYoutubeWrap?.setAttribute("aria-hidden", "false");
+    if (playerYoutubeFrame) {
+      const ap = autoplay ? "1" : "0";
+      playerYoutubeFrame.src = `https://www.youtube.com/embed/${yid}?rel=0&modestbranding=1&playsinline=1&autoplay=${ap}`;
+    }
+    document.body.classList.add("is-youtube-track");
+    if (progressBar) {
+      progressBar.disabled = true;
+      progressBar.value = 0;
+      updateSliderFill(progressBar);
+    }
+    if (volumeBar) volumeBar.disabled = true;
+    if (timeCurrent) timeCurrent.textContent = "∿";
+    if (timeTotal) timeTotal.textContent = "YouTube";
+  } else {
+    clearYouTubeEmbed();
+    document.body.classList.remove("is-youtube-track");
+    if (progressBar) progressBar.disabled = false;
+    if (volumeBar) volumeBar.disabled = false;
+    audio.src = song.src;
+    audio.load();
+    if (autoplay) {
+      audio.play().catch((err) => {
+        if (!silent) showToast("Song konnte nicht abgespielt werden.", "error");
+        console.warn(err);
+      });
+    }
   }
+  updatePlayPauseUI();
   renderPlaylist();
 }
 
 function updatePlayPauseUI() {
   if (!btnPlayPause) return;
+  if (isCurrentTrackYouTube()) {
+    btnPlayPause.textContent = "🎬";
+    btnPlayPause.title = "YouTube-Video spielt im Kasten oben; Play/Pause dort steuern. Tipp: nochmal tippen lädt die Einbettung neu.";
+    document.body.classList.add("is-playing", "is-youtube-track");
+    return;
+  }
   const playing = !audio.paused && !audio.ended && audio.readyState > 2;
   btnPlayPause.textContent = playing ? "⏸" : "▶";
+  btnPlayPause.title = "";
   document.body.classList.toggle("is-playing", playing);
 }
 
@@ -3333,8 +3401,20 @@ btnPlayPause?.addEventListener("click", () => {
     setCurrentSong(0, { autoplay: true });
     return;
   }
+  if (isCurrentTrackYouTube() && playerYoutubeFrame) {
+    const yid = songGetYouTubeId(musikCache[currentSongIdx]);
+    if (yid) {
+      const u = new URL(`https://www.youtube.com/embed/${yid}`);
+      u.searchParams.set("autoplay", "1");
+      u.searchParams.set("rel", "0");
+      u.searchParams.set("modestbranding", "1");
+      u.searchParams.set("playsinline", "1");
+      playerYoutubeFrame.src = u.toString();
+    }
+    return;
+  }
   if (audio.paused) {
-    audio.play().catch(err => {
+    audio.play().catch((err) => {
       showToast("Abspielen fehlgeschlagen.", "error");
       console.warn(err);
     });
@@ -3365,21 +3445,22 @@ audio?.addEventListener("ended", () => {
   }
 });
 audio?.addEventListener("timeupdate", () => {
-  if (!audio.duration) return;
+  if (isCurrentTrackYouTube() || !audio.duration) return;
   const pct = (audio.currentTime / audio.duration) * 100;
-  progressBar.value = pct;
+  if (progressBar) progressBar.value = pct;
   updateSliderFill(progressBar);
-  timeCurrent.textContent = fmtTime(audio.currentTime);
+  if (timeCurrent) timeCurrent.textContent = fmtTime(audio.currentTime);
 });
 audio?.addEventListener("loadedmetadata", () => {
-  timeTotal.textContent = fmtTime(audio.duration);
+  if (timeTotal && !isCurrentTrackYouTube()) timeTotal.textContent = fmtTime(audio.duration);
 });
 audio?.addEventListener("error", () => {
+  if (isCurrentTrackYouTube()) return;
   if (audio.src) showToast("Song konnte nicht geladen werden.", "error");
 });
 
 progressBar?.addEventListener("input", () => {
-  if (!audio.duration) return;
+  if (isCurrentTrackYouTube() || !audio?.duration) return;
   const t = (parseFloat(progressBar.value) / 100) * audio.duration;
   audio.currentTime = t;
   updateSliderFill(progressBar);
@@ -3409,11 +3490,13 @@ $("songUrlForm")?.addEventListener("submit", async (e) => {
   let url = $("songUrlInput").value.trim();
   // Convenience: Dropbox share link → raw
   if (/dropbox\.com/.test(url) && /\?dl=0/.test(url)) url = url.replace("?dl=0", "?raw=1");
+  const yid = extractYouTubeId(url);
   const entry = {
     title: $("songTitleInput").value.trim() || "Ohne Titel",
     artist: $("songArtistInput").value.trim(),
     src: url,
-    kind: "url",
+    kind: yid ? "youtube" : "url",
+    ...(yid ? { youtubeId: yid } : {}),
     addedBy: auth.member,
     createdAt: Date.now()
   };
