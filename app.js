@@ -4002,11 +4002,106 @@ const GARTEN_DAY_DEF = [
   ["sun", "Sonntag"],
 ];
 
+/** 0=So … 6=Sa (Aus Europe/Zurich per en-US weekday long) */
+const GARTEN_DAYKEY_TO_DOW0 = { sun: 0, mon: 1, tue: 2, wed: 3, thu: 4, fri: 5, sat: 6 };
+const GARTEN_EN_LONG_TO_DOW0 = { Sunday: 0, Monday: 1, Tuesday: 2, Wednesday: 3, Thursday: 4, Friday: 5, Saturday: 6 };
+
+/** Wand-Uhrzeit in Europe/Zurich → Date (wie die Cloud-Function) */
+function zurichWallToUtcDate(y, m, d, h, min) {
+  let guess = Date.UTC(y, m - 1, d, h, min, 0);
+  for (let i = 0; i < 20; i++) {
+    const parts = new Intl.DateTimeFormat("en-GB", {
+      timeZone: "Europe/Zurich", year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit", hour12: false,
+    }).formatToParts(new Date(guess));
+    const p = (t) => +parts.find((x) => x.type === t).value;
+    const Y = p("year");
+    const M = p("month");
+    const D = p("day");
+    const H = p("hour");
+    const Mi = p("minute");
+    if (Y === y && M === m && D === d && H === h && Mi === min) {
+      return new Date(guess);
+    }
+    guess += (h * 60 + min - (H * 60 + Mi)) * 60 * 1000;
+  }
+  return new Date(guess);
+}
+
+function zurichTodayYmd() {
+  return new Date().toLocaleDateString("en-CA", { timeZone: "Europe/Zurich" });
+}
+
+/**
+ * Nächste Kalendertage in Europe/Zurich (ab heute), ohne +24h-Fallen bei DST.
+ * (Stündlich vorspulen, bis genug verschiedene YMD gesammelt sind.)
+ */
+function getZurichYmdListNextDays(count) {
+  const ymds = [];
+  const seen = new Set();
+  const startYmd = zurichTodayYmd();
+  const [Y0, M0, D0] = startYmd.split("-").map(Number);
+  if ([Y0, M0, D0].some((n) => Number.isNaN(n))) return [];
+  const t0 = zurichWallToUtcDate(Y0, M0, D0, 12, 0).getTime();
+  for (let h = 0; h < 24 * 16 && ymds.length < count; h += 1) {
+    const ymd = new Date(t0 + h * 60 * 60 * 1000).toLocaleDateString("en-CA", { timeZone: "Europe/Zurich" });
+    if (!seen.has(ymd)) {
+      seen.add(ymd);
+      ymds.push(ymd);
+    }
+  }
+  return ymds;
+}
+
+function getZurichDow0ForYmd(ymd) {
+  const [Y, M, D] = ymd.split("-").map(Number);
+  if ([Y, M, D].some((n) => Number.isNaN(n))) return null;
+  const t = zurichWallToUtcDate(Y, M, D, 12, 0);
+  const parts = new Intl.DateTimeFormat("en-US", { timeZone: "Europe/Zurich", weekday: "long" }).formatToParts(t);
+  const w = parts.find((p) => p.type === "weekday")?.value;
+  if (w == null) return null;
+  return GARTEN_EN_LONG_TO_DOW0[w] !== undefined ? GARTEN_EN_LONG_TO_DOW0[w] : null;
+}
+
+/** Nächstes Vorkommen dieses Wochentags in Europe/Zurich (heute zählt mit). */
+function nextYmdForGartenDayKey(dayKey) {
+  const wantD0 = GARTEN_DAYKEY_TO_DOW0[dayKey];
+  if (wantD0 === undefined) return null;
+  const ymds = getZurichYmdListNextDays(8);
+  for (const cand of ymds) {
+    if (getZurichDow0ForYmd(cand) === wantD0) return cand;
+  }
+  return null;
+}
+
+function gartenSlotSkipKey(ymd, dayKey, idx) {
+  return `${ymd}|${dayKey}|${idx}`;
+}
+
+function formatGartenYmdShort(ymd) {
+  if (!ymd) return "";
+  const [y, m, d] = ymd.split("-").map(Number);
+  if (Number.isNaN(y) || Number.isNaN(m) || Number.isNaN(d)) return ymd;
+  return `${d}.${m}.`;
+}
+
+function pruneGartenSlotSkips(raw) {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return {};
+  const t = zurichTodayYmd();
+  const o = {};
+  for (const [k, v] of Object.entries(raw)) {
+    if (!v) continue;
+    const first = String(k).split("|")[0];
+    if (first >= t) o[k] = true;
+  }
+  return o;
+}
+
 function defaultGartenPlan() {
   return {
     enabled: false,
     deviceName: "Pumpe",
     days: { mon: [], tue: [], wed: [], thu: [], fri: [], sat: [], sun: [] },
+    slotSkips: {},
   };
 }
 
@@ -4017,6 +4112,7 @@ function normalizeGartenPlan(raw) {
   if (!raw || typeof raw !== "object") return d;
   d.enabled = !!raw.enabled;
   d.deviceName = (raw.deviceName || "Pumpe").trim() || "Pumpe";
+  d.slotSkips = pruneGartenSlotSkips(raw.slotSkips);
   "mon tue wed thu fri sat sun".split(" ").forEach((k) => {
     const arr = raw.days?.[k];
     d.days[k] = Array.isArray(arr)
@@ -4029,13 +4125,25 @@ function normalizeGartenPlan(raw) {
   return d;
 }
 
-function gartenSlotRowHtml(day, idx, s) {
+function gartenSlotRowHtml(day, idx, s, nextYmd, skipped) {
   const on = (s.on || "07:00").slice(0, 5);
   const off = (s.off || "07:15").slice(0, 5);
+  const hasSkip = !!nextYmd;
+  const skLabel = hasSkip
+    ? (skipped
+      ? "Zurücknehmen (skip aufheben)"
+      : `Überspringen (${formatGartenYmdShort(nextYmd)})`)
+    : "";
+  const skipBtn = hasSkip
+    ? `<button type="button" class="mini-btn garten-skip-once" data-day="${day}" data-index="${idx}" data-ymd="${nextYmd}" data-skipped="${skipped ? "1" : "0"}" title="Nur diesen Gießblock (dieses Kalenderdatum)">${escapeHtml(skLabel)}</button>`
+    : "";
   return `<div class="garten-slot-row" data-day="${day}" data-index="${idx}">
     <label>Ein <input type="time" class="garten-on" value="${on}" /></label>
     <label>Aus <input type="time" class="garten-off" value="${off}" /></label>
-    <button type="button" class="mini-btn danger garten-remove-slot" data-day="${day}" data-index="${idx}">Entfernen</button>
+    <div class="garten-slot-actions">
+      <button type="button" class="mini-btn danger garten-remove-slot" data-day="${day}" data-index="${idx}">Entfernen</button>
+      ${skipBtn}
+    </div>
   </div>`;
 }
 
@@ -4051,8 +4159,16 @@ function renderGartenWeek() {
 
   root.innerHTML = GARTEN_DAY_DEF.map(([key, label]) => {
     const slots = data.days[key] || [];
+    const nextYmd = nextYmdForGartenDayKey(key) || zurichTodayYmd();
     const inner = slots.length
-      ? slots.map((s, i) => gartenSlotRowHtml(key, i, s)).join("")
+      ? slots.map((s, i) =>
+        gartenSlotRowHtml(
+          key,
+          i,
+          s,
+          nextYmd,
+          !!data.slotSkips?.[gartenSlotSkipKey(nextYmd, key, i)]
+        )).join("")
       : "";
     return `<div class="garten-day" data-day="${key}">
       <h4 class="garten-day-title">${label}</h4>
@@ -4064,18 +4180,70 @@ function renderGartenWeek() {
   root.querySelectorAll(".garten-add-slot").forEach((btn) => {
     btn.addEventListener("click", () => {
       const day = btn.dataset.day;
-      gartenPlanCache = normalizeGartenPlan(gartenPlanCache);
-      gartenPlanCache.days[day] = gartenPlanCache.days[day] || [];
-      gartenPlanCache.days[day].push({ on: "07:00", off: "07:15" });
-      renderGartenWeek();
+      /* Ein Frame warten, damit nach Blur/change (vor allem mobile type=time) Werte sichtbar sind. */
+      requestAnimationFrame(() => {
+        mergeGartenPlanFromDom();
+        gartenPlanCache = normalizeGartenPlan(gartenPlanCache);
+        gartenPlanCache.days[day] = gartenPlanCache.days[day] || [];
+        gartenPlanCache.days[day].push({ on: "07:00", off: "07:15" });
+        renderGartenWeek();
+      });
     });
   });
   root.querySelectorAll(".garten-remove-slot").forEach((btn) => {
     btn.addEventListener("click", () => {
       const day = btn.dataset.day;
       const idx = parseInt(btn.dataset.index, 10);
+      requestAnimationFrame(() => {
+        mergeGartenPlanFromDom();
+        gartenPlanCache = normalizeGartenPlan(gartenPlanCache);
+        if (gartenPlanCache.days[day]) gartenPlanCache.days[day].splice(idx, 1);
+        renderGartenWeek();
+      });
+    });
+  });
+
+  root.querySelectorAll(".garten-skip-once").forEach((btn) => {
+    btn.addEventListener("click", async () => {
+      if (!requireMember("Gieß-Block anpassen")) return;
+      const day = btn.dataset.day;
+      const i = parseInt(btn.dataset.index, 10);
+      const ymd = btn.dataset.ymd;
+      if (!ymd || !day) return;
+      const k = gartenSlotSkipKey(ymd, day, i);
+      const turnOff = btn.dataset.skipped === "1";
+      await new Promise((r) => requestAnimationFrame(() => r()));
+      mergeGartenPlanFromDom();
       gartenPlanCache = normalizeGartenPlan(gartenPlanCache);
-      if (gartenPlanCache.days[day]) gartenPlanCache.days[day].splice(idx, 1);
+      if (!gartenPlanCache.slotSkips) gartenPlanCache.slotSkips = {};
+      if (turnOff) delete gartenPlanCache.slotSkips[k];
+      else gartenPlanCache.slotSkips[k] = true;
+      gartenPlanCache.slotSkips = pruneGartenSlotSkips(gartenPlanCache.slotSkips);
+      if (firebaseReady) {
+        try {
+          await setDoc(
+            doc(db, "config", "gartenPlan"),
+            {
+              slotSkips: gartenPlanCache.slotSkips,
+              updatedBy: auth.member,
+              updatedAt: serverTimestamp(),
+            },
+            { merge: true }
+          );
+          showToast(turnOff ? "Skip zurückgenommen. 🌿" : "Dieser Block ist für diesen Termin übersprungen. 🌤️", "success");
+        } catch (err) {
+          console.error(err);
+          showToast("Speichern fehlgeschlagen.", "error");
+          try {
+            const s = await getDoc(doc(db, "config", "gartenPlan"));
+            if (s.exists()) gartenPlanCache = normalizeGartenPlan(s.data());
+          } catch (_) { /* Firestore lesen */ }
+        }
+      } else {
+        localStore.gartenPlan = gartenPlanCache;
+        saveLocal("gartenPlan", gartenPlanCache);
+        showToast("Lokal (Demo) gespeichert.", "success");
+      }
       renderGartenWeek();
     });
   });
@@ -4087,12 +4255,35 @@ function gartenTimeToMin(t) {
   return parseInt(m[1], 10) * 60 + parseInt(m[2], 10);
 }
 
+const GARTEN_DAY_KEYS = ["mon", "tue", "wed", "thu", "fri", "sat", "sun"];
+
+/** Damit <input type=time> ggf. aufgesetzte (noch fokusige) Werte wirklich im DOM landen, bevor wir lesen. */
+function flushGartenTimeInputs() {
+  const root = $("gartenWeek");
+  if (!root) return;
+  const a = document.activeElement;
+  if (a && root.contains(a) && (a.classList?.contains("garten-on") || a.classList?.contains("garten-off"))) {
+    a.blur();
+  }
+}
+
 function collectGartenPlanFromDom() {
   const days = { mon: [], tue: [], wed: [], thu: [], fri: [], sat: [], sun: [] };
-  document.querySelectorAll("#gartenWeek .garten-day").forEach((dayEl) => {
-    const key = dayEl.dataset.day;
-    if (!days[key]) return;
-    dayEl.querySelectorAll(".garten-slot-row").forEach((row) => {
+  const weekRoot = $("gartenWeek");
+  if (!weekRoot) {
+    return {
+      enabled: !!$("gartenPlanEnabled")?.checked,
+      deviceName: ($("gartenDeviceName")?.value || "Pumpe").trim() || "Pumpe",
+      days,
+      slotSkips: gartenPlanCache ? pruneGartenSlotSkips(gartenPlanCache.slotSkips) : {},
+    };
+  }
+  GARTEN_DAY_KEYS.forEach((key) => {
+    const dayEl = weekRoot.querySelector(`.garten-day[data-day="${key}"]`);
+    if (!dayEl) return;
+    const slots = dayEl.querySelector(".garten-slots");
+    if (!slots) return;
+    slots.querySelectorAll(".garten-slot-row").forEach((row) => {
       const on = row.querySelector(".garten-on")?.value || "07:00";
       const off = row.querySelector(".garten-off")?.value || "07:15";
       days[key].push({ on, off });
@@ -4102,12 +4293,23 @@ function collectGartenPlanFromDom() {
     enabled: !!$("gartenPlanEnabled")?.checked,
     deviceName: ($("gartenDeviceName")?.value || "Pumpe").trim() || "Pumpe",
     days,
+    slotSkips: gartenPlanCache
+      ? pruneGartenSlotSkips(gartenPlanCache.slotSkips)
+      : {},
   };
+}
+
+/** Call before add/remove/skip, wenn im DOM noch ungespeicherte Zeiten stehen. */
+function mergeGartenPlanFromDom() {
+  if (!$("gartenWeek")?.querySelector?.(".garten-day")) return;
+  flushGartenTimeInputs();
+  gartenPlanCache = normalizeGartenPlan({ ...gartenPlanCache, ...collectGartenPlanFromDom() });
 }
 
 $("gartenPlanForm")?.addEventListener("submit", async (e) => {
   e.preventDefault();
   if (!requireMember("Gartenplan speichern")) return;
+  flushGartenTimeInputs();
   const next = collectGartenPlanFromDom();
   for (const k of Object.keys(next.days)) {
     for (const slot of next.days[k]) {
