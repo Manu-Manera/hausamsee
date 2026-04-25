@@ -444,12 +444,19 @@ a:hover { color: var(--terracotta); }
     max-width: 300px;
     width: min(300px, calc(100vw - 32px));
   }
+  .weather-hero.weather-hero--has-hourly {
+    max-width: 360px;
+    width: min(360px, calc(100vw - 32px));
+  }
 }
 /* Handy: Leiste ganz unten */
 @media (max-width: 560px) {
   body {
     /* Platz, damit Seitenende nicht unter dem Wetter verschwindet */
     padding-bottom: calc(150px + env(safe-area-inset-bottom, 0px));
+  }
+  body.weather-dock-tall {
+    padding-bottom: calc(300px + env(safe-area-inset-bottom, 0px));
   }
   .weather-hero {
     top: auto;
@@ -534,6 +541,63 @@ a:hover { color: var(--terracotta); }
   font-size: 0.76rem;
   color: var(--text-muted);
 }
+
+/* Stündliche Aussicht (heute + morgen) */
+.weather-hourly {
+  margin-top: 10px;
+  padding-top: 10px;
+  border-top: 1px solid rgba(139, 94, 60, 0.15);
+}
+.wh-day {
+  margin: 10px 0 6px;
+  font-size: 0.68rem;
+  font-weight: 700;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+  color: var(--terracotta-dark);
+}
+.wh-day:first-child {
+  margin-top: 0;
+}
+.wh-row {
+  display: flex;
+  gap: 7px;
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+  padding: 2px 0 6px;
+  margin: 0 -2px;
+  scrollbar-width: thin;
+}
+.wh-slot {
+  flex: 0 0 auto;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 1px;
+  min-width: 46px;
+  max-width: 52px;
+  padding: 6px 4px 7px;
+  background: rgba(198, 122, 80, 0.1);
+  border: 1px solid rgba(139, 94, 60, 0.12);
+  border-radius: var(--r-sm);
+  font-size: 0.72rem;
+  line-height: 1.2;
+}
+.wh-time {
+  color: var(--text-muted);
+  font-weight: 600;
+  font-size: 0.68rem;
+}
+.wh-ico {
+  font-size: 1.05rem;
+  line-height: 1.1;
+}
+.wh-tmp {
+  font-weight: 600;
+  color: var(--cocoa);
+  font-size: 0.78rem;
+}
+
 .weather-hero-attrib {
   margin: 6px 0 0;
   font-size: 0.68rem;

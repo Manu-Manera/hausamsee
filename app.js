@@ -134,23 +134,86 @@ function wmoWeatherGerman(code) {
   return { text: "Aktuelles Wetter", emoji: "🌡️" };
 }
 
+function ymdAddOne(ymd) {
+  const [Y, M, D] = ymd.split("-").map(Number);
+  const d = new Date(Y, M - 1, D + 1);
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+}
+
+/** Wetter-Slot ab voller Stunde (Vergleich mit Open-Meteo `time`-Strings) */
+function toHourlyKey(iso) {
+  if (!iso || iso.length < 16) return iso;
+  return `${iso.slice(0, 13)}:00`;
+}
+
+/**
+ * Stündliche Aussichten: Rest von heute + kompletter morgen (heute 00h–23h).
+ * escapeHtml: aus Modul, zur Laufzeit verfügbar
+ */
+function buildHourlyOutlookHTML(hourly, curTimeIso, esc) {
+  const tArr = hourly?.time;
+  const temps = hourly?.temperature_2m;
+  const codes = hourly?.weather_code;
+  if (!tArr || !temps || !codes || !tArr.length) return "";
+  const curSlot = toHourlyKey(curTimeIso || tArr[0]);
+  const todayYmd = (curTimeIso || tArr[0]).slice(0, 10);
+  const tomorrowYmd = ymdAddOne(todayYmd);
+
+  const todaySlots = [];
+  const tomSlots = [];
+  for (let i = 0; i < tArr.length; i++) {
+    const t = tArr[i];
+    const d = t.slice(0, 10);
+    if (d === todayYmd && t >= curSlot) {
+      todaySlots.push({ t, i });
+    } else if (d === tomorrowYmd) {
+      tomSlots.push({ t, i });
+    }
+  }
+
+  const row = (slots) => {
+    if (!slots.length) return "";
+    const parts = slots.map(({ t, i: ti }) => {
+      const label = `${t.slice(11, 13)}h`;
+      const te = Math.round(Number(temps[ti]));
+      const em = wmoWeatherGerman(codes[ti]).emoji;
+      return `<div class="wh-slot" title="${esc(t)}"><span class="wh-time">${esc(label)}</span><span class="wh-ico" aria-hidden="true">${em}</span><span class="wh-tmp">${te}°</span></div>`;
+    });
+    return `<div class="wh-row">${parts.join("")}</div>`;
+  };
+
+  if (!todaySlots.length && !tomSlots.length) return "";
+  return (
+    (todaySlots.length ? `<p class="wh-day">Heute</p>${row(todaySlots)}` : "") +
+    (tomSlots.length ? `<p class="wh-day">Morgen</p>${row(tomSlots)}` : "")
+  );
+}
+
 async function initWeather() {
   const w = document.getElementById("weatherWidget");
   if (!w) return;
   const $ = (id) => document.getElementById(id);
+  const esc = (s) => {
+    if (!s) return "";
+    const d = document.createElement("div");
+    d.textContent = String(s);
+    return d.innerHTML;
+  };
   try {
     const u = new URL("https://api.open-meteo.com/v1/forecast");
     u.searchParams.set("latitude", String(WEATHER_SPOT.lat));
     u.searchParams.set("longitude", String(WEATHER_SPOT.lon));
     u.searchParams.set("current", "temperature_2m,relative_humidity_2m,weather_code,wind_speed_10m");
+    u.searchParams.set("hourly", "temperature_2m,weather_code");
     u.searchParams.set("daily", "temperature_2m_max,temperature_2m_min");
     u.searchParams.set("timezone", "Europe/Zurich");
-    u.searchParams.set("forecast_days", "1");
+    u.searchParams.set("forecast_days", "2");
     const res = await fetch(u.toString());
     if (!res.ok) throw new Error("HTTP " + res.status);
     const j = await res.json();
     const cur = j.current;
     const daily = j.daily;
+    const hourly = j.hourly;
     if (!cur) throw new Error("kein current");
     const { text, emoji } = wmoWeatherGerman(cur.weather_code);
     if ($("weatherIcon")) $("weatherIcon").textContent = emoji;
@@ -179,10 +242,33 @@ async function initWeather() {
       const t = new Date(String(cur.time));
       $("weatherUpdated").textContent = t.toLocaleTimeString("de-CH", { hour: "2-digit", minute: "2-digit" });
     }
+
+    const hEl = $("weatherHourly");
+    if (hEl) {
+      const hHtml = buildHourlyOutlookHTML(hourly, cur.time, esc);
+      if (hHtml) {
+        hEl.innerHTML = hHtml;
+        hEl.classList.remove("hidden");
+        w.classList.add("weather-hero--has-hourly");
+        document.body.classList.add("weather-dock-tall");
+      } else {
+        hEl.innerHTML = "";
+        hEl.classList.add("hidden");
+        w.classList.remove("weather-hero--has-hourly");
+        document.body.classList.remove("weather-dock-tall");
+      }
+    }
+
     w.classList.remove("weather-hero--error");
   } catch (e) {
     console.warn("[Wetter]", e);
     w.classList.add("weather-hero--error");
+    w.classList.remove("weather-hero--has-hourly");
+    document.body.classList.remove("weather-dock-tall");
+    if ($("weatherHourly")) {
+      $("weatherHourly").innerHTML = "";
+      $("weatherHourly").classList.add("hidden");
+    }
     if ($("weatherIcon")) $("weatherIcon").textContent = "🌡️";
     if ($("weatherTemp")) $("weatherTemp").textContent = "–";
     if ($("weatherRange")) $("weatherRange").textContent = "";
