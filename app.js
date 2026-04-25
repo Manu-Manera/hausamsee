@@ -4180,26 +4180,28 @@ function renderGartenWeek() {
   root.querySelectorAll(".garten-add-slot").forEach((btn) => {
     btn.addEventListener("click", () => {
       const day = btn.dataset.day;
-      /* Ein Frame warten, damit nach Blur/change (vor allem mobile type=time) Werte sichtbar sind. */
-      requestAnimationFrame(() => {
+      void (async () => {
+        /* Blur/change muss ankommen: leerer .value würde früher mit || „07:00" überschrieben. */
+        await afterGartenDomStable();
         mergeGartenPlanFromDom();
         gartenPlanCache = normalizeGartenPlan(gartenPlanCache);
         gartenPlanCache.days[day] = gartenPlanCache.days[day] || [];
         gartenPlanCache.days[day].push({ on: "07:00", off: "07:15" });
         renderGartenWeek();
-      });
+      })();
     });
   });
   root.querySelectorAll(".garten-remove-slot").forEach((btn) => {
     btn.addEventListener("click", () => {
       const day = btn.dataset.day;
       const idx = parseInt(btn.dataset.index, 10);
-      requestAnimationFrame(() => {
+      void (async () => {
+        await afterGartenDomStable();
         mergeGartenPlanFromDom();
         gartenPlanCache = normalizeGartenPlan(gartenPlanCache);
         if (gartenPlanCache.days[day]) gartenPlanCache.days[day].splice(idx, 1);
         renderGartenWeek();
-      });
+      })();
     });
   });
 
@@ -4212,7 +4214,7 @@ function renderGartenWeek() {
       if (!ymd || !day) return;
       const k = gartenSlotSkipKey(ymd, day, i);
       const turnOff = btn.dataset.skipped === "1";
-      await new Promise((r) => requestAnimationFrame(() => r()));
+      await afterGartenDomStable();
       mergeGartenPlanFromDom();
       gartenPlanCache = normalizeGartenPlan(gartenPlanCache);
       if (!gartenPlanCache.slotSkips) gartenPlanCache.slotSkips = {};
@@ -4267,7 +4269,34 @@ function flushGartenTimeInputs() {
   }
 }
 
-function collectGartenPlanFromDom() {
+/**
+ * time: weder || „07:00" noch leerer String darf echten Wert verwerfen.
+ * Leer + prev-Slot: Cache-Zeit (z. B. Rennen Blur/change vor dem Lesen).
+ * Ohne prev: Default nur bei wirklich fehlendem Input.
+ */
+function readGartenTimeField(onEl, field, key, slotIdx, prev) {
+  const def = field === "off" ? "07:15" : "07:00";
+  const slot = prev?.days?.[key]?.[slotIdx];
+  if (!onEl) {
+    if (slot) return (field === "off" ? slot.off : slot.on) || def;
+    return def;
+  }
+  const raw = onEl.value;
+  if (raw != null && String(raw).trim() !== "") {
+    return String(raw).trim().slice(0, 5);
+  }
+  if (slot) {
+    const t = field === "off" ? slot.off : slot.on;
+    if (t && String(t).trim() !== "") return String(t).trim().slice(0, 5);
+  }
+  return def;
+}
+
+/**
+ * @param {object|null|undefined} prev  Letzter bekannter Plan (für leere time-Werte) — meist gartenPlanCache vor dem Merge.
+ */
+function collectGartenPlanFromDom(prev) {
+  const last = prev && typeof prev === "object" ? normalizeGartenPlan(prev) : null;
   const days = { mon: [], tue: [], wed: [], thu: [], fri: [], sat: [], sun: [] };
   const weekRoot = $("gartenWeek");
   if (!weekRoot) {
@@ -4283,9 +4312,9 @@ function collectGartenPlanFromDom() {
     if (!dayEl) return;
     const slots = dayEl.querySelector(".garten-slots");
     if (!slots) return;
-    slots.querySelectorAll(".garten-slot-row").forEach((row) => {
-      const on = row.querySelector(".garten-on")?.value || "07:00";
-      const off = row.querySelector(".garten-off")?.value || "07:15";
+    slots.querySelectorAll(".garten-slot-row").forEach((row, idx) => {
+      const on = readGartenTimeField(row.querySelector(".garten-on"), "on", key, idx, last);
+      const off = readGartenTimeField(row.querySelector(".garten-off"), "off", key, idx, last);
       days[key].push({ on, off });
     });
   });
@@ -4303,14 +4332,27 @@ function collectGartenPlanFromDom() {
 function mergeGartenPlanFromDom() {
   if (!$("gartenWeek")?.querySelector?.(".garten-day")) return;
   flushGartenTimeInputs();
-  gartenPlanCache = normalizeGartenPlan({ ...gartenPlanCache, ...collectGartenPlanFromDom() });
+  const prev = gartenPlanCache;
+  gartenPlanCache = normalizeGartenPlan({ ...gartenPlanCache, ...collectGartenPlanFromDom(prev) });
+}
+
+/** Warten bis type=time nach Blur/change im Browser verlässlich .value liefert (mobil, Safari). */
+function afterGartenDomStable() {
+  return new Promise((resolve) => {
+    requestAnimationFrame(() => {
+      requestAnimationFrame(() => {
+        setTimeout(() => resolve(), 0);
+      });
+    });
+  });
 }
 
 $("gartenPlanForm")?.addEventListener("submit", async (e) => {
   e.preventDefault();
   if (!requireMember("Gartenplan speichern")) return;
   flushGartenTimeInputs();
-  const next = collectGartenPlanFromDom();
+  await afterGartenDomStable();
+  const next = collectGartenPlanFromDom(gartenPlanCache);
   for (const k of Object.keys(next.days)) {
     for (const slot of next.days[k]) {
       const a = gartenTimeToMin(slot.on);
