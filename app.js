@@ -250,12 +250,10 @@ async function initWeather() {
         hEl.innerHTML = hHtml;
         hEl.classList.remove("hidden");
         w.classList.add("weather-hero--has-hourly");
-        document.body.classList.add("weather-dock-tall");
       } else {
         hEl.innerHTML = "";
         hEl.classList.add("hidden");
         w.classList.remove("weather-hero--has-hourly");
-        document.body.classList.remove("weather-dock-tall");
       }
     }
 
@@ -264,7 +262,6 @@ async function initWeather() {
     console.warn("[Wetter]", e);
     w.classList.add("weather-hero--error");
     w.classList.remove("weather-hero--has-hourly");
-    document.body.classList.remove("weather-dock-tall");
     if ($("weatherHourly")) {
       $("weatherHourly").innerHTML = "";
       $("weatherHourly").classList.add("hidden");
@@ -5386,6 +5383,24 @@ renderBewohner();
 renderHausFeatures();
 renderGallery();
 setupScrollAnim();
+function placeWeatherWidget() {
+  const w = document.getElementById("weatherWidget");
+  const d = document.getElementById("weatherSlotDesktop");
+  const m = document.getElementById("weatherSlotMobile");
+  if (!w || !d || !m) return;
+  if (window.matchMedia("(max-width: 560px)").matches) {
+    m.appendChild(w);
+  } else {
+    d.appendChild(w);
+  }
+}
+placeWeatherWidget();
+{
+  const mq = window.matchMedia("(max-width: 560px)");
+  const onChange = () => placeWeatherWidget();
+  if (mq.addEventListener) mq.addEventListener("change", onChange);
+  else if (mq.addListener) mq.addListener(onChange);
+}
 initWeather();
 
 // Auth-Config zuerst laden (wichtig für korrekte Passwort-Prüfung beim Auto-Login)

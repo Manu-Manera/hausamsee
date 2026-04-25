@@ -16,7 +16,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,400;0,9..144,600;0,9..144,700;1,9..144,400&family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet" />
-  <link rel="stylesheet" href="styles.css?v=20260425j" />
+  <link rel="stylesheet" href="styles.css?v=20260425k" />
   <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Ctext y='.9em' font-size='90'%3E🏡%3C/text%3E%3C/svg%3E" />
 </head>
 <body>
@@ -55,7 +55,29 @@
       <div class="water"></div>
       <div class="mist"></div>
     </div>
-    <div class="hero-content">
+    <div class="hero-inner">
+      <div class="hero-weather-slot" id="weatherSlotDesktop">
+        <div class="weather-hero" id="weatherWidget" aria-live="polite">
+          <div class="weather-hero-card">
+            <div class="weather-hero-top">
+              <span class="weather-hero-loc" id="weatherLocation">Pfäffikon</span>
+              <span class="weather-hero-updated" id="weatherUpdated"></span>
+            </div>
+            <div class="weather-hero-body">
+              <span class="weather-hero-emoji" id="weatherIcon" aria-hidden="true">⏳</span>
+              <div class="weather-hero-temps">
+                <span class="weather-hero-now" id="weatherTemp">…</span>
+                <span class="weather-hero-range" id="weatherRange"></span>
+              </div>
+              <p class="weather-hero-text" id="weatherDesc">Wird geladen …</p>
+            </div>
+            <p class="weather-hero-detail" id="weatherDetail"></p>
+            <div id="weatherHourly" class="weather-hourly hidden" aria-label="Vorschau stündlich heute und morgen"></div>
+            <p class="weather-hero-attrib"><a href="https://open-meteo.com" target="_blank" rel="noopener">Open-Meteo</a></p>
+          </div>
+        </div>
+      </div>
+      <div class="hero-content">
       <span class="eyebrow">Pilatusstrasse 40 · Pfäffikon ZH</span>
       <h1>
         <span class="serif-italic">Willkommen im</span>
@@ -73,6 +95,7 @@
         <div class="stat"><span class="stat-num" id="statBewohner">–</span><span class="stat-label">Bewohner:innen</span></div>
         <div class="stat"><span class="stat-num" id="statEvents">–</span><span class="stat-label">Geplante Events</span></div>
         <div class="stat"><span class="stat-num" id="statGaeste">–</span><span class="stat-label">Einträge im Gästebuch</span></div>
+      </div>
       </div>
     </div>
     <a href="#haus" class="scroll-hint" aria-label="Nach unten scrollen">
@@ -933,6 +956,9 @@
     </div>
   </section>
 
+  <!-- Wetter (Mobil): Platzhalter — Inhalt wird per JS von #weatherSlotDesktop hierher verschoben -->
+  <div class="weather-page-bottom section soft" id="weatherSlotMobile"></div>
+
   <footer class="footer">
     <p>Haus am See · Pilatusstrasse 40 · 8330 Pfäffikon ZH · mit Liebe gemacht 🌿</p>
   </footer>
@@ -1073,27 +1099,6 @@
   <!-- Toast -->
   <div id="toast" class="toast hidden"></div>
 
-  <!-- Wetter: Position per CSS (Desktop oben links, Mobil unten fixiert) -->
-  <div class="weather-hero" id="weatherWidget" aria-live="polite">
-    <div class="weather-hero-card">
-      <div class="weather-hero-top">
-        <span class="weather-hero-loc" id="weatherLocation">Pfäffikon</span>
-        <span class="weather-hero-updated" id="weatherUpdated"></span>
-      </div>
-      <div class="weather-hero-body">
-        <span class="weather-hero-emoji" id="weatherIcon" aria-hidden="true">⏳</span>
-        <div class="weather-hero-temps">
-          <span class="weather-hero-now" id="weatherTemp">…</span>
-          <span class="weather-hero-range" id="weatherRange"></span>
-        </div>
-        <p class="weather-hero-text" id="weatherDesc">Wird geladen …</p>
-      </div>
-      <p class="weather-hero-detail" id="weatherDetail"></p>
-      <div id="weatherHourly" class="weather-hourly hidden" aria-label="Vorschau stündlich heute und morgen"></div>
-      <p class="weather-hero-attrib"><a href="https://open-meteo.com" target="_blank" rel="noopener">Open-Meteo</a></p>
-    </div>
-  </div>
-
-  <script type="module" src="app.js?v=20260425j"></script>
+  <script type="module" src="app.js?v=20260425k"></script>
 </body>
 </html>

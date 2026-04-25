@@ -324,11 +324,40 @@ a:hover { color: var(--terracotta); }
   filter: blur(20px);
 }
 
+.hero-inner {
+  position: relative;
+  z-index: 2;
+  display: flex;
+  flex-direction: row;
+  align-items: flex-start;
+  justify-content: center;
+  gap: 28px 40px;
+  max-width: 1100px;
+  width: 100%;
+  box-sizing: border-box;
+}
+.hero-weather-slot {
+  flex: 0 0 auto;
+  width: min(360px, 100%);
+  max-width: 360px;
+}
+.hero-weather-slot:empty {
+  display: none;
+}
 .hero-content {
   position: relative;
   z-index: 2;
   max-width: 860px;
   width: 100%;
+  flex: 1;
+  min-width: 0;
+  text-align: center;
+}
+@media (max-width: 560px) {
+  .hero-inner {
+    flex-direction: column;
+    align-items: stretch;
+  }
 }
 
 .eyebrow {
@@ -416,13 +445,31 @@ a:hover { color: var(--terracotta); }
   letter-spacing: 0.02em;
 }
 
-/* Wetter: Desktop = fix oben links; Mobil = fix unten (nicht im Hero) */
+/* Wetter: im normalen Seitenfluss (Desktop: links im Hero, Mobil: nach Kontakt) */
 .weather-hero {
-  position: fixed;
-  z-index: 55; /* unter .nav (100) */
+  position: relative;
   margin: 0;
-  pointer-events: none;
   box-sizing: border-box;
+  max-width: 100%;
+}
+.weather-page-bottom:empty {
+  display: none;
+}
+.weather-page-bottom {
+  max-width: 1100px;
+  margin: 0 auto;
+  box-sizing: border-box;
+  padding: 0 20px 32px;
+}
+.weather-page-bottom .weather-hero {
+  max-width: 100%;
+}
+@media (max-width: 560px) {
+  .weather-page-bottom {
+    padding-bottom: calc(24px + env(safe-area-inset-bottom, 0px));
+  }
+  .weather-hero-body { align-items: flex-start; }
+  .weather-hero-text { flex-basis: 100%; margin-top: 4px; }
 }
 .weather-hero-card {
   width: 100%;
@@ -434,51 +481,6 @@ a:hover { color: var(--terracotta); }
   border: 1px solid var(--card-border);
   border-radius: var(--r-lg);
   box-shadow: var(--card-shadow);
-  pointer-events: auto;
-}
-/* Desktop & Tablet: oben links */
-@media (min-width: 561px) {
-  .weather-hero {
-    top: calc(var(--nav-h) + 10px);
-    left: 16px;
-    max-width: 300px;
-    width: min(300px, calc(100vw - 32px));
-  }
-  .weather-hero.weather-hero--has-hourly {
-    max-width: 360px;
-    width: min(360px, calc(100vw - 32px));
-  }
-}
-/* Handy: Leiste ganz unten */
-@media (max-width: 560px) {
-  body {
-    /* Platz, damit Seitenende nicht unter dem Wetter verschwindet */
-    padding-bottom: calc(150px + env(safe-area-inset-bottom, 0px));
-  }
-  body.weather-dock-tall {
-    padding-bottom: calc(300px + env(safe-area-inset-bottom, 0px));
-  }
-  .weather-hero {
-    top: auto;
-    left: 0;
-    right: 0;
-    bottom: 0;
-    max-width: none;
-    width: 100%;
-    padding-left: max(12px, env(safe-area-inset-left));
-    padding-right: max(12px, env(safe-area-inset-right));
-    padding-bottom: env(safe-area-inset-bottom, 0px);
-  }
-  .weather-hero-card {
-    border-radius: var(--r-lg) var(--r-lg) 0 0;
-    margin: 0 auto;
-    max-width: 100%;
-    box-shadow:
-      0 -10px 36px -14px rgba(61, 40, 23, 0.3),
-      0 0 0 1px var(--card-border);
-  }
-  .weather-hero-body { align-items: flex-start; }
-  .weather-hero-text { flex-basis: 100%; margin-top: 4px; }
 }
 .weather-hero-top {
   display: flex;
