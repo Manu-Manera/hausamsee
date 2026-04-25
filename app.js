@@ -110,6 +110,88 @@ const MAX_IMAGE_BYTES = 900_000; // ~900 KB per Bild (Firestore Document Limit =
 // Audio-Konstanten
 const MAX_AUDIO_BYTES = 900_000; // ~900 KB pro Audio-Datei (Firestore Document Limit)
 
+// Wetter: Open-Meteo (nur Anzeige, kostenlos, kein API-Key) — Koordinaten Pfäffikon ZH
+const WEATHER_SPOT = { label: "Pfäffikon", lat: 47.3656, lon: 8.7808 };
+
+function wmoWeatherGerman(code) {
+  const c = Number(code);
+  if (c === 0) return { text: "Klar", emoji: "☀️" };
+  if (c === 1) return { text: "Grösstenteils klar", emoji: "🌤️" };
+  if (c === 2) return { text: "Teilweise bewölkt", emoji: "⛅" };
+  if (c === 3) return { text: "Bewölkt", emoji: "☁️" };
+  if (c === 45 || c === 48) return { text: "Nebel", emoji: "🌫️" };
+  if (c >= 51 && c <= 55) return { text: "Nieselregen", emoji: "🌦️" };
+  if (c === 56 || c === 57) return { text: "Gefrierender Niesel", emoji: "🌨️" };
+  if (c >= 61 && c <= 65) return { text: "Regen", emoji: "🌧️" };
+  if (c === 66 || c === 67) return { text: "Gefrierender Regen", emoji: "🌧️" };
+  if (c >= 71 && c <= 75) return { text: "Schneefall", emoji: "❄️" };
+  if (c === 77) return { text: "Schneegriesel", emoji: "❄️" };
+  if (c === 80 || c === 81 || c === 82) return { text: "Regenschauer", emoji: "🌦️" };
+  if (c === 85 || c === 86) return { text: "Schneeschauer", emoji: "🌨️" };
+  if (c === 95) return { text: "Gewitter", emoji: "⛈️" };
+  if (c === 96 || c === 99) return { text: "Gewitter mit Hagel", emoji: "⛈️" };
+  if (c === 97) return { text: "Gewitter", emoji: "⛈️" };
+  return { text: "Aktuelles Wetter", emoji: "🌡️" };
+}
+
+async function initWeather() {
+  const w = document.getElementById("weatherWidget");
+  if (!w) return;
+  const $ = (id) => document.getElementById(id);
+  try {
+    const u = new URL("https://api.open-meteo.com/v1/forecast");
+    u.searchParams.set("latitude", String(WEATHER_SPOT.lat));
+    u.searchParams.set("longitude", String(WEATHER_SPOT.lon));
+    u.searchParams.set("current", "temperature_2m,relative_humidity_2m,weather_code,wind_speed_10m");
+    u.searchParams.set("daily", "temperature_2m_max,temperature_2m_min");
+    u.searchParams.set("timezone", "Europe/Zurich");
+    u.searchParams.set("forecast_days", "1");
+    const res = await fetch(u.toString());
+    if (!res.ok) throw new Error("HTTP " + res.status);
+    const j = await res.json();
+    const cur = j.current;
+    const daily = j.daily;
+    if (!cur) throw new Error("kein current");
+    const { text, emoji } = wmoWeatherGerman(cur.weather_code);
+    if ($("weatherIcon")) $("weatherIcon").textContent = emoji;
+    if ($("weatherDesc")) $("weatherDesc").textContent = text;
+    if ($("weatherLocation")) $("weatherLocation").textContent = WEATHER_SPOT.label;
+    if ($("weatherTemp") && cur.temperature_2m != null) {
+      $("weatherTemp").textContent = `${Math.round(Number(cur.temperature_2m))}°`;
+    }
+    if ($("weatherRange") && daily?.temperature_2m_min?.[0] != null && daily?.temperature_2m_max?.[0] != null) {
+      const lo = Math.round(Number(daily.temperature_2m_min[0]));
+      const hi = Math.round(Number(daily.temperature_2m_max[0]));
+      $("weatherRange").textContent = `Heute: ${lo}° – ${hi}°`;
+    } else if ($("weatherRange")) {
+      $("weatherRange").textContent = "";
+    }
+    const parts = [];
+    if (cur.relative_humidity_2m != null) {
+      parts.push(`Luftfeuchte ${Math.round(Number(cur.relative_humidity_2m))} %`);
+    }
+    if (cur.wind_speed_10m != null) {
+      const kmh = (Number(cur.wind_speed_10m) * 3.6).toFixed(0);
+      parts.push(`Wind ${kmh} km/h`);
+    }
+    if ($("weatherDetail")) $("weatherDetail").textContent = parts.join(" · ");
+    if ($("weatherUpdated") && cur.time) {
+      const t = new Date(String(cur.time));
+      $("weatherUpdated").textContent = t.toLocaleTimeString("de-CH", { hour: "2-digit", minute: "2-digit" });
+    }
+    w.classList.remove("weather-hero--error");
+  } catch (e) {
+    console.warn("[Wetter]", e);
+    w.classList.add("weather-hero--error");
+    if ($("weatherIcon")) $("weatherIcon").textContent = "🌡️";
+    if ($("weatherTemp")) $("weatherTemp").textContent = "–";
+    if ($("weatherRange")) $("weatherRange").textContent = "";
+    if ($("weatherDesc")) $("weatherDesc").textContent = "Wetterdaten momentan nicht verfügbar.";
+    if ($("weatherDetail")) $("weatherDetail").textContent = "";
+    if ($("weatherUpdated")) $("weatherUpdated").textContent = "";
+  }
+}
+
 /* ==========================================================================
    Firebase Setup
    ========================================================================== */
@@ -1250,7 +1332,10 @@ async function uploadBewohnerFoto(name) {
       showToast(`Foto für ${name} aktualisiert.`, "success");
     } catch (err) {
       console.error(err);
-      showToast("Foto-Upload fehlgeschlagen.", "error");
+      const msg = err?.code === "invalid-argument" || String(err?.message || "").toLowerCase().includes("exceeds")
+        ? "Bild ist nach dem Schneiden noch zu gross fürs Speichern (max. 1 MB pro Dokument). Wähle ein kleineres Original."
+        : "Foto-Upload fehlgeschlagen.";
+      showToast(msg, "error");
     }
   });
   input.click();
@@ -5215,6 +5300,7 @@ renderBewohner();
 renderHausFeatures();
 renderGallery();
 setupScrollAnim();
+initWeather();
 
 // Auth-Config zuerst laden (wichtig für korrekte Passwort-Prüfung beim Auto-Login)
 loadAuthConfig().then(() => {

@@ -416,6 +416,106 @@ a:hover { color: var(--terracotta); }
   letter-spacing: 0.02em;
 }
 
+/* Wetter (Hero) */
+.weather-hero {
+  display: flex;
+  justify-content: center;
+  margin: 0 auto 28px;
+  max-width: 420px;
+  width: 100%;
+}
+.weather-hero-card {
+  width: 100%;
+  text-align: left;
+  padding: 18px 20px 14px;
+  background: var(--card);
+  backdrop-filter: blur(12px);
+  border: 1px solid var(--card-border);
+  border-radius: var(--r-lg);
+  box-shadow: var(--card-shadow);
+}
+.weather-hero-top {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+.weather-hero-loc {
+  font-size: 0.72rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--terracotta-dark);
+}
+.weather-hero-updated {
+  font-size: 0.72rem;
+  color: var(--text-muted);
+  white-space: nowrap;
+}
+.weather-hero-body {
+  display: flex;
+  align-items: center;
+  gap: 12px 16px;
+  flex-wrap: wrap;
+}
+.weather-hero-emoji {
+  font-size: 2.4rem;
+  line-height: 1;
+  flex-shrink: 0;
+}
+.weather-hero-temps {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+  min-width: 0;
+}
+.weather-hero-now {
+  font-family: 'Fraunces', Georgia, serif;
+  font-size: 2rem;
+  font-weight: 700;
+  color: var(--cocoa);
+  line-height: 1;
+}
+.weather-hero-range {
+  font-size: 0.88rem;
+  color: var(--text-soft);
+}
+.weather-hero-text {
+  margin: 0;
+  flex: 1 1 160px;
+  min-width: 0;
+  font-size: 0.95rem;
+  color: var(--text);
+  line-height: 1.4;
+}
+.weather-hero-detail {
+  margin: 10px 0 0;
+  font-size: 0.8rem;
+  color: var(--text-muted);
+}
+.weather-hero-attrib {
+  margin: 8px 0 0;
+  font-size: 0.7rem;
+  color: var(--text-muted);
+  text-align: right;
+}
+.weather-hero-attrib a {
+  color: var(--text-muted);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+.weather-hero--error .weather-hero-text,
+.weather-hero--error .weather-hero-now {
+  color: var(--text-muted);
+}
+
+@media (max-width: 560px) {
+  .weather-hero-body { align-items: flex-start; }
+  .weather-hero-text { flex-basis: 100%; margin-top: 4px; }
+}
+
 .scroll-hint {
   position: absolute;
   bottom: 20px;
