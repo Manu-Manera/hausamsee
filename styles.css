@@ -1807,38 +1807,22 @@ textarea { resize: vertical; font-family: inherit; }
 }
 
 .checkbox-row {
-  display: flex;
+  display: inline-flex;
   align-items: center;
-  gap: 10px;
+  gap: 6px;
   font-size: 0.95rem;
   cursor: pointer;
-  padding: 8px 0;
-  width: 100%;
 }
 
-.checkbox-row input[type="checkbox"] {
-  appearance: auto;
-  -webkit-appearance: checkbox;
-  width: 18px;
-  height: 18px;
-  cursor: pointer;
-}
-
-/* Giessplan Form Layout Fix */
-#giessForm.form-card.inline {
+#giessForm {
   display: flex;
   flex-wrap: wrap;
-  gap: 12px;
+  gap: 10px;
   align-items: center;
 }
 
 #giessForm .checkbox-row {
   flex-basis: 100%;
-  margin-top: 4px;
-}
-
-#giessForm button[type="submit"] {
-  margin-top: 8px;
 }
 
 /* Termine mit WG-RSVP */
