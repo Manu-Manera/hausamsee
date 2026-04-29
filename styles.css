@@ -1798,15 +1798,40 @@ textarea { resize: vertical; font-family: inherit; }
 .checkbox-row {
   display: flex;
   align-items: center;
-  gap: 8px;
-  font-size: 0.9rem;
+  gap: 10px;
+  font-size: 0.95rem;
   cursor: pointer;
+  padding: 8px 0;
+  width: 100%;
 }
 
 .checkbox-row input[type="checkbox"] {
-  width: 18px;
-  height: 18px;
+  width: 22px;
+  height: 22px;
+  min-width: 22px;
   accent-color: var(--moss);
+  cursor: pointer;
+}
+
+.checkbox-row input[type="checkbox"]:checked {
+  background: var(--moss);
+}
+
+/* Giessplan Form Layout Fix */
+#giessForm.form-card.inline {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  align-items: center;
+}
+
+#giessForm .checkbox-row {
+  flex-basis: 100%;
+  margin-top: 4px;
+}
+
+#giessForm button[type="submit"] {
+  margin-top: 8px;
 }
 
 /* Termine mit WG-RSVP */
