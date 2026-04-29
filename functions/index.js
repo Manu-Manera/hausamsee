@@ -188,6 +188,38 @@ function resolveResident(input, onlyAdults = false) {
   return contains || null;
 }
 
+/** WhatsApp-Absender einer Bewohner-Person zuordnen (Profilname, dann Telefon aus memberPrefs / Fallback). */
+async function resolveResidentFromWhatsApp(from, senderName) {
+  const byName = resolveResident(senderName, true);
+  if (byName) return byName;
+  const normFrom = String(from || "").replace(/\D/g, "");
+  if (!normFrom) return null;
+  try {
+    const prefsSnap = await db.collection("config").doc("memberPrefs").get();
+    const prefs = prefsSnap.exists ? prefsSnap.data() : {};
+    for (const [name, val] of Object.entries(prefs)) {
+      if (!ADULTS.includes(name)) continue;
+      const p = val && val.phone ? String(val.phone).replace(/\D/g, "") : "";
+      if (p && p === normFrom) return name;
+    }
+  } catch (e) {
+    logger.warn("resolveResidentFromWhatsApp: memberPrefs", e);
+  }
+  const phonebook = {
+    Manu: "41798385590",
+    Corina: "41795553906",
+    Jasmin: "41762988934",
+    Dino: "41765740020",
+    Andy: "41798489999",
+    Hugues: "41795911251",
+    Fanny: "41789561100",
+  };
+  for (const [name, num] of Object.entries(phonebook)) {
+    if (num === normFrom && ADULTS.includes(name)) return name;
+  }
+  return null;
+}
+
 function startOfDay(d) {
   const x = new Date(d); x.setHours(0, 0, 0, 0); return x;
 }
@@ -877,6 +909,55 @@ function isPumpListCommand(raw) {
 // Wetter-Befehl erkennen (DE/EN/FR)
 function isWetterCommand(raw) {
   return /^(wetter|weather|meteo|wie\s+ist\s+(das\s+)?wetter|what'?s?\s+the\s+weather|quel\s+temps|regnet\s+es|is\s+it\s+raining|il\s+pleut|sonne|sun|soleil)\s*[?.!]*$/i.test(String(raw).trim());
+}
+
+/** Nächster Soll-Giesstermin (wie Scheduler), nur Datum 0:00 lokal. */
+function giessplanNextDueDatePlain(data) {
+  const intervalDays = data.intervalDays || 3;
+  const lastWatered = data.lastWatered ? new Date(data.lastWatered) : null;
+  let nextDate;
+  if (lastWatered) {
+    nextDate = startOfDay(new Date(lastWatered));
+    nextDate.setDate(nextDate.getDate() + intervalDays);
+  } else {
+    nextDate = startOfDay(new Date());
+  }
+  return nextDate;
+}
+
+function giessplanIsDueOrOverdueData(data) {
+  const today = startOfDay(new Date());
+  const next = giessplanNextDueDatePlain(data);
+  return next.getTime() <= today.getTime();
+}
+
+function giessplanPlantMatchesHint(plant, hint) {
+  const p = String(plant || "").toLowerCase().trim();
+  const h = String(hint || "").toLowerCase().trim();
+  if (!h) return true;
+  return p.includes(h) || h.includes(p);
+}
+
+/**
+ * Giessplan-Innenpflanzen: «gegossen», «gegossen Wohnzimmer», LLM: *Giessplan gegossen: …*
+ */
+function parseGiessplanWateredMessage(raw) {
+  let s = String(raw || "").trim().replace(/^\*+|\*+$/g, "").trim();
+  if (!s) return null;
+  const llmWith = /^(?:giessplan|blumenplan|zimmerpflanzen)\s+gegossen(?:\s*[:\-–]\s*|\s+)(.+)$/i.exec(s);
+  if (llmWith) return { plantHint: llmWith[1].trim() };
+  if (/^(?:giessplan|blumenplan|zimmerpflanzen)\s+gegossen\.?$/i.test(s)) return { plantHint: null };
+  const de = /^(gegossen|habe\s+gegossen)(?:\s+(.+))?$/i.exec(s);
+  if (de) return { plantHint: ((de[2] || "").trim()) || null };
+  const en = /^(watered|done\s+watering)(?:\s+(.+))?$/i.exec(s);
+  if (en) return { plantHint: ((en[2] || "").trim()) || null };
+  const fr = /^(arros[ée]|j'ai\s+arrosé|jai\s+arrosé)(?:\s+(.+))?$/i.exec(s);
+  if (fr) return { plantHint: ((fr[2] || "").trim()) || null };
+  const rev = /^(.{2,60})\s+(gegossen|watered|arros[ée])\.?$/i.exec(s);
+  if (rev && !/\b(pumpe|garten|rasen|beet|bewässerung|bewaesserung)\b/i.test(rev[1])) {
+    return { plantHint: rev[1].trim() };
+  }
+  return null;
 }
 
 // WMO Weather Code zu Emoji + Text
@@ -1712,6 +1793,91 @@ async function dispatch(ctx) {
   if (er) {
     await addErinnerung(er, from);
     await reply(`🔔 Okay, ich melde mich am ${fmtDateTime(er.date)}:\n"${er.text}"`);
+    return true;
+  }
+
+  // 13b) Giessplan (Zimmerpflanzen): als gegossen markieren — stoppt taegliche Erinnerungen bis naechster Termin
+  let giessParseText = rawInput.trim();
+  let giessplanResidentOverride = null;
+  const giessNameLead = /^([A-Za-zäöüÄÖÜ]+)\s+(gegossen|watered|arros[ée])\b/i.exec(giessParseText);
+  if (giessNameLead) {
+    const rLead = resolveResident(giessNameLead[1], true);
+    if (rLead) {
+      giessplanResidentOverride = rLead;
+      giessParseText = giessParseText.slice(giessNameLead[1].length).trim();
+    }
+  }
+  const giessMark = parseGiessplanWateredMessage(giessParseText);
+  if (giessMark) {
+    let resident = giessplanResidentOverride || (await resolveResidentFromWhatsApp(from, senderName));
+    if (!resident) {
+      await reply(
+        "❓ Ich weiss nicht, wer du bist. Schreib z.B. *gegossen Wohnzimmer* von deiner Nummer aus, oder *Manu gegossen Wohnzimmer*."
+      );
+      return true;
+    }
+    let snap;
+    try {
+      snap = await db.collection("giessplan").get();
+    } catch (e) {
+      logger.error("giessplan load", e);
+      await reply("😕 Giessplan konnte nicht geladen werden.");
+      return true;
+    }
+    const items = [];
+    snap.forEach((doc) => items.push({ id: doc.id, ...doc.data() }));
+    const whoEq = (a, b) => String(a || "").trim().toLowerCase() === String(b || "").trim().toLowerCase();
+    let candidates = items.filter((it) => whoEq(it.who, resident));
+    if (giessMark.plantHint) {
+      candidates = candidates.filter((it) => giessplanPlantMatchesHint(it.plant, giessMark.plantHint));
+    }
+    if (candidates.length === 0) {
+      await reply(
+        giessMark.plantHint
+          ? `🤷 Keine Pflanze «${giessMark.plantHint}» für *${resident}* im Giessplan.`
+          : `🤷 Kein Giessplan-Eintrag für *${resident}*.`
+      );
+      return true;
+    }
+    if (candidates.length === 1) {
+      const one = candidates[0];
+      try {
+        await db.collection("giessplan").doc(one.id).update({ lastWatered: new Date().toISOString() });
+      } catch (e) {
+        logger.error("giessplan update", e);
+        await reply(`😕 Konnte nicht speichern: ${e.message || e}`);
+        return true;
+      }
+      await reply(`✅ *${one.plant}* als gegossen markiert – danke *${resident}*! 💦🌿\n\n${WEBSITE_URL}/#kalender`);
+      return true;
+    }
+    if (giessMark.plantHint) {
+      const lines = candidates.map((c) => `• *${c.plant}*`).join("\n");
+      await reply(`💧 Welche meinst du?\n\n${lines}\n\nAntwort z.B.: *gegossen Wohnzimmer*`);
+      return true;
+    }
+    const due = candidates.filter(giessplanIsDueOrOverdueData);
+    if (due.length === 1) {
+      const one = due[0];
+      try {
+        await db.collection("giessplan").doc(one.id).update({ lastWatered: new Date().toISOString() });
+      } catch (e) {
+        logger.error("giessplan update", e);
+        await reply(`😕 Konnte nicht speichern: ${e.message || e}`);
+        return true;
+      }
+      await reply(`✅ *${one.plant}* als gegossen markiert – danke *${resident}*! 💦🌿\n\n${WEBSITE_URL}/#kalender`);
+      return true;
+    }
+    if (due.length === 0) {
+      const lines = candidates.map((c) => `• *${c.plant}*`).join("\n");
+      await reply(
+        `💡 Alle deine Pflanzen sind laut Plan noch nicht fällig. Welche hast du trotzdem gegossen?\n\n${lines}\n\n*z.B. gegossen Wohnzimmer*`
+      );
+      return true;
+    }
+    const lines = due.map((c) => `• *${c.plant}*`).join("\n");
+    await reply(`💧 Mehrere Pflanzen fällig – welche?\n\n${lines}\n\n*z.B. gegossen Wohnzimmer*`);
     return true;
   }
 
