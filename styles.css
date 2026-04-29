@@ -1807,22 +1807,14 @@ textarea { resize: vertical; font-family: inherit; }
 }
 
 .checkbox-row {
-  display: inline-flex;
+  display: flex;
   align-items: center;
-  gap: 6px;
-  font-size: 0.95rem;
+  gap: 8px;
   cursor: pointer;
 }
 
-#giessForm {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 10px;
-  align-items: center;
-}
-
-#giessForm .checkbox-row {
-  flex-basis: 100%;
+.checkbox-row input[type="checkbox"] {
+  margin: 0;
 }
 
 /* Termine mit WG-RSVP */

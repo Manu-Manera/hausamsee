@@ -16,7 +16,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,400;0,9..144,600;0,9..144,700;1,9..144,400&family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet" />
-  <link rel="stylesheet" href="styles.css?v=20260429e" />
+  <link rel="stylesheet" href="styles.css?v=20260429f" />
   <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Ctext y='.9em' font-size='90'%3E🏡%3C/text%3E%3C/svg%3E" />
 </head>
 <body>
@@ -336,19 +336,21 @@
         <div class="giessplan-grid" id="giessplanGrid"></div>
         <details class="admin-toggle" data-wg-only>
           <summary>➕ Pflanze / Bereich hinzufügen</summary>
-          <form id="giessForm" class="form-card inline">
-            <input id="giessPlant" placeholder="Pflanze/Bereich (z.B. Wohnzimmer, Manus Zimmer)" required />
-            <select id="giessWho" required>
-              <option value="">Wer giesst?</option>
-            </select>
-            <select id="giessInterval" required>
-              <option value="">Intervall</option>
-              <option value="1">Täglich</option>
-              <option value="2">Alle 2 Tage</option>
-              <option value="3">Alle 3 Tage</option>
-              <option value="7">Wöchentlich</option>
-              <option value="14">Alle 2 Wochen</option>
-            </select>
+          <form id="giessForm" class="form-card">
+            <div class="row">
+              <input id="giessPlant" placeholder="Pflanze/Bereich" required />
+              <select id="giessWho" required>
+                <option value="">Wer giesst?</option>
+              </select>
+              <select id="giessInterval" required>
+                <option value="">Intervall</option>
+                <option value="1">Täglich</option>
+                <option value="2">Alle 2 Tage</option>
+                <option value="3">Alle 3 Tage</option>
+                <option value="7">Wöchentlich</option>
+                <option value="14">Alle 2 Wochen</option>
+              </select>
+            </div>
             <label class="checkbox-row">
               <input type="checkbox" id="giessReminder" checked />
               <span>WhatsApp-Erinnerung</span>
