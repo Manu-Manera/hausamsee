@@ -296,6 +296,7 @@ try {
 const localStore = {
   events: JSON.parse(localStorage.getItem("has_events") || "[]"),
   putzplan: JSON.parse(localStorage.getItem("has_putzplan") || "[]"),
+  giessplan: JSON.parse(localStorage.getItem("has_giessplan") || "[]"),
   termine: JSON.parse(localStorage.getItem("has_termine") || "[]"),
   anwesenheit: JSON.parse(localStorage.getItem("has_anwesenheit") || "{}"),
   gaestebuch: JSON.parse(localStorage.getItem("has_gaestebuch") || "[]"),
@@ -443,6 +444,8 @@ const auth = {
     renderGallery();
     renderEvents();
     renderPutzplan();
+    renderGiessplan();
+    populateGiessWhoSelect();
     renderPlaylist();
     renderKandidaten();
     renderSchaeden();
@@ -2484,6 +2487,167 @@ $("putzForm")?.addEventListener("submit", async (e) => {
   e.target.reset();
   showToast("Gespeichert.", "success");
 });
+
+/* ==========================================================================
+   Giessplan (Zimmerpflanzen)
+   ========================================================================== */
+
+let giessplanCache = [];
+
+function getNextGiessDate(lastWatered, intervalDays) {
+  const last = lastWatered ? new Date(lastWatered) : new Date();
+  const next = new Date(last);
+  next.setDate(next.getDate() + intervalDays);
+  return next;
+}
+
+function getGiessStatus(item) {
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  
+  const lastWatered = item.lastWatered ? new Date(item.lastWatered) : null;
+  const lastWateredToday = lastWatered && lastWatered.toDateString() === today.toDateString();
+  
+  if (lastWateredToday) return "done-today";
+  
+  const nextDate = getNextGiessDate(item.lastWatered, item.intervalDays || 3);
+  nextDate.setHours(0, 0, 0, 0);
+  
+  if (nextDate < today) return "overdue";
+  if (nextDate.getTime() === today.getTime()) return "due-today";
+  return "upcoming";
+}
+
+function formatGiessNext(item) {
+  const status = getGiessStatus(item);
+  const nextDate = getNextGiessDate(item.lastWatered, item.intervalDays || 3);
+  
+  if (status === "done-today") return "✅ Heute gegossen";
+  if (status === "overdue") {
+    const daysOverdue = Math.ceil((new Date() - nextDate) / (1000 * 60 * 60 * 24));
+    return `⚠️ ${daysOverdue} Tag${daysOverdue > 1 ? 'e' : ''} überfällig!`;
+  }
+  if (status === "due-today") return "💧 Heute giessen!";
+  
+  const days = Math.ceil((nextDate - new Date()) / (1000 * 60 * 60 * 24));
+  return `Nächstes Giessen: ${nextDate.toLocaleDateString("de-CH", { weekday: "short", day: "2-digit", month: "short" })} (in ${days} Tag${days > 1 ? 'en' : ''})`;
+}
+
+function renderGiessplan() {
+  const grid = $("giessplanGrid");
+  if (!grid) return;
+  
+  const sorted = [...giessplanCache].sort((a, b) => {
+    const statusOrder = { "overdue": 0, "due-today": 1, "upcoming": 2, "done-today": 3 };
+    return (statusOrder[getGiessStatus(a)] || 2) - (statusOrder[getGiessStatus(b)] || 2);
+  });
+  
+  if (sorted.length === 0) {
+    grid.innerHTML = `<div class="empty-state" style="grid-column: 1/-1;">Noch keine Pflanzen eingetragen 🌿</div>`;
+    return;
+  }
+  
+  const intervalLabels = { 1: "Täglich", 2: "Alle 2 Tage", 3: "Alle 3 Tage", 7: "Wöchentlich", 14: "Alle 2 Wochen" };
+  
+  grid.innerHTML = sorted.map(item => {
+    const status = getGiessStatus(item);
+    const nextText = formatGiessNext(item);
+    const intervalText = intervalLabels[item.intervalDays] || `Alle ${item.intervalDays} Tage`;
+    
+    return `
+      <div class="giess-card ${status}">
+        ${item.reminder ? '<span class="giess-reminder-badge">📱 Erinnerung</span>' : ''}
+        <div class="giess-plant">${escapeHtml(item.plant)}</div>
+        <div class="giess-meta">
+          <span>${escapeHtml(item.who)} · ${intervalText}</span>
+          <span class="giess-next">${nextText}</span>
+        </div>
+        ${auth.isAuthed ? `<div class="giess-actions">
+          ${status !== "done-today" ? `<button class="mini-btn" data-id="${item.id}" data-action="water">💧 Gegossen</button>` : ''}
+          <button class="mini-btn danger" data-id="${item.id}" data-action="delete">Löschen</button>
+        </div>` : ""}
+      </div>
+    `;
+  }).join("");
+  
+  grid.querySelectorAll(".mini-btn").forEach(btn => {
+    btn.addEventListener("click", () => {
+      if (btn.dataset.action === "water") markAsWatered(btn.dataset.id);
+      else if (btn.dataset.action === "delete") deleteGiessItem(btn.dataset.id);
+    });
+  });
+}
+
+async function markAsWatered(id) {
+  if (!requireAuth("Giessplan ändern")) return;
+  const now = new Date().toISOString();
+  
+  if (firebaseReady) {
+    await updateDoc(doc(db, "giessplan", id), { lastWatered: now });
+  } else {
+    const item = giessplanCache.find(g => g.id === id);
+    if (item) {
+      item.lastWatered = now;
+      localStore.giessplan = giessplanCache;
+      saveLocal("giessplan", localStore.giessplan);
+      renderGiessplan();
+    }
+  }
+  showToast("💧 Als gegossen markiert!", "success");
+}
+
+async function deleteGiessItem(id) {
+  if (!requireAuth("Giessplan ändern")) return;
+  if (!confirm("Diese Pflanze aus dem Giessplan entfernen?")) return;
+  
+  if (firebaseReady) {
+    await deleteDoc(doc(db, "giessplan", id));
+  } else {
+    localStore.giessplan = localStore.giessplan.filter(g => g.id !== id);
+    giessplanCache = localStore.giessplan;
+    saveLocal("giessplan", localStore.giessplan);
+    renderGiessplan();
+  }
+  showToast("Entfernt.", "success");
+}
+
+$("giessForm")?.addEventListener("submit", async (e) => {
+  e.preventDefault();
+  if (!requireAuth("Giessplan ändern")) return;
+  
+  const entry = {
+    plant: $("giessPlant").value.trim(),
+    who: $("giessWho").value,
+    intervalDays: parseInt($("giessInterval").value, 10),
+    reminder: $("giessReminder").checked,
+    lastWatered: null,
+    createdAt: Date.now()
+  };
+  
+  if (firebaseReady) {
+    await addDoc(collection(db, "giessplan"), { ...entry, createdAt: serverTimestamp() });
+  } else {
+    entry.id = "local_" + Date.now();
+    if (!localStore.giessplan) localStore.giessplan = [];
+    localStore.giessplan.push(entry);
+    giessplanCache = localStore.giessplan;
+    saveLocal("giessplan", localStore.giessplan);
+    renderGiessplan();
+  }
+  
+  e.target.reset();
+  $("giessReminder").checked = true; // Reset to default checked
+  showToast("🌱 Pflanze hinzugefügt!", "success");
+});
+
+// Populate giessWho select
+function populateGiessWhoSelect() {
+  const sel = $("giessWho");
+  if (!sel) return;
+  const active = getActiveBewohner().filter(b => !b.kid);
+  sel.innerHTML = `<option value="">Wer giesst?</option>` + 
+    active.map(b => `<option value="${b.name}">${b.name}</option>`).join("");
+}
 
 /* ==========================================================================
    Termine (mit WG-RSVP)
@@ -5477,8 +5641,11 @@ function setupListeners() {
     roomOfferCache = localStore.roomOffer || null;
     bewohnertexteCache = localStore.bewohnertexte || {};
     gartenPlanCache = normalizeGartenPlan(localStore.gartenPlan);
+    giessplanCache = localStore.giessplan || [];
     renderEvents();
     renderPutzplan();
+    renderGiessplan();
+    populateGiessWhoSelect();
     renderTermine();
     renderAnwesend();
     renderGaestebuch();
@@ -5509,6 +5676,11 @@ function setupListeners() {
     putzCache = snap.docs.map(d => ({ id: d.id, ...d.data() }));
     renderPutzplan();
   }, (err) => console.warn("putzplan listener:", err.message));
+
+  onSnapshot(query(collection(db, "giessplan"), orderBy("createdAt", "desc")), (snap) => {
+    giessplanCache = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+    renderGiessplan();
+  }, (err) => console.warn("giessplan listener:", err.message));
 
   onSnapshot(query(collection(db, "termine"), orderBy("createdAt", "desc")), (snap) => {
     termineCache = snap.docs.map(d => ({ id: d.id, ...d.data() }));

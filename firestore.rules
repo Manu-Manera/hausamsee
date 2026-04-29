@@ -10,6 +10,9 @@ service cloud.firestore {
     match /putzplan/{document=**} {
       allow read, write: if true;
     }
+    match /giessplan/{document=**} {
+      allow read, write: if true;
+    }
     match /termine/{document=**} {
       allow read, write: if true;
     }

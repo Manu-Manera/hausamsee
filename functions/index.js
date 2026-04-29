@@ -11,10 +11,13 @@
  *   • Gästebuch-Eintrag
  *   • Erinnerungen (Datum + Uhrzeit)
  *   • Daily Digest (Montag 8 Uhr)
+ *   • Garten-Regen-Alert (Open-Meteo) → ca. 30 min vor Niederschlag, Polster rein
  *   • Kontaktformular → WhatsApp-Gruppe
  *
- *  Bot-Ansprache in Gruppen: Nachricht beginnt mit "@bot", "!bot", "haus am see",
- *  oder "bot" (case-insensitive). In Privatchats reagiert er immer.
+ *  Bot-Ansprache in Gruppen: z. B. "@gustav" oder "@bot", "!bot", "haus am see",
+ *  (case-insensitive). In Privatchats reagiert er immer.
+ *  Optional: OPENAI_API_KEY → LLM interpretiert Nachrichten zuerst (Kontext → Befehl), dann
+ *  regelbasiert; GUSTAV_LLM_RULES_FIRST=1 kehrt die Reihenfolge um.
  */
 
 const { onRequest } = require("firebase-functions/v2/https");
@@ -29,6 +32,7 @@ const logger = require("firebase-functions/logger");
 // oder "meross" (für Refoss / Meross). Beide Module haben die gleiche Schnittstelle.
 const PLUG_PROVIDER = (process.env.PLUG_PROVIDER || "tuya").toLowerCase();
 const plugs = require(PLUG_PROVIDER === "meross" ? "./meross" : "./tuya");
+const llmRouter = require("./llmRouter");
 
 initializeApp();
 const db = getFirestore();
@@ -41,16 +45,31 @@ setGlobalOptions({ region: "europe-west1", maxInstances: 10 });
 
 const WEBSITE_URL = "https://manu-manera.github.io/hausamsee";
 
+// Wetter-Alert (Open-Meteo) – dieselbe Lage wie die Homepage
+const WEATHER_LAT = 47.3656;
+const WEATHER_LON = 8.7808;
+/** Min. vor Stundenanfang, ab dem nass laut Vorschau; Alert-Fenster ~30 min davor (siehe checkGartenRegenPolster) */
+const RAIN_ALERT_MIN_MINUTES = 20;
+const RAIN_ALERT_MAX_MINUTES = 42;
+const GARTEN_POLSTER_ALERT_DOC = "config/gartenPolsterRainAlert";
+
 const BEWOHNER = ["Corina", "Jasmin", "Dino", "Andy", "Manu", "Hugues", "Fanny", "Elliot", "Oscar"];
 const KIDS = new Set(["Elliot", "Oscar"]);
 const ADULTS = BEWOHNER.filter((n) => !KIDS.has(n));
 
 // Bewässerung: harte Sicherheitsgrenzen für Steckdosen-Timer.
-const PUMP_DEFAULT_MINUTES = 15; // Default-Timeout, wenn "Pumpe an" ohne Minuten kommt
+const PUMP_DEFAULT_MINUTES = 30; // Default-Timeout, wenn "Pumpe an" ohne Minuten kommt
 const PUMP_MAX_MINUTES = 60;     // Länger lassen wir die Pumpe NIE laufen
 
+// Geräte ohne Auto-Off-Timer (bleiben an bis manuell ausgeschaltet)
+const NO_TIMER_DEVICES = ["lichterkette", "licht"];
+
 // Nachrichten die mit einem dieser Tokens beginnen → direkt an den Bot gerichtet (in Gruppen)
-const BOT_MENTIONS = ["@bot", "!bot", "/bot", "haus am see bot", "haus am see", "@haus", "bot,", "bot:", "bot "];
+// (alles in Kleinbuchstaben; Abgleich läuft über toLowerCase())
+const BOT_MENTIONS = [
+  "@gustav", "gustav,", "gustav:", "gustav ",
+  "@bot", "!bot", "/bot", "haus am see bot", "haus am see", "@haus", "bot,", "bot:", "bot ",
+];
 
 /* ==========================================================================
    Config
@@ -80,11 +99,14 @@ async function debugLog(kind, data) {
    WhatsApp API (send text / download media)
    ========================================================================== */
 
-async function sendWhatsApp(to, text) {
-  const { token, phoneId } = cfg();
+/** phoneIdOpt: pro Webhook-Event von value.metadata.phone_number_id (eingehende Nummer). Ohne: WHATSAPP_PHONE_ID. */
+async function sendWhatsApp(to, text, phoneIdOpt) {
+  const { token, phoneId: defaultPid } = cfg();
+  const phoneId = phoneIdOpt || defaultPid;
   if (!token || !phoneId) {
+    logger.error("sendWhatsApp: fehlendes WHATSAPP_TOKEN oder WHATSAPP_PHONE_ID");
     await debugLog("send_skipped", { to, reason: "no_token_or_phone_id" });
-    return;
+    return false;
   }
   const url = `https://graph.facebook.com/v20.0/${phoneId}/messages`;
   let res;
@@ -100,15 +122,18 @@ async function sendWhatsApp(to, text) {
       }),
     });
   } catch (e) {
+    logger.error("sendWhatsApp: fetch fehlgeschlagen", e);
     await debugLog("send_crash", { to, error: String(e) });
-    return;
+    return false;
   }
   const bodyText = await res.text().catch(() => "");
   if (!res.ok) {
+    logger.warn("sendWhatsApp: Graph API Fehler", { status: res.status, body: bodyText.slice(0, 500) });
     await debugLog("send_failed", { to, status: res.status, response: bodyText.slice(0, 2000) });
-  } else {
-    await debugLog("send_ok", { to, status: res.status });
+    return false;
   }
+  await debugLog("send_ok", { to, status: res.status, phoneId });
+  return true;
 }
 
 async function broadcast(text) {
@@ -180,6 +205,164 @@ function fmtDate(d) {
 }
 function fmtDateTime(d) {
   return new Date(d).toLocaleString("de-CH", { timeZone: "Europe/Zurich", dateStyle: "short", timeStyle: "short" });
+}
+function fmtTimeZurich(d) {
+  return new Date(d).toLocaleTimeString("de-CH", { timeZone: "Europe/Zurich", hour: "2-digit", minute: "2-digit" });
+}
+
+function gartenRegenPolsterEnabled() {
+  const v = String(process.env.GARTEN_RAIN_ALERT || "").toLowerCase();
+  return v === "1" || v === "true" || v === "on" || v === "yes";
+}
+
+function rainAlertRecipients() {
+  const raw = process.env.WHATSAPP_RAIN_ALERT_RECIPIENTS || process.env.WHATSAPP_GROUP_RECIPIENTS || "";
+  return raw.split(",").map((s) => s.trim()).filter(Boolean);
+}
+
+/** Niederschlag oder WMO-Code (Regen/Schauer/Gewitter; leichter Schnee zählt für Polster) */
+function hourLooksRainy(precipMm, wmoCode) {
+  const p = Number(precipMm);
+  if (!Number.isNaN(p) && p > 0.1) return true;
+  const c = Number(wmoCode);
+  if (Number.isNaN(c)) return p > 0.05;
+  if (c >= 51 && c <= 67) return true;
+  if (c >= 80 && c <= 82) return true;
+  if (c >= 95) return true;
+  if (c >= 71 && c <= 77) return true;
+  if (c >= 85 && c <= 86) return true;
+  return p > 0.05;
+}
+
+/**
+ * Erster zukünftiger Stunden-Slot mit Niederschlag (Open-Meteo hourly, time = Stundenbeginn).
+ * @returns {{ slotUnix: number, whenLabel: string } | null}
+ */
+function findNextRainyHourSlot(hourly) {
+  const times = hourly?.time;
+  const prec = hourly?.precipitation;
+  const codes = hourly?.weathercode;
+  if (!Array.isArray(times) || !times.length) return null;
+  const nowMs = Date.now();
+  for (let i = 0; i < times.length; i++) {
+    const t = times[i];
+    const slotMs = typeof t === "number" ? t * 1000 : Number(t) * 1000;
+    if (Number.isNaN(slotMs) || slotMs <= nowMs) continue;
+    const p = prec?.[i];
+    const w = codes?.[i];
+    if (hourLooksRainy(p, w)) {
+      const whenLabel = fmtTimeZurich(new Date(slotMs));
+      return { slotUnix: Math.floor(slotMs / 1000), whenLabel };
+    }
+  }
+  return null;
+}
+
+async function fetchOpenMeteoPfaeffikon() {
+  const params = new URLSearchParams({
+    latitude: String(WEATHER_LAT),
+    longitude: String(WEATHER_LON),
+    hourly: "precipitation,weathercode",
+    timezone: "Europe/Zurich",
+    forecast_days: "2",
+    timeformat: "unixtime",
+  });
+  const url = `https://api.open-meteo.com/v1/forecast?${params.toString()}`;
+  const res = await fetch(url);
+  const text = await res.text();
+  if (!res.ok) throw new Error(`open-meteo ${res.status}: ${text.slice(0, 300)}`);
+  return JSON.parse(text);
+}
+
+/** Garten: Vergangenheit + Vorschau für Regen-Check (Open-Meteo) */
+let gartenMeteoCache = { t: 0, data: null };
+const GARTEN_METEO_TTL_MS = 15 * 60 * 1000;
+
+async function getOpenMeteoGartenForRain() {
+  if (gartenMeteoCache.data && Date.now() - gartenMeteoCache.t < GARTEN_METEO_TTL_MS) {
+    return gartenMeteoCache.data;
+  }
+  const params = new URLSearchParams({
+    latitude: String(WEATHER_LAT),
+    longitude: String(WEATHER_LON),
+    hourly: "precipitation,weathercode",
+    timezone: "Europe/Zurich",
+    past_days: "2",
+    forecast_days: "2",
+    timeformat: "unixtime",
+  });
+  const url = `https://api.open-meteo.com/v1/forecast?${params.toString()}`;
+  const res = await fetch(url);
+  const text = await res.text();
+  if (!res.ok) throw new Error(`open-meteo ${res.status}: ${text.slice(0, 300)}`);
+  const data = JSON.parse(text);
+  gartenMeteoCache = { t: Date.now(), data };
+  return data;
+}
+
+/** Log nur einmal pro Kalendertag (Zürich), um Log-Noise zu begrenzen */
+let gartenRainSkipLoggedYmd = null;
+
+/**
+ * Echte Überschneidung [ws,we] (ms) und Stunden-Intervall [hs,he).
+ * Irgendwo in ±6h um die geplante «Ein»-Zeit: Regen? → Gießplan für den Tag weglassen.
+ */
+function gartenHourlyRainOverlapsWindow(hourly, ws, we) {
+  const times = hourly?.time;
+  const prec = hourly?.precipitation;
+  const codes = hourly?.weathercode;
+  if (!Array.isArray(times) || !times.length) return false;
+  for (let i = 0; i < times.length; i++) {
+    const raw = times[i];
+    const hs = (typeof raw === "number" ? raw : Number(raw)) * 1000;
+    if (Number.isNaN(hs)) continue;
+    const he = hs + 3600 * 1000;
+    if (hs >= we || he <= ws) continue;
+    if (hourLooksRainy(prec?.[i], codes?.[i])) return true;
+  }
+  return false;
+}
+
+function gartenYmdZurichNow() {
+  return new Date().toLocaleDateString("en-CA", { timeZone: "Europe/Zurich" });
+}
+
+/**
+ * Wenn in den ±6h um eine geplante Gieß-Ein-Zeit Regen (oder Schnee) fällt/— hat:
+ * true → ganzer Gießplan an diesem Tag (dieses dayKey) wird nicht geschaltet.
+ * API-Fehler: false (Gießplan normal; lieber wässern als dauernd zu blocken).
+ */
+async function gartenDayShouldSkipDueToRain(slots, ymd) {
+  if (!Array.isArray(slots) || !slots.length || !ymd) return false;
+  let data;
+  try {
+    data = await getOpenMeteoGartenForRain();
+  } catch (e) {
+    logger.warn("Garten-Regen-Check: open-meteo", e?.message || e);
+    return false;
+  }
+  const hourly = data?.hourly;
+  if (!hourly) return false;
+  const parts = ymd.split("-").map((x) => parseInt(x, 10));
+  if (parts.length < 3 || parts.some((n) => Number.isNaN(n))) return false;
+  const [Y, M, D] = parts;
+  for (const slot of slots) {
+    const onT = normHM(slot?.on);
+    if (!onT) continue;
+    const th = onT.split(":");
+    const h = parseInt(th[0], 10);
+    const m = parseInt(th[1] || "0", 10);
+    if (Number.isNaN(h) || Number.isNaN(m)) continue;
+    const onMs = zurichWallToUtcDate(Y, M, D, h, m).getTime();
+    const ws = onMs - 6 * 60 * 60 * 1000;
+    const we = onMs + 6 * 60 * 60 * 1000;
+    if (gartenHourlyRainOverlapsWindow(hourly, ws, we)) return true;
+  }
+  return false;
+}
+
+function gartenSlotSkipKey(ymd, dayKey, idx) {
+  return `${ymd}|${dayKey}|${idx}`;
 }
 
 /** Wand-Uhrzeit in Europe/Zurich (y,m,d,h,min) → UTC als Date (Cloud Functions laufen in UTC) */
@@ -281,7 +464,7 @@ function cleanTail(s) {
    Parser
    ========================================================================== */
 
-// Entfernt Bot-Mentions ("@bot", "haus am see", …) und liefert true, falls welche da waren
+// Entfernt Bot-Mentions ("@gustav", "@bot", "haus am see", …) und liefert true, falls welche da waren
 function stripBotMention(text) {
   let s = String(text || "").trim();
   const lower = s.toLowerCase();
@@ -339,7 +522,8 @@ function parseDeleteMessage(raw) {
 }
 
 function isListEventsCommand(raw) {
-  return /^(events?|termine?|liste|anstehendes)\s*(auflisten|anzeigen|zeigen)?\s*[?.!]*$/i.test(String(raw).trim());
+  // DE: events, termine | EN: events, upcoming | FR: événements
+  return /^(events?|termine?|liste|anstehendes|upcoming\s*events?|evenements?|evenement)\s*(auflisten|anzeigen|zeigen|list|show)?\s*[?.!]*$/i.test(String(raw).trim());
 }
 
 // "Putz: Manu 20.4. Küche" oder "Putzen Manu 20.4."
@@ -368,17 +552,19 @@ function parsePutzAdd(raw) {
 }
 
 function isPutzListCommand(raw) {
-  return /^(wer\s+putzt|putzplan|putz\s*liste|putz\s*woche)\s*[?.!]*$/i.test(String(raw).trim());
+  // DE: wer putzt | EN: who's cleaning, cleaning schedule | FR: qui nettoie, planning ménage
+  return /^(wer\s+putzt|putzplan|putz\s*liste|putz\s*woche|who'?s\s*cleaning|cleaning\s*(schedule|list)|qui\s+nettoie|planning\s*menage)\s*[?.!]*$/i.test(String(raw).trim());
 }
 
 // "Bin weg 1.5." | "Bin weg 1.5.-8.5." | "Bin da" | "Bin heute weg" | "Bin übers WE weg"
 function parseAnwesenheit(raw) {
   const s = String(raw).trim();
-  const m = s.match(/^(?:ich\s+)?(?:bin|i'?m)\s+(.+)$/i);
+  // DE: "bin da/weg" | EN: "I'm home/away" | FR: "je suis là/absent"
+  const m = s.match(/^(?:ich\s+)?(?:bin|i'?m|je\s+suis)\s+(.+)$/i);
   if (!m) return null;
   const rest = m[1];
-  const isWeg = /\b(weg|fort|nicht\s+da|nicht\s+zuhause|ausser\s*haus|away|out)\b/i.test(rest);
-  const isDa = /\b(da|hier|zuhause|home)\b/i.test(rest);
+  const isWeg = /\b(weg|fort|nicht\s+da|nicht\s+zuhause|ausser\s*haus|away|out|absent|parti)\b/i.test(rest);
+  const isDa = /\b(da|hier|zuhause|home|here|there|la|ici|present)\b/i.test(rest);
   if (!isWeg && !isDa) return null;
   const status = isWeg ? "weg" : "da";
   const { date } = extractDate(rest);
@@ -390,22 +576,26 @@ function parseAnwesenheit(raw) {
 
 function isAnwesenheitListCommand(raw) {
   const s = String(raw).trim();
-  return /^(wer\s+ist\s+(heute\s+)?(da|hier|zuhause|weg|wo)|anwesenheit|wer\s+ist\s+am\s+wochenende(\s+(da|weg))?|wer\s+ist\s+zuhause)\s*[?.!]*$/i.test(s);
+  // DE: wer ist da | EN: who's home | FR: qui est là
+  return /^(wer\s+ist\s+(heute\s+)?(da|hier|zuhause|weg|wo)|anwesenheit|wer\s+ist\s+am\s+wochenende(\s+(da|weg))?|wer\s+ist\s+zuhause|who'?s\s*(home|there|here|around)|who\s+is\s*(home|there|here|around)|attendance|qui\s+est\s+(la|ici|present))\s*[?.!]*$/i.test(s);
 }
 
-// "Schaden: Waschmaschine tropft | Küche | hoch"
+// "Schaden: Waschmaschine tropft | Küche | hoch" oder Slashes: "… / Garten / hoch"
 function parseSchadenMessage(raw) {
-  const re = /^schaden(?:\s+melden)?\s*[:\-–]?\s*(.+)$/i;
-  const m = String(raw).trim().match(re);
+  const s = String(raw).trim();
+  // DE: "Schaden: ..." | EN: "Damage: ..." | FR: "Dommage: ..."
+  const re = /^(schaden|damage|dommage)(?:\s+(melden|report|signaler))?\s*[:\-–]?\s*(.+)$/i;
+  const m = s.match(re);
   if (!m) return null;
-  const parts = m[1].split("|").map((s) => s.trim());
+  const rest = m[3];
+  const parts = (rest.includes("|") ? rest.split("|") : rest.split(/\s*\/\s*/)).map((p) => p.trim());
   const titel = parts[0] || "";
   if (!titel) return null;
   const ort = parts[1] || "";
   const prioRaw = (parts[2] || "").toLowerCase();
   let prio = "medium";
-  if (/(niedrig|low|klein)/.test(prioRaw)) prio = "low";
-  else if (/(hoch|high|dringend|urgent)/.test(prioRaw)) prio = "high";
+  if (/(niedrig|low|klein|faible|bas)/.test(prioRaw)) prio = "low";
+  else if (/(hoch|high|dringend|urgent|eleve|critique)/.test(prioRaw)) prio = "high";
   return {
     titel: titel.slice(0, 120),
     ort: ort.slice(0, 80),
@@ -415,24 +605,49 @@ function parseSchadenMessage(raw) {
 }
 
 function isSchadenListCommand(raw) {
-  return /^(schäden?|schaden\s*liste|offene\s+schäden)\s*[?.!]*$/i.test(String(raw).trim());
+  // DE: schäden | EN: damages | FR: dommages
+  return /^(schäden?|schaden\s*liste|offene\s+schäden|damages?|open\s+damages?|dommages?)\s*[?.!]*$/i.test(String(raw).trim());
+}
+
+// "Schaden erledigt: Rasenmäher" / "Schaden löschen: Waschmaschine"
+function parseSchadenErledigtMessage(raw) {
+  const s = String(raw).trim();
+  // DE: "Schaden erledigt: ..."
+  const deRe = /^schaden\s+(erledigt|gelöst|geloest|behoben|repariert|löschen|loeschen|entfernen)\s*[:\-–]?\s*(.+)$/i;
+  const deM = s.match(deRe);
+  if (deM) return { titel: deM[2].trim() };
+  // EN: "Damage done: ..." / "Damage fixed: ..."
+  const enRe = /^damage\s+(done|fixed|repaired|resolved|removed)\s*[:\-–]?\s*(.+)$/i;
+  const enM = s.match(enRe);
+  if (enM) return { titel: enM[2].trim() };
+  // FR: "Dommage réparé: ..."
+  const frRe = /^dommage\s+(repare|resolu|fait|supprime)\s*[:\-–]?\s*(.+)$/i;
+  const frM = s.match(frRe);
+  if (frM) return { titel: frM[2].trim() };
+  return null;
 }
 
 // "Ja Sommerfest", "Nein Bierkastenlauf", "Zu Sommerfest: ja"
 function parseRSVPMessage(raw) {
   const s = String(raw).trim();
-  // "Ja/Nein <title>"
-  let m = s.match(/^(ja|nein|yes|no|maybe|vielleicht|zusage|absage|dabei|nicht\s+dabei)\s+(?:zu[rm]?\s+|for\s+)?(.+)$/i);
+  // "Ja/Nein/Yes/No/Oui/Non <title>"
+  let m = s.match(/^(ja|nein|yes|no|oui|non|maybe|vielleicht|peut-etre|zusage|absage|dabei|nicht\s+dabei)\s+(?:zu[rm]?\s+|for\s+|pour\s+)?(.+)$/i);
   if (m) {
-    const yes = /(ja|yes|zusage|dabei)/i.test(m[1]) && !/nicht/i.test(m[1]);
+    const yes = /(ja|yes|oui|zusage|dabei)/i.test(m[1]) && !/nicht/i.test(m[1]);
     return { wantsIn: yes, title: m[2].trim() };
   }
   return null;
 }
 
 function parseRSVPListCommand(raw) {
-  const m = String(raw).trim().match(/^wer\s+kommt\s+(?:zu[rm]?\s+|zum\s+)?(.+?)\s*[?.!]*$/i);
-  return m ? { title: m[1].trim() } : null;
+  // DE: wer kommt zum ... | EN: who's coming to ... | FR: qui vient à ...
+  const deM = String(raw).trim().match(/^wer\s+kommt\s+(?:zu[rm]?\s+|zum\s+)?(.+?)\s*[?.!]*$/i);
+  if (deM) return { title: deM[1].trim() };
+  const enM = String(raw).trim().match(/^who'?s?\s+coming\s+(?:to\s+)?(.+?)\s*[?.!]*$/i);
+  if (enM) return { title: enM[1].trim() };
+  const frM = String(raw).trim().match(/^qui\s+vient\s+(?:a\s+|au\s+)?(.+?)\s*[?.!]*$/i);
+  if (frM) return { title: frM[1].trim() };
+  return null;
 }
 
 // "Foto: Hausbild Garten" oder "Foto Sommerfest" — gilt wenn Bild mit Caption
@@ -555,12 +770,53 @@ function parseErinnerungMessage(raw) {
 
 /* --- Bewässerung / Smart Plugs --- */
 
+// Umgangssprache: "Giesse die Blumen", "Garten bewässern 15 min" → { device: "Pumpe", on, minutes } (default 20)
+function parseGiessenUmgang(sIn) {
+  const s = String(sIn).trim();
+  if (!s) return null;
+  if (/^wie\s+(gie|kann|soll|muss|funk|warum|wieso)\b/i.test(s)) return null; // reine Wissensfrage, keine Aktion
+  if (/^(pumpe|beet|rasen|steckdose|plug|bewässerung|bewaesserung)\b/i.test(s)) return null; // normaler Pumpe-Pfad
+  const gieAktion =
+    // Deutsch
+    /(giess|gieß|giesse|giessen|gewässer|\bbewäss\w+|\bwässer(?!-))/i.test(s) ||
+    /kannst du (noch|mal|bitte)?\s*(giess|gie(ß|ss)|\bwässer\w*|\bbewäss\w*)/i.test(s) ||
+    /(bitte|sofort|schnell|hey)\s*(giess|gie(ß|ss)|\bwäss\w*)/i.test(s) ||
+    /\b(garten|blu-?m|pflanz|bett?)\b.*(giess|gie(ß|ss)|\bwässer\w*|\bbewäss)/i.test(s) ||
+    /(giess|gie(ß|ss)|\bwässer\w*|\bbewäss\w*).*\b(garten|blu-?m|pflanz|bett?)\b/i.test(s) ||
+    // English: water the plants/garden/flowers
+    /\bwater\s+(the\s+)?(plant|garden|flower|yard)/i.test(s) ||
+    /(plant|garden|flower|yard).*\bwater/i.test(s) ||
+    /^water\s+(them|it|please)?$/i.test(s) ||
+    // French: arrose les plantes/jardin/fleurs
+    /\barrose\s+(les?\s+)?(plante|jardin|fleur)/i.test(s) ||
+    /(plante|jardin|fleur).*\barrose/i.test(s) ||
+    /^arrosage$/i.test(s);
+  if (!gieAktion) return null;
+  const kontext = /(blu-?m|garten|pflanz|bett?|balkon|draus|aussen|aussen|tropf|kra-?ut|hecke|rasen|beet(?!$))/i.test(s);
+  const anBot = /(@gustav|@g\b|@bot\b|gustav|kannst du|könnt|bitte|hey|hallo|mach mal|sofort|schnell)/i.test(s) || s.length < 100;
+  if (!kontext && !anBot) return null;
+  const willAus =
+    /(hör( mir)?\s*auf|aufhören|stopp?|abstell|schalte (die )?pumpe aus|genug|lass(es)?\s+\w*aus|wasser (ab|aus))/i.test(s) &&
+    /(pumpe|giess|gieß|wäss|bewäss|garten|blu-?m)/i.test(s) &&
+    !/\b(noch|weiter|an|länger|mehr|start|los)\b/i.test(s);
+  if (willAus) {
+    return { device: "Pumpe", on: false, minutes: null };
+  }
+  const timeMatch = s.match(/(\d{1,2})\s*(?:min(?:ute[n]?)?|m)(?:\b|[.,])/i);
+  const minutes = timeMatch
+    ? Math.max(1, Math.min(PUMP_MAX_MINUTES, parseInt(timeMatch[1], 10)))
+    : 20;
+  return { device: "Pumpe", on: true, minutes };
+}
+
 // Erkennt Bewässerungs-Befehle:
 //   "Pumpe an" / "Pumpe aus" / "Pumpe 15 Min" → Gerät "Pumpe" (Smart-Life-Name)
 //   "Beet aus" / "Steckdose Beet aus"         → { device: "beet", on: false }
 //   "Bewässerung Rasen 20 Min"                → { device: "rasen", on: true, minutes: 20 }
 function parseBewaesserungMessage(raw) {
   const s = String(raw).trim();
+  const giessen = parseGiessenUmgang(s);
+  if (giessen) return giessen;
   const firstWord = (s.split(/\s+/)[0] || "").toLowerCase();
   const re = /^(?:bewässerung|bewaesserung|pumpe|steckdose|plug)\s+(?:für\s+)?(.+?)$/i;
   const m = s.match(re);
@@ -568,8 +824,8 @@ function parseBewaesserungMessage(raw) {
   if (m) {
     rest = m[1].trim();
   } else {
-    // Erlaubt direkt "Pumpe an" ohne Präfix
-    const short = s.match(/^(pumpe|beet|rasen|garten|terrasse|hecke|tropf|bewässerung|bewaesserung)\s+(.+)$/i);
+    // Erlaubt direkt "Pumpe an" / "Lichterkette an" ohne Präfix (DE/EN/FR)
+    const short = s.match(/^(pumpe|pump|pompe|beet|rasen|garten|terrasse|hecke|tropf|bewässerung|bewaesserung|lichterkette|licht|lights?|lumieres?)\s+(.+)$/i);
     if (!short) return null;
     rest = `${short[1]} ${short[2]}`;
   }
@@ -599,8 +855,14 @@ function parseBewaesserungMessage(raw) {
 
   let device = rest.replace(/[,.;:!?]/g, " ").replace(/\s+/g, " ").trim();
   // "Pumpe an" / "Pumpe aus" / "Pumpe 15 Min" — in Smart Life heisst das Gerät oft ebenfalls "Pumpe"
-  if (!device && firstWord === "pumpe") {
+  // EN: "pump on" → Pumpe | FR: "pompe on" → Pumpe
+  if (!device && (firstWord === "pumpe" || firstWord === "pump" || firstWord === "pompe")) {
     device = "Pumpe";
+  }
+  // "Lichterkette an" / "Licht an" → Gerät "Lichterkette"
+  // EN: "lights on" → Lichterkette | FR: "lumières on" → Lichterkette
+  if (!device && (firstWord === "lichterkette" || firstWord === "licht" || firstWord === "lights" || firstWord === "light" || firstWord === "lumieres" || firstWord === "lumiere")) {
+    device = "Lichterkette";
   }
   if (!device) return null;
 
@@ -608,7 +870,126 @@ function parseBewaesserungMessage(raw) {
 }
 
 function isPumpListCommand(raw) {
-  return /^(pumpen|steckdosen|smartplugs?|plugs?|bewässerung|bewaesserung)\s*(?:status|liste|\?)?\s*[?.!]*$/i.test(String(raw).trim());
+  // DE: pumpen, steckdosen | EN: pumps, plugs | FR: pompes, prises
+  return /^(pumpen?|pumps?|pompes?|steckdosen|smartplugs?|plugs?|prises?|bewässerung|bewaesserung)\s*(?:status|liste|list|\?)?\s*[?.!]*$/i.test(String(raw).trim());
+}
+
+// Wetter-Befehl erkennen (DE/EN/FR)
+function isWetterCommand(raw) {
+  return /^(wetter|weather|meteo|wie\s+ist\s+(das\s+)?wetter|what'?s?\s+the\s+weather|quel\s+temps|regnet\s+es|is\s+it\s+raining|il\s+pleut|sonne|sun|soleil)\s*[?.!]*$/i.test(String(raw).trim());
+}
+
+// WMO Weather Code zu Emoji + Text
+function wmoToWeather(code) {
+  const c = Number(code);
+  if (c === 0) return { emoji: "☀️", de: "Klar", en: "Clear", fr: "Clair" };
+  if (c === 1) return { emoji: "🌤️", de: "Überwiegend klar", en: "Mostly clear", fr: "Plutôt clair" };
+  if (c === 2) return { emoji: "⛅", de: "Teilweise bewölkt", en: "Partly cloudy", fr: "Partiellement nuageux" };
+  if (c === 3) return { emoji: "☁️", de: "Bewölkt", en: "Overcast", fr: "Couvert" };
+  if (c >= 45 && c <= 48) return { emoji: "🌫️", de: "Nebel", en: "Fog", fr: "Brouillard" };
+  if (c >= 51 && c <= 55) return { emoji: "🌧️", de: "Nieselregen", en: "Drizzle", fr: "Bruine" };
+  if (c >= 56 && c <= 57) return { emoji: "🌧️❄️", de: "Gefrierender Niesel", en: "Freezing drizzle", fr: "Bruine verglaçante" };
+  if (c >= 61 && c <= 65) return { emoji: "🌧️", de: "Regen", en: "Rain", fr: "Pluie" };
+  if (c >= 66 && c <= 67) return { emoji: "🌧️❄️", de: "Gefrierender Regen", en: "Freezing rain", fr: "Pluie verglaçante" };
+  if (c >= 71 && c <= 77) return { emoji: "🌨️", de: "Schnee", en: "Snow", fr: "Neige" };
+  if (c >= 80 && c <= 82) return { emoji: "🌦️", de: "Regenschauer", en: "Rain showers", fr: "Averses" };
+  if (c >= 85 && c <= 86) return { emoji: "🌨️", de: "Schneeschauer", en: "Snow showers", fr: "Averses de neige" };
+  if (c >= 95 && c <= 99) return { emoji: "⛈️", de: "Gewitter", en: "Thunderstorm", fr: "Orage" };
+  return { emoji: "🌡️", de: "Unbekannt", en: "Unknown", fr: "Inconnu" };
+}
+
+// Aktuelles Wetter holen (erweiterte API)
+async function fetchCurrentWeather() {
+  const params = new URLSearchParams({
+    latitude: String(WEATHER_LAT),
+    longitude: String(WEATHER_LON),
+    current: "temperature_2m,relative_humidity_2m,apparent_temperature,precipitation,weather_code,wind_speed_10m",
+    hourly: "temperature_2m,precipitation_probability,weather_code",
+    timezone: "Europe/Zurich",
+    forecast_days: "2",
+  });
+  const url = `https://api.open-meteo.com/v1/forecast?${params.toString()}`;
+  const res = await fetch(url);
+  const text = await res.text();
+  if (!res.ok) throw new Error(`open-meteo ${res.status}: ${text.slice(0, 300)}`);
+  return JSON.parse(text);
+}
+
+// Wetter-Text formatieren
+function formatWeatherText(data, lang = "de") {
+  const c = data.current;
+  const hourly = data.hourly;
+  const weather = wmoToWeather(c.weather_code);
+  
+  const temp = Math.round(c.temperature_2m);
+  const feelsLike = Math.round(c.apparent_temperature);
+  const humidity = c.relative_humidity_2m;
+  const wind = Math.round(c.wind_speed_10m);
+  const precip = c.precipitation;
+  
+  // Nächste Stunden Vorschau
+  const now = new Date();
+  const currentHour = now.getHours();
+  const forecast = [];
+  
+  if (hourly && hourly.time) {
+    for (let i = 0; i < hourly.time.length && forecast.length < 6; i++) {
+      const t = new Date(hourly.time[i]);
+      if (t.getHours() > currentHour || t.getDate() > now.getDate()) {
+        const hw = wmoToWeather(hourly.weather_code[i]);
+        const hTemp = Math.round(hourly.temperature_2m[i]);
+        const hRain = hourly.precipitation_probability?.[i] || 0;
+        forecast.push({ hour: t.getHours(), emoji: hw.emoji, temp: hTemp, rain: hRain });
+      }
+    }
+  }
+  
+  if (lang === "en") {
+    let text = `${weather.emoji} *Weather at Haus am See*\n\n`;
+    text += `🌡️ ${temp}°C (feels like ${feelsLike}°C)\n`;
+    text += `💧 Humidity: ${humidity}%\n`;
+    text += `💨 Wind: ${wind} km/h\n`;
+    if (precip > 0) text += `🌧️ Precipitation: ${precip} mm\n`;
+    text += `\n*Condition:* ${weather.en}\n`;
+    if (forecast.length) {
+      text += `\n*Next hours:*\n`;
+      forecast.slice(0, 4).forEach(f => {
+        text += `${f.hour}:00 ${f.emoji} ${f.temp}°C ${f.rain > 20 ? `(${f.rain}% rain)` : ""}\n`;
+      });
+    }
+    return text.trim();
+  }
+  
+  if (lang === "fr") {
+    let text = `${weather.emoji} *Météo à Haus am See*\n\n`;
+    text += `🌡️ ${temp}°C (ressenti ${feelsLike}°C)\n`;
+    text += `💧 Humidité: ${humidity}%\n`;
+    text += `💨 Vent: ${wind} km/h\n`;
+    if (precip > 0) text += `🌧️ Précipitations: ${precip} mm\n`;
+    text += `\n*Conditions:* ${weather.fr}\n`;
+    if (forecast.length) {
+      text += `\n*Prochaines heures:*\n`;
+      forecast.slice(0, 4).forEach(f => {
+        text += `${f.hour}:00 ${f.emoji} ${f.temp}°C ${f.rain > 20 ? `(${f.rain}% pluie)` : ""}\n`;
+      });
+    }
+    return text.trim();
+  }
+  
+  // Default: Deutsch
+  let text = `${weather.emoji} *Wetter am Haus am See*\n\n`;
+  text += `🌡️ ${temp}°C (gefühlt ${feelsLike}°C)\n`;
+  text += `💧 Luftfeuchtigkeit: ${humidity}%\n`;
+  text += `💨 Wind: ${wind} km/h\n`;
+  if (precip > 0) text += `🌧️ Niederschlag: ${precip} mm\n`;
+  text += `\n*Aktuell:* ${weather.de}\n`;
+  if (forecast.length) {
+    text += `\n*Nächste Stunden:*\n`;
+    forecast.slice(0, 4).forEach(f => {
+      text += `${f.hour}:00 ${f.emoji} ${f.temp}°C ${f.rain > 20 ? `(${f.rain}% Regen)` : ""}\n`;
+    });
+  }
+  return text.trim();
 }
 
 /* ==========================================================================
@@ -739,6 +1120,27 @@ async function listOffeneSchaeden(limit = 10) {
   return items.slice(0, limit);
 }
 
+async function findSchadenByTitle(needle) {
+  const snap = await db.collection("schaeden").get();
+  const n = needle.toLowerCase();
+  let best = null;
+  snap.forEach((doc) => {
+    const d = doc.data();
+    if (d?.status === "erledigt") return;
+    const t = (d.titel || "").toLowerCase();
+    if (t === n) best = { id: doc.id, ...d };
+    else if (!best && t.includes(n)) best = { id: doc.id, ...d };
+  });
+  return best;
+}
+
+async function markSchadenErledigt(id) {
+  await db.collection("schaeden").doc(id).update({
+    status: "erledigt",
+    erledigtAt: FieldValue.serverTimestamp(),
+  });
+}
+
 async function addRSVP(eventId, name) {
   const ref = await db.collection("anmeldungen").add({
     eventId, name, source: "whatsapp", createdAt: FieldValue.serverTimestamp(),
@@ -862,7 +1264,7 @@ async function addEventFoto(eventId, src) {
    ========================================================================== */
 
 const HELP_TEXT =
-  `👋 Hoi! Ich bin der *Haus Am See Bot*.\n\n` +
+  `👋 Hoi! Ich heisse *Gustav* (Haus am See). Du kannst mich (1:1 oder in Gruppen mit *@gustav* / @bot) **auch** allgemein etwas fragen – wie ChatGPT, plus unsere Befehle unten.\n\n` +
   `*Events*\n` +
   `➕ "Neues Event: Sommerfest 15.8. 18 Uhr | Grillen am See"\n` +
   `🗑️ "Event löschen: Sommerfest"\n` +
@@ -876,6 +1278,7 @@ const HELP_TEXT =
   `*Schäden*\n` +
   `🔧 "Schaden: Waschmaschine tropft | Keller | hoch"\n` +
   `    (Foto mitschicken = wird angehängt)\n` +
+  `✅ "Schaden erledigt: Rasenmäher" — als repariert markieren\n` +
   `📋 "Schäden"\n\n` +
   `*Event-Anmeldung*\n` +
   `✅ "Ja Sommerfest" / "Nein Bierkastenlauf"\n` +
@@ -894,27 +1297,166 @@ const HELP_TEXT =
   `📋 "Bewerber"\n` +
   `📣 "Zimmer teilen" / "Inserat Zimmer" — Inserat-Text + Link (→ WHATSAPP_GROUP_RECIPIENTS)\n\n` +
   `*Bewässerung / Smart Plugs*\n` +
-  `💧 "Pumpe an" / "Pumpe aus"\n` +
-  `💧 "Pumpe 15 Min" (auto-aus nach 15 Min, max. ${PUMP_MAX_MINUTES})\n` +
+  `💧 Auch: *"Giesse die Blumen"*, *"Garten bewässern"*, *"kannst du giesen"* (→ *Pumpe* ${PUMP_DEFAULT_MINUTES} min, Zahl in der Nachricht = Minuten; Stop: *Pumpe aus*)\n` +
+  `💧 "Pumpe an" / "Pumpe aus" (auto-aus nach ${PUMP_DEFAULT_MINUTES} Min)\n` +
+  `💧 "Pumpe 20 Min" (auto-aus nach 20 Min, max. ${PUMP_MAX_MINUTES})\n` +
   `💧 "Beet 20 Min" — andere Steckdose per Name\n` +
+  `💡 "Lichterkette an" / "Licht aus"\n` +
   `📋 "Pumpen" — Status aller Steckdosen\n\n` +
   `🌐 ${WEBSITE_URL}`;
+
+const HELP_TEXT_EN =
+  `👋 Hi! I'm *Gustav*, the bot for "Haus am See" (lakehouse WG in Switzerland). You can ask me anything – like ChatGPT, plus our house commands below.\n\n` +
+  `*Events*\n` +
+  `➕ "New event: Summer party 15.8. 6pm | BBQ by the lake"\n` +
+  `🗑️ "Delete event: Summer party"\n` +
+  `📅 "Events"\n\n` +
+  `*Cleaning schedule*\n` +
+  `➕ "Cleaning: Manu 20.4. Kitchen"\n` +
+  `📋 "Who's cleaning?"\n\n` +
+  `*Attendance*\n` +
+  `✅ "I'm here" / "I'm away"\n` +
+  `📋 "Who's home?"\n\n` +
+  `*Damages*\n` +
+  `🔧 "Damage: Washing machine leaks | Basement | high"\n` +
+  `    (attach photo = saved with report)\n` +
+  `✅ "Damage done: Lawn mower" — mark as fixed\n` +
+  `📋 "Damages"\n\n` +
+  `*Event RSVP*\n` +
+  `✅ "Yes Summer party" / "No Beer run"\n` +
+  `📋 "Who's coming to Summer party?"\n\n` +
+  `*Photos* (Image + Caption)\n` +
+  `🏠 "Photo house garden" — for house images\n` +
+  `🎉 "Photo Summer party" — for event photos\n` +
+  `🖼️ "Photo" — to gallery\n\n` +
+  `*Guestbook*\n` +
+  `📝 "Guestbook: Had an amazing time!"\n\n` +
+  `*Reminders*\n` +
+  `🔔 "Remind me 30.4. at 8am: Pay bill"\n\n` +
+  `*Room applicants*\n` +
+  `➕ "Applicant: Lisa, 25 | Student, very friendly | +41 79 123 45 67"\n` +
+  `📋 "Applicants"\n` +
+  `📣 "Share room listing"\n\n` +
+  `*Watering / Smart Plugs*\n` +
+  `💧 "Water the plants" / "Water the garden" (→ Pump ${PUMP_DEFAULT_MINUTES} min)\n` +
+  `💧 "Pump on" / "Pump off" (auto-off after ${PUMP_DEFAULT_MINUTES} min)\n` +
+  `💧 "Pump 20 min" (auto-off after 20 min, max. ${PUMP_MAX_MINUTES})\n` +
+  `💡 "Lights on" / "Lights off"\n` +
+  `📋 "Pumps" — status of all plugs\n\n` +
+  `🌐 ${WEBSITE_URL}`;
+
+const HELP_TEXT_FR =
+  `👋 Salut! Je suis *Gustav*, le bot de "Haus am See" (colocation au bord du lac en Suisse). Tu peux me poser n'importe quelle question – comme ChatGPT, plus nos commandes ci-dessous.\n\n` +
+  `*Événements*\n` +
+  `➕ "Nouvel événement: Fête d'été 15.8. 18h | BBQ au lac"\n` +
+  `🗑️ "Supprimer événement: Fête d'été"\n` +
+  `📅 "Événements"\n\n` +
+  `*Planning ménage*\n` +
+  `➕ "Ménage: Manu 20.4. Cuisine"\n` +
+  `📋 "Qui nettoie?"\n\n` +
+  `*Présence*\n` +
+  `✅ "Je suis là" / "Je suis absent"\n` +
+  `📋 "Qui est là?"\n\n` +
+  `*Dommages*\n` +
+  `🔧 "Dommage: Machine à laver fuit | Cave | élevé"\n` +
+  `    (joindre photo = enregistrée avec le rapport)\n` +
+  `✅ "Dommage réparé: Tondeuse" — marquer comme réparé\n` +
+  `📋 "Dommages"\n\n` +
+  `*Inscription événement*\n` +
+  `✅ "Oui Fête d'été" / "Non Course de bière"\n` +
+  `📋 "Qui vient à la Fête d'été?"\n\n` +
+  `*Photos* (Image + Légende)\n` +
+  `🏠 "Photo maison jardin" — pour images de la maison\n` +
+  `🎉 "Photo Fête d'été" — pour photos d'événement\n` +
+  `🖼️ "Photo" — dans la galerie\n\n` +
+  `*Livre d'or*\n` +
+  `📝 "Livre d'or: J'ai passé un moment incroyable!"\n\n` +
+  `*Rappels*\n` +
+  `🔔 "Rappelle-moi 30.4. à 8h: Payer facture"\n\n` +
+  `*Candidats chambre*\n` +
+  `➕ "Candidat: Lisa, 25 | Étudiante, très sympa | +41 79 123 45 67"\n` +
+  `📋 "Candidats"\n` +
+  `📣 "Partager annonce chambre"\n\n` +
+  `*Arrosage / Prises connectées*\n` +
+  `💧 "Arrose les plantes" / "Arrose le jardin" (→ Pompe ${PUMP_DEFAULT_MINUTES} min)\n` +
+  `💧 "Pompe on" / "Pompe off" (arrêt auto après ${PUMP_DEFAULT_MINUTES} min)\n` +
+  `💧 "Pompe 20 min" (arrêt auto après 20 min, max. ${PUMP_MAX_MINUTES})\n` +
+  `💡 "Lumières on" / "Lumières off"\n` +
+  `📋 "Pompes" — statut des prises\n\n` +
+  `🌐 ${WEBSITE_URL}`;
+
+/**
+ * Spracherkennung anhand typischer Wörter.
+ * @returns {"de"|"en"|"fr"}
+ */
+function detectLanguage(text) {
+  const s = String(text || "").toLowerCase().trim();
+  
+  // 1) Eindeutige einzelne Wörter / kurze Phrasen zuerst (höchste Priorität)
+  // Französisch - eindeutige Wörter
+  if (/^(salut|bonjour|bonsoir|merci|aide|commandes?|oui|non|qui|quoi|comment|dommages?|evenements?|arrose|lumieres?|pompe\s+(on|off)|je\s+suis)/.test(s)) {
+    return "fr";
+  }
+  // Englisch - eindeutige Wörter  
+  if (/^(hello|hey\s+there|good\s+(morning|evening)|thanks|thank\s+you|help|commands?|yes|no|who'?s|what'?s|how|please|damage|lights?\s+(on|off)|pump\s+(on|off)|water\s+the|i'?m\s+(home|away|here))/.test(s)) {
+    return "en";
+  }
+  
+  // 2) Für längere Texte: Marker zählen
+  const enMarkers = (s.match(/\b(the|is|are|what|who|where|how|please|yes|no|turn|water|plants|lights|home|away|coming|damage|remind|guestbook|cleaning|applicants|upcoming)\b/g) || []).length;
+  const frMarkers = (s.match(/\b(le|la|les|qui|quoi|comment|est|sont|oui|non|lumiere|pompe|arrose|dommage|evenement|rappelle|livre|menage|candidats|chambre)\b/g) || []).length;
+  const deMarkers = (s.match(/\b(ist|bitte|hilfe|ja|nein|wer|was|wie|wo|schaden|pumpe|licht|garten|wasser|bin|da|weg|putzt|bewerber|zimmer|hallo|danke)\b/g) || []).length;
+  
+  // Sprache mit den meisten Markern gewinnt
+  if (enMarkers > deMarkers && enMarkers > frMarkers && enMarkers >= 1) return "en";
+  if (frMarkers > deMarkers && frMarkers > enMarkers && frMarkers >= 1) return "fr";
+  
+  // 3) Default: Deutsch (Schweizer WG)
+  return "de";
+}
+
+/**
+ * Gibt den Hilfetext in der erkannten Sprache zurück.
+ */
+function getHelpText(lang) {
+  if (lang === "en") return HELP_TEXT_EN;
+  if (lang === "fr") return HELP_TEXT_FR;
+  return HELP_TEXT;
+}
 
 /**
  * Versucht, die Nachricht als einen bestimmten Command zu verarbeiten.
  * Return: true wenn behandelt, false wenn nichts zutraf.
  */
 async function dispatch(ctx) {
-  const { from, text, mediaId, caption, senderName } = ctx;
+  const { from, text, mediaId, caption, senderName, phoneId: replyPhoneId } = ctx;
   const rawInput = text || caption || "";
+  const reply = (t) => sendWhatsApp(from, t, replyPhoneId);
 
   // Bild mit oder ohne Caption?
   if (mediaId) {
-    return await handlePhotoUpload(from, mediaId, caption, rawInput);
+    return await handlePhotoUpload(from, mediaId, caption, rawInput, replyPhoneId);
   }
 
   if (!rawInput) {
     return false;
+  }
+
+  // 0) Hilfe-Befehl → wird vom LLM behandelt (erkennt Sprache automatisch)
+  //    Nicht mehr regelbasiert, damit das LLM in der richtigen Sprache antworten kann
+
+  // 0.5) Wetter-Befehl
+  if (isWetterCommand(rawInput)) {
+    try {
+      const lang = detectLanguage(rawInput);
+      const weatherData = await fetchCurrentWeather();
+      const weatherText = formatWeatherText(weatherData, lang);
+      await reply(weatherText);
+    } catch (e) {
+      logger.error("Wetter-Abfrage fehlgeschlagen", e);
+      await reply("🌡️ Ups, konnte das Wetter gerade nicht abrufen. Versuch's später nochmal!");
+    }
+    return true;
   }
 
   // 1) Lösch-Befehl für Events
@@ -922,14 +1464,14 @@ async function dispatch(ctx) {
   if (del) {
     const result = await deleteEventByTitle(del.title);
     if (result.deleted === 0) {
-      await sendWhatsApp(from, `🤷 Kein Event mit "${del.title}" gefunden.\n\nSchick "Events" für eine Liste.`);
+      await reply(`🤷 Kein Event mit "${del.title}" gefunden.\n\nSchick "Events" für eine Liste.`);
     } else if (result.deleted === 1) {
       const m = result.matches[0];
       const d = m.date ? fmtDateTime(m.date) : "";
-      await sendWhatsApp(from, `🗑️ Gelöscht: "${m.title}"${d ? ` am ${d}` : ""}`);
+      await reply(`🗑️ Gelöscht: "${m.title}"${d ? ` am ${d}` : ""}`);
     } else {
       const list = result.matches.map((m) => `• ${m.title}`).join("\n");
-      await sendWhatsApp(from, `🗑️ ${result.deleted} Events gelöscht:\n${list}`);
+      await reply(`🗑️ ${result.deleted} Events gelöscht:\n${list}`);
     }
     return true;
   }
@@ -938,10 +1480,10 @@ async function dispatch(ctx) {
   if (isListEventsCommand(rawInput)) {
     const items = await listUpcomingEvents(10);
     if (!items.length) {
-      await sendWhatsApp(from, `📅 Keine kommenden Events.`);
+      await reply(`📅 Keine kommenden Events.`);
     } else {
       const lines = items.map((e) => `• ${e.title} – ${fmtDateTime(e.date)}`);
-      await sendWhatsApp(from, `📅 *Kommende Events:*\n${lines.join("\n")}\n\n${WEBSITE_URL}/#events`);
+      await reply(`📅 *Kommende Events:*\n${lines.join("\n")}\n\n${WEBSITE_URL}/#events`);
     }
     return true;
   }
@@ -951,7 +1493,7 @@ async function dispatch(ctx) {
   if (newEv) {
     const id = await createEvent(newEv, from);
     const desc = newEv.description ? `\n📝 ${newEv.description}` : "";
-    await sendWhatsApp(from, `✅ Event angelegt: *${newEv.title}*\n📅 ${fmtDateTime(newEv.date)}${desc}\n\n${WEBSITE_URL}/#events`);
+    await reply(`✅ Event angelegt: *${newEv.title}*\n📅 ${fmtDateTime(newEv.date)}${desc}\n\n${WEBSITE_URL}/#events`);
     await debugLog("event_created", { id, from, title: newEv.title });
     return true;
   }
@@ -960,14 +1502,14 @@ async function dispatch(ctx) {
   if (isPutzListCommand(rawInput)) {
     const items = await listPutzWeek();
     if (!items.length) {
-      await sendWhatsApp(from, `🧹 Diese Woche kein Putzplan-Eintrag.`);
+      await reply(`🧹 Diese Woche kein Putzplan-Eintrag.`);
     } else {
       const lines = items.map((p) => {
         const when = p.when ? fmtDate(p.when) : "";
         const status = p.done ? "✅" : "⏳";
         return `${status} ${p.task}${p.who ? ` – ${p.who}` : ""}${when ? ` (${when})` : ""}`;
       });
-      await sendWhatsApp(from, `🧹 *Putzplan diese Woche:*\n${lines.join("\n")}`);
+      await reply(`🧹 *Putzplan diese Woche:*\n${lines.join("\n")}`);
     }
     return true;
   }
@@ -977,7 +1519,7 @@ async function dispatch(ctx) {
   if (putz) {
     await addPutz(putz);
     const whoTxt = putz.who ? ` von ${putz.who}` : "";
-    await sendWhatsApp(from, `🧹 Eingetragen: *${putz.task}*${whoTxt} am ${fmtDate(putz.when)}`);
+    await reply(`🧹 Eingetragen: *${putz.task}*${whoTxt} am ${fmtDate(putz.when)}`);
     return true;
   }
 
@@ -997,7 +1539,7 @@ async function dispatch(ctx) {
       `❌ Weg: ${weg.join(", ") || "–"}`,
       `❓ Keine Angabe: ${unklar.join(", ") || "–"}`,
     ];
-    await sendWhatsApp(from, lines.join("\n"));
+    await reply(lines.join("\n"));
     return true;
   }
 
@@ -1013,12 +1555,12 @@ async function dispatch(ctx) {
       }
     }
     if (!resident) {
-      await sendWhatsApp(from, `❓ Ich weiss nicht wer du bist. Schreib z.B.: "Manu ist weg 1.5."`);
+      await reply(`❓ Ich weiss nicht wer du bist. Schreib z.B.: "Manu ist weg 1.5."`);
       return true;
     }
     await setAnwesend(resident, anw.status);
     const icon = anw.status === "da" ? "✅" : "❌";
-    await sendWhatsApp(from, `${icon} ${resident} am Wochenende: *${anw.status === "da" ? "da" : "weg"}*`);
+    await reply(`${icon} ${resident} am Wochenende: *${anw.status === "da" ? "da" : "weg"}*`);
     return true;
   }
 
@@ -1026,20 +1568,33 @@ async function dispatch(ctx) {
   if (isSchadenListCommand(rawInput)) {
     const items = await listOffeneSchaeden(15);
     if (!items.length) {
-      await sendWhatsApp(from, `🔧 Keine offenen Schäden. 🎉`);
+      await reply(`🔧 Keine offenen Schäden. 🎉`);
     } else {
       const prioEmoji = { high: "🔴", medium: "🟡", low: "🟢" };
       const lines = items.map((s) => `${prioEmoji[s.prio] || "🟡"} *${s.titel}*${s.ort ? ` – ${s.ort}` : ""}`);
-      await sendWhatsApp(from, `🔧 *Offene Schäden:*\n${lines.join("\n")}`);
+      await reply(`🔧 *Offene Schäden:*\n${lines.join("\n")}`);
     }
     return true;
   }
 
-  // 9) Schaden melden (ohne Foto; mit Foto s. handlePhotoUpload)
+  // 9a) Schaden erledigt / löschen
+  const erledigtCmd = parseSchadenErledigtMessage(rawInput);
+  if (erledigtCmd) {
+    const found = await findSchadenByTitle(erledigtCmd.titel);
+    if (!found) {
+      await reply(`🤷 Kein offener Schaden mit "${erledigtCmd.titel}" gefunden.\n\nSchick "Schäden" für die Liste.`);
+    } else {
+      await markSchadenErledigt(found.id);
+      await reply(`✅ Schaden erledigt: *${found.titel}*${found.ort ? ` (${found.ort})` : ""}\n\n🎉 Super, danke fürs Reparieren!`);
+    }
+    return true;
+  }
+
+  // 9b) Schaden melden (ohne Foto; mit Foto s. handlePhotoUpload)
   const schaden = parseSchadenMessage(rawInput);
   if (schaden) {
     const id = await addSchaden(schaden, senderName || from);
-    await sendWhatsApp(from, `🔧 Schaden erfasst: *${schaden.titel}*${schaden.ort ? ` (${schaden.ort})` : ""}\n\n${WEBSITE_URL}/#schaeden`);
+    await reply(`🔧 Schaden erfasst: *${schaden.titel}*${schaden.ort ? ` (${schaden.ort})` : ""}\n\n${WEBSITE_URL}/#schaeden`);
     return true;
   }
 
@@ -1048,14 +1603,14 @@ async function dispatch(ctx) {
   if (rsvpList) {
     const ev = await findEventByTitle(rsvpList.title);
     if (!ev) {
-      await sendWhatsApp(from, `🤷 Kein Event mit "${rsvpList.title}" gefunden.`);
+      await reply(`🤷 Kein Event mit "${rsvpList.title}" gefunden.`);
     } else {
       const items = await listRSVPs(ev.id);
       if (!items.length) {
-        await sendWhatsApp(from, `🎉 Noch keine Anmeldungen für *${ev.title}*.`);
+        await reply(`🎉 Noch keine Anmeldungen für *${ev.title}*.`);
       } else {
         const lines = items.map((r) => `• ${r.name}${r.partnerName ? ` + ${r.partnerName}` : r.needsPartner ? " (sucht Partner)" : ""}`);
-        await sendWhatsApp(from, `🎉 *${ev.title}* – ${items.length} Anmeldungen:\n${lines.join("\n")}`);
+        await reply(`🎉 *${ev.title}* – ${items.length} Anmeldungen:\n${lines.join("\n")}`);
       }
     }
     return true;
@@ -1066,16 +1621,16 @@ async function dispatch(ctx) {
   if (rsvp) {
     const ev = await findEventByTitle(rsvp.title);
     if (!ev) {
-      await sendWhatsApp(from, `🤷 Kein Event mit "${rsvp.title}" gefunden.\nSchick "Events" für die Liste.`);
+      await reply(`🤷 Kein Event mit "${rsvp.title}" gefunden.\nSchick "Events" für die Liste.`);
       return true;
     }
     const name = senderName || "Gast";
     if (rsvp.wantsIn) {
       await addRSVP(ev.id, name);
-      await sendWhatsApp(from, `✅ ${name} angemeldet für *${ev.title}* (${fmtDateTime(ev.date)}).`);
+      await reply(`✅ ${name} angemeldet für *${ev.title}* (${fmtDateTime(ev.date)}).`);
     } else {
       const removed = await removeRSVP(ev.id, name);
-      await sendWhatsApp(from, removed ? `❌ ${name} abgemeldet von *${ev.title}*.` : `ℹ️ Du warst nicht angemeldet für *${ev.title}*.`);
+      await reply(removed ? `❌ ${name} abgemeldet von *${ev.title}*.` : `ℹ️ Du warst nicht angemeldet für *${ev.title}*.`);
     }
     return true;
   }
@@ -1084,7 +1639,7 @@ async function dispatch(ctx) {
   if (isBewerberListCommand(rawInput)) {
     const items = await listOffeneKandidaten(15);
     if (!items.length) {
-      await sendWhatsApp(from, `🚪 Keine offenen Bewerber:innen.`);
+      await reply(`🚪 Keine offenen Bewerber:innen.`);
     } else {
       const statusEmoji = { offen: "⏳", eingeladen: "📩", kennengelernt: "🤝", zusage: "💚", abgesagt: "❌" };
       const lines = items.map((k) => {
@@ -1094,7 +1649,7 @@ async function dispatch(ctx) {
         const info = k.info ? `\n   ℹ️ ${k.info.slice(0, 100)}${k.info.length > 100 ? "…" : ""}` : "";
         return `${ico} *${k.name}*${alter}${info}${kontakt}`;
       });
-      await sendWhatsApp(from, `🚪 *Bewerber:innen (${items.length}):*\n\n${lines.join("\n\n")}\n\n${WEBSITE_URL}/#kandidaten`);
+      await reply(`🚪 *Bewerber:innen (${items.length}):*\n\n${lines.join("\n\n")}\n\n${WEBSITE_URL}/#kandidaten`);
     }
     return true;
   }
@@ -1108,7 +1663,7 @@ async function dispatch(ctx) {
       bew.info ? `ℹ️ ${bew.info}` : "",
       bew.kontakt ? `📞 ${bew.kontakt}` : "",
     ].filter(Boolean).join("\n");
-    await sendWhatsApp(from, `🚪 Bewerber:in gespeichert: *${bew.name}*${alter}${extra ? "\n\n" + extra : ""}\n\n💡 Foto nachreichen: schick ein Bild mit Caption "Foto Bewerber ${bew.name}"\n\n${WEBSITE_URL}/#kandidaten`);
+    await reply(`🚪 Bewerber:in gespeichert: *${bew.name}*${alter}${extra ? "\n\n" + extra : ""}\n\n💡 Foto nachreichen: schick ein Bild mit Caption "Foto Bewerber ${bew.name}"\n\n${WEBSITE_URL}/#kandidaten`);
     await debugLog("kandidat_created", { id, from, name: bew.name });
     return true;
   }
@@ -1119,13 +1674,12 @@ async function dispatch(ctx) {
     try {
       snap = await db.doc("config/roomOffer").get();
     } catch (e) {
-      await sendWhatsApp(from, `😕 Konnte das Inserat nicht laden: ${e.message || e}`);
+      await reply(`😕 Konnte das Inserat nicht laden: ${e.message || e}`);
       return true;
     }
     const ro = snap.exists ? snap.data() : null;
     if (!ro?.active) {
-      await sendWhatsApp(
-        from,
+      await reply(
         "🚪 Das Zimmer-Inserat ist gerade *nicht aktiv*. Aktiviere es unter WG-Intern → Zimmer frei, dann z.B. «Zimmer teilen» erneut."
       );
       return true;
@@ -1134,13 +1688,11 @@ async function dispatch(ctx) {
     const { recipients } = cfg();
     if (recipients.length) {
       await broadcast(msg);
-      await sendWhatsApp(
-        from,
+      await reply(
         `✅ Inserat wurde an *${recipients.length}* eingetragene Empfänger geschickt.\n\n💡 Facebook/Instagram postet ihr am besten selbst – der Bot hat dafür keine Meta-Freigabe.`
       );
     } else {
-      await sendWhatsApp(
-        from,
+      await reply(
         `${msg}\n\n_(WHATSAPP_GROUP_RECIPIENTS ist leer – Nachricht nur an dich.)_`
       );
     }
@@ -1151,7 +1703,7 @@ async function dispatch(ctx) {
   const gb = parseGaestebuchMessage(rawInput);
   if (gb) {
     await addGaestebuchEntry(senderName || "WhatsApp", gb.text);
-    await sendWhatsApp(from, `📝 Eintrag gespeichert – danke dir! 🌿\n\n${WEBSITE_URL}/#gaestebuch`);
+    await reply(`📝 Eintrag gespeichert – danke dir! 🌿\n\n${WEBSITE_URL}/#gaestebuch`);
     return true;
   }
 
@@ -1159,30 +1711,30 @@ async function dispatch(ctx) {
   const er = parseErinnerungMessage(rawInput);
   if (er) {
     await addErinnerung(er, from);
-    await sendWhatsApp(from, `🔔 Okay, ich melde mich am ${fmtDateTime(er.date)}:\n"${er.text}"`);
+    await reply(`🔔 Okay, ich melde mich am ${fmtDateTime(er.date)}:\n"${er.text}"`);
     return true;
   }
 
   // 14a) Steckdosen-Status / Liste
   if (isPumpListCommand(rawInput)) {
     if (!plugs.isConfigured()) {
-      await sendWhatsApp(from, `⚠️ Smart Plugs nicht konfiguriert (TUYA_ACCESS_ID / TUYA_ACCESS_SECRET / TUYA_UID in functions/.env).`);
+      await reply(`⚠️ Smart Plugs nicht konfiguriert (TUYA_ACCESS_ID / TUYA_ACCESS_SECRET / TUYA_UID in functions/.env).`);
       return true;
     }
     try {
       const items = await plugs.getAllStatus();
       if (!items.length) {
-        await sendWhatsApp(from, `🔌 Keine Smart Plugs gefunden. Sind sie im Refoss-Account eingerichtet?`);
+        await reply(`🔌 Keine Smart Plugs gefunden. Sind sie im Refoss-Account eingerichtet?`);
       } else {
         const lines = items.map((d) => {
           if (!d.online) return `📴 ${d.name} — offline`;
           if (d.on === null) return `❓ ${d.name} — Status unbekannt`;
           return d.on ? `🟢 ${d.name} — AN` : `⚪ ${d.name} — aus`;
         });
-        await sendWhatsApp(from, `🔌 *Smart Plugs:*\n\n${lines.join("\n")}`);
+        await reply(`🔌 *Smart Plugs:*\n\n${lines.join("\n")}`);
       }
     } catch (e) {
-      await sendWhatsApp(from, `😕 Konnte die Smart-Plug-Cloud nicht erreichen: ${e.message || e}`);
+      await reply(`😕 Konnte die Smart-Plug-Cloud nicht erreichen: ${e.message || e}`);
       await debugLog("plug_error", { cmd: "list", error: String(e.message || e) });
     }
     return true;
@@ -1192,27 +1744,48 @@ async function dispatch(ctx) {
   const pump = parseBewaesserungMessage(rawInput);
   if (pump) {
     if (!plugs.isConfigured()) {
-      await sendWhatsApp(from, `⚠️ Smart Plugs nicht konfiguriert (TUYA_ACCESS_ID / TUYA_ACCESS_SECRET / TUYA_UID in functions/.env).`);
+      await reply(`⚠️ Smart Plugs nicht konfiguriert (TUYA_ACCESS_ID / TUYA_ACCESS_SECRET / TUYA_UID in functions/.env).`);
       return true;
     }
     try {
       const result = await plugs.setPower(pump.device, pump.on);
+      const deviceLower = (result.name || pump.device || "").toLowerCase();
+      const skipTimer = NO_TIMER_DEVICES.some((n) => deviceLower.includes(n));
+      const isPumpDevice = deviceLower.includes("pump") || deviceLower.includes("beet") || deviceLower.includes("garten") || deviceLower.includes("rasen");
+      
       if (pump.on) {
-        // Auto-Off planen: entweder explizit (pump.minutes) oder Default
-        const minutes = pump.minutes ?? PUMP_DEFAULT_MINUTES;
-        const offAt = new Date(Date.now() + minutes * 60000);
-        await db.collection("bewaesserung_tasks").add({
-          device: result.name,
-          offAt: offAt.toISOString(),
-          requestedBy: from,
-          createdAt: FieldValue.serverTimestamp(),
-          done: false,
-        });
-        const bis = offAt.toLocaleTimeString("de-CH", { hour: "2-digit", minute: "2-digit", timeZone: "Europe/Zurich" });
-        await sendWhatsApp(
-          from,
-          `💧 *${result.name}* läuft. Automatisch aus in *${minutes} Min* (${bis} Uhr).\n\nSchneller aus? Schreib "${result.name} aus".`
-        );
+        if (skipTimer) {
+          // Kein Timer für Lichterkette etc. – bleibt an
+          await reply(`💡 *${result.name}* ist an.\n\nAusschalten? Schreib "${result.name} aus".`);
+        } else {
+          // Regen-Check: Warnung wenn es regnet oder bald regnet
+          let rainWarning = "";
+          if (isPumpDevice) {
+            try {
+              const raining = await isCurrentlyRaining();
+              if (raining) {
+                rainWarning = "\n\n🌧️ *Achtung:* Es regnet gerade! Die Bewässerung wird automatisch gestoppt falls der Regen anhält.";
+              }
+            } catch (e) {
+              // Ignorieren wenn Wetter-Check fehlschlägt
+            }
+          }
+          
+          // Auto-Off planen: entweder explizit (pump.minutes) oder Default
+          const minutes = pump.minutes ?? PUMP_DEFAULT_MINUTES;
+          const offAt = new Date(Date.now() + minutes * 60000);
+          await db.collection("bewaesserung_tasks").add({
+            device: result.name,
+            offAt: offAt.toISOString(),
+            requestedBy: from,
+            createdAt: FieldValue.serverTimestamp(),
+            done: false,
+          });
+          const bis = offAt.toLocaleTimeString("de-CH", { hour: "2-digit", minute: "2-digit", timeZone: "Europe/Zurich" });
+          await reply(
+            `💧 *${result.name}* läuft. Automatisch aus in *${minutes} Min* (${bis} Uhr).\n\nSchneller aus? Schreib "${result.name} aus".${rainWarning}`
+          );
+        }
       } else {
         // Bei Aus: alle offenen Timer zu diesem Gerät schliessen (nur done==false, Rest im Code filtern = kein Zusatz-Index)
         const openSnap = await db.collection("bewaesserung_tasks").where("done", "==", false).get();
@@ -1223,11 +1796,11 @@ async function dispatch(ctx) {
           }
         });
         await Promise.all(ops);
-        await sendWhatsApp(from, `⏹️ *${result.name}* ist aus.`);
+        await reply(`⏹️ *${result.name}* ist aus.`);
       }
       await debugLog("plug_action", { device: result.name, on: pump.on, minutes: pump.minutes });
     } catch (e) {
-      await sendWhatsApp(from, `😕 Steckdose konnte nicht geschaltet werden:\n${e.message || e}`);
+      await reply(`😕 Steckdose konnte nicht geschaltet werden:\n${e.message || e}`);
       await debugLog("plug_error", { cmd: "set", device: pump.device, on: pump.on, error: String(e.message || e) });
     }
     return true;
@@ -1237,13 +1810,14 @@ async function dispatch(ctx) {
   return false;
 }
 
-async function handlePhotoUpload(from, mediaId, caption, rawInput) {
+async function handlePhotoUpload(from, mediaId, caption, rawInput, phoneId) {
   const fotoCmd = parseFotoCommand(caption);
+  const reply = (t) => sendWhatsApp(from, t, phoneId);
   await debugLog("photo_received", { from, mediaId, caption, fotoCmd });
 
   const src = await downloadMedia(mediaId);
   if (!src) {
-    await sendWhatsApp(from, `😕 Konnte das Bild nicht laden. Versuchs nochmal?`);
+    await reply(`😕 Konnte das Bild nicht laden. Versuchs nochmal?`);
     return true;
   }
 
@@ -1251,7 +1825,7 @@ async function handlePhotoUpload(from, mediaId, caption, rawInput) {
   const schaden = parseSchadenMessage(rawInput);
   if (schaden) {
     const id = await addSchaden(schaden, from, src);
-    await sendWhatsApp(from, `🔧 Schaden mit Foto erfasst: *${schaden.titel}*\n\n${WEBSITE_URL}/#schaeden`);
+    await reply(`🔧 Schaden mit Foto erfasst: *${schaden.titel}*\n\n${WEBSITE_URL}/#schaeden`);
     return true;
   }
 
@@ -1260,7 +1834,7 @@ async function handlePhotoUpload(from, mediaId, caption, rawInput) {
   if (bewInline) {
     const id = await addKandidat(bewInline, from, src);
     const alter = bewInline.alter ? ` (${bewInline.alter})` : "";
-    await sendWhatsApp(from, `🚪 Bewerber:in mit Foto gespeichert: *${bewInline.name}*${alter}\n\n${WEBSITE_URL}/#kandidaten`);
+    await reply(`🚪 Bewerber:in mit Foto gespeichert: *${bewInline.name}*${alter}\n\n${WEBSITE_URL}/#kandidaten`);
     return true;
   }
 
@@ -1268,17 +1842,17 @@ async function handlePhotoUpload(from, mediaId, caption, rawInput) {
   if (fotoCmd) {
     if (fotoCmd.kind === "hausbild") {
       await addHausbild(fotoCmd.featureId, src);
-      await sendWhatsApp(from, `🏠 Hausbild für *${fotoCmd.featureId}* gespeichert.\n\n${WEBSITE_URL}/#haus`);
+      await reply(`🏠 Hausbild für *${fotoCmd.featureId}* gespeichert.\n\n${WEBSITE_URL}/#haus`);
       return true;
     }
     if (fotoCmd.kind === "kandidat") {
       const k = await findKandidatByName(fotoCmd.name);
       if (k) {
         await attachFotoToKandidat(k.id, src);
-        await sendWhatsApp(from, `🚪 Foto zu *${k.name}* gespeichert.\n\n${WEBSITE_URL}/#kandidaten`);
+        await reply(`🚪 Foto zu *${k.name}* gespeichert.\n\n${WEBSITE_URL}/#kandidaten`);
       } else {
         const id = await addKandidat({ name: fotoCmd.name, alter: null, info: "", kontakt: "" }, from, src);
-        await sendWhatsApp(from, `🚪 Neue:r Bewerber:in angelegt: *${fotoCmd.name}* (mit Foto).\n\nMehr Infos? z.B. "Bewerber ${fotoCmd.name}, 25 | kurze Beschreibung | Kontakt"\n\n${WEBSITE_URL}/#kandidaten`);
+        await reply(`🚪 Neue:r Bewerber:in angelegt: *${fotoCmd.name}* (mit Foto).\n\nMehr Infos? z.B. "Bewerber ${fotoCmd.name}, 25 | kurze Beschreibung | Kontakt"\n\n${WEBSITE_URL}/#kandidaten`);
       }
       return true;
     }
@@ -1286,18 +1860,18 @@ async function handlePhotoUpload(from, mediaId, caption, rawInput) {
       const ev = await findEventByTitle(fotoCmd.target);
       if (ev) {
         await addEventFoto(ev.id, src);
-        await sendWhatsApp(from, `📸 Foto zu *${ev.title}* hinzugefügt.\n\n${WEBSITE_URL}/#events`);
+        await reply(`📸 Foto zu *${ev.title}* hinzugefügt.\n\n${WEBSITE_URL}/#events`);
         return true;
       }
       await addGalerieBild(src, fotoCmd.target);
-      await sendWhatsApp(from, `🖼️ In die Galerie gepackt: "${fotoCmd.target}"\n\n${WEBSITE_URL}/#galerie`);
+      await reply(`🖼️ In die Galerie gepackt: "${fotoCmd.target}"\n\n${WEBSITE_URL}/#galerie`);
       return true;
     }
   }
 
   // Fallback: ab in die Galerie
   await addGalerieBild(src, caption || "");
-  await sendWhatsApp(from, `🖼️ Foto in der Galerie gespeichert.\n\n${WEBSITE_URL}/#galerie\n\n💡 Tipp: Mit Caption "Foto Sommerfest" landet's bei einem Event, mit "Schaden: …" bei den Schäden.`);
+  await reply(`🖼️ Foto in der Galerie gespeichert.\n\n${WEBSITE_URL}/#galerie\n\n💡 Tipp: Mit Caption "Foto Sommerfest" landet's bei einem Event, mit "Schaden: …" bei den Schäden.`);
   return true;
 }
 
@@ -1305,7 +1879,9 @@ async function handlePhotoUpload(from, mediaId, caption, rawInput) {
    Webhook (Meta WhatsApp Cloud API)
    ========================================================================== */
 
-exports.whatsappWebhook = onRequest({ cors: false, invoker: "public" }, async (req, res) => {
+exports.whatsappWebhook = onRequest(
+  { cors: false, invoker: "public", timeoutSeconds: 120, memory: "512MiB" },
+  async (req, res) => {
   logger.info("📨 Incoming", { method: req.method, path: req.path });
 
   // GET: Verify
@@ -1329,12 +1905,19 @@ exports.whatsappWebhook = onRequest({ cors: false, invoker: "public" }, async (r
     for (const entry of (body.entry || [])) {
       for (const change of (entry.changes || [])) {
         const value = change.value || {};
+        /** Muss fürs Senden passen, sonst antwortet die API mit einer anderen Nummer / still. */
+        const replyPhoneId = value.metadata?.phone_number_id;
         const messages = value.messages || [];
         const contacts = value.contacts || [];
-        const isGroup = !!value.metadata?.phone_number_id && messages.some((m) => m.context?.group_id || m.from_me === false);
+        // Echte Gruppen: Meta liefert `group_id` am Message-Objekt (s. Groups Messaging
+        // Doku) – nicht nur `context.group_id`. NICHT `from_me === false` verwenden:
+        // das trifft auf normale 1:1-User-Nachrichten zu und würde sie fälschlich als
+        // Gruppe werten → Bot ignoriert ohne @bot/Heuristik.
+        const isGroup = messages.some((m) => Boolean(m?.group_id || m?.context?.group_id));
 
         for (const msg of messages) {
           const from = msg.from;
+          const answer = (t) => sendWhatsApp(from, t, replyPhoneId);
           const contact = contacts.find((c) => c.wa_id === from);
           const senderName = contact?.profile?.name || "";
           const type = msg.type;
@@ -1350,18 +1933,31 @@ exports.whatsappWebhook = onRequest({ cors: false, invoker: "public" }, async (r
           else if (type === "audio") text = "[Sprachnachricht]";
           else if (type === "video") { mediaId = msg.video?.id; caption = msg.video?.caption || ""; }
 
-          await debugLog("message", { from, senderName, type, text: text.slice(0, 200), caption: caption.slice(0, 200), hasMedia: !!mediaId });
-
           // Gruppen-Filter: Nur reagieren, wenn direkt angesprochen. In Privatchats immer.
           const combined = text || caption;
           const mention = stripBotMention(combined);
           const isPrivate = !isGroup;
+          await debugLog("message", {
+            from,
+            senderName,
+            phoneNumberId: replyPhoneId,
+            type,
+            text: text.slice(0, 200),
+            caption: caption.slice(0, 200),
+            hasMedia: !!mediaId,
+            isGroup,
+            isPrivate,
+            hasGroupId: messages.some((m) => Boolean(m?.group_id || m?.context?.group_id)),
+          });
 
           // Zusätzliche Heuristik: WhatsApp Cloud API liefert derzeit für Gruppen wenig Metadaten.
           // Wenn der Text mit einem Trigger-Wort beginnt ("Neues Event", "Schaden", "Putz", …), akzeptieren wir trotzdem.
-          const looksLikeDirectCommand = /^(neue[rs]?\s+)?(event|termin|anlass|party|geburtstag|apero|schaden|putz|gäste?buch|erinner|foto|bild|bewerber|bewerberin|kandidat|kandidatin|zimmer|bewässerung|bewaesserung|pumpe|pumpen|steckdose[n]?|smartplugs?|plugs?|beet|rasen|garten|terrasse|hecke|tropf|events?|termine?|liste|wer\s+(putzt|ist|kommt)|bin\s+(da|hier|weg|fort)|ja\s+|nein\s+)/i.test(combined.trim());
+          const looksLikeDirectCommand = /^(neue[rs]?\s+)?(event|termin|anlass|party|geburtstag|apero|schaden|putz|gäste?buch|erinner|foto|bild|bewerber|bewerberin|kandidat|kandidatin|zimmer|bewässerung|bewaesserung|pumpe|pumpen|steckdose[n]?|smartplugs?|plugs?|beet|rasen|garten|terrasse|hecke|tropf|lichterkette|licht|events?|termine?|liste|wer\s+(putzt|ist|kommt)|bin\s+(da|hier|weg|fort)|ja\s+|nein\s+)/i.test(combined.trim());
+          const looksLikeGiesBewaesser =
+            /(giess|gieß|giesse|giessen|bewäss\w*|\bgarten\s+\w*|\bblu-?m|kannst du.*(giess|wässer|bewäss|gies)|@gustav)/i.test(combined) &&
+            /(giess|gie(ß|ss)|\bwässer\w*|\bbewäss\w*|\bgarten|blu-?m|kannst du|@g|gustav|hey)/i.test(combined);
 
-          if (!isPrivate && !mention.addressed && !looksLikeDirectCommand) {
+          if (!isPrivate && !mention.addressed && !looksLikeDirectCommand && !looksLikeGiesBewaesser) {
             await debugLog("group_ignored", { from, senderName, preview: combined.slice(0, 80) });
             continue;
           }
@@ -1369,18 +1965,114 @@ exports.whatsappWebhook = onRequest({ cors: false, invoker: "public" }, async (r
           // Nachricht reinigen: Wenn angesprochen wurde, den Bot-Präfix entfernen
           const effectiveText = mention.addressed ? mention.text : (text || caption);
           const effectiveCaption = mediaId ? (mention.addressed ? mention.text : caption) : caption;
+          // LLM: nur Text; in Gruppen nur @gustav / @bot o. Standard: LLM **zuerst** (Kontext), dann regelbasiert.
+          // Optional: GUSTAV_LLM_RULES_FIRST=1 → alte Reihenfolge.
+          const allowLlm = !mediaId && (isPrivate || mention.addressed);
+          const useLlm = allowLlm && llmRouter.isLlmEnabled();
+          const rulesFirst = llmRouter.isLlmRulesFirst();
 
-          const handled = await dispatch({
-            from,
-            senderName,
-            text: mediaId ? "" : effectiveText,
-            caption: effectiveCaption,
-            mediaId,
-          });
+          let plan = { command: null, antwort: null };
+          let handled = false;
+
+          if (mediaId) {
+            handled = await dispatch({
+              from,
+              senderName,
+              text: "",
+              caption: effectiveCaption,
+              mediaId,
+              phoneId: replyPhoneId,
+            });
+          } else if (useLlm && !rulesFirst) {
+            try {
+              plan = await llmRouter.naturalLanguageToCommand(effectiveText, { senderName });
+              await debugLog("llm_interpret", {
+                from,
+                order: "llm_first",
+                hasCommand: !!plan.command,
+                hasAntwort: !!plan.antwort,
+                preview: JSON.stringify(plan).slice(0, 2000),
+              });
+              if (plan.command) {
+                handled = await dispatch({
+                  from,
+                  senderName,
+                  text: plan.command,
+                  caption: "",
+                  mediaId: null,
+                  phoneId: replyPhoneId,
+                });
+              }
+            } catch (llmErr) {
+              logger.error("llm_interpret", llmErr);
+              await debugLog("llm_error", { error: String(llmErr?.message || llmErr) });
+            }
+            if (!handled) {
+              handled = await dispatch({
+                from,
+                senderName,
+                text: effectiveText,
+                caption: "",
+                mediaId: null,
+                phoneId: replyPhoneId,
+              });
+            }
+            if (!handled && plan.antwort) {
+              await answer(plan.antwort);
+              handled = true;
+            }
+          } else if (useLlm && rulesFirst) {
+            handled = await dispatch({
+              from,
+              senderName,
+              text: effectiveText,
+              caption: "",
+              mediaId: null,
+              phoneId: replyPhoneId,
+            });
+            if (!handled) {
+              try {
+                plan = await llmRouter.naturalLanguageToCommand(effectiveText, { senderName });
+                await debugLog("llm_interpret", {
+                  from,
+                  order: "rules_first",
+                  hasCommand: !!plan.command,
+                  hasAntwort: !!plan.antwort,
+                  preview: JSON.stringify(plan).slice(0, 2000),
+                });
+                if (plan.command) {
+                  handled = await dispatch({
+                    from,
+                    senderName,
+                    text: plan.command,
+                    caption: "",
+                    mediaId: null,
+                    phoneId: replyPhoneId,
+                  });
+                }
+                if (!handled && plan.antwort) {
+                  await answer(plan.antwort);
+                  handled = true;
+                }
+              } catch (llmErr) {
+                logger.error("llm_interpret", llmErr);
+                await debugLog("llm_error", { error: String(llmErr?.message || llmErr) });
+              }
+            }
+          } else {
+            handled = await dispatch({
+              from,
+              senderName,
+              text: effectiveText,
+              caption: "",
+              mediaId: null,
+              phoneId: replyPhoneId,
+            });
+          }
 
           if (!handled) {
             await debugLog("no_match", { from, text: effectiveText });
-            await sendWhatsApp(from, HELP_TEXT);
+            await answer(HELP_TEXT);
           }
         }
       }
@@ -1450,6 +2142,107 @@ exports.checkReminders = onSchedule(
 );
 
 /* ==========================================================================
+   Scheduler: Giessplan-Erinnerungen – täglich 8:00 Uhr
+   ========================================================================== */
+
+// Mapping von Bewohner-Namen zu WhatsApp-Nummern (aus memberPrefs oder hardcoded)
+async function getBewohnerPhone(name) {
+  // Versuche zuerst memberPrefs zu laden
+  const prefsSnap = await db.collection("config").doc("memberPrefs").get();
+  const prefs = prefsSnap.exists ? prefsSnap.data() : {};
+  if (prefs[name]?.phone) return prefs[name].phone.replace(/\D/g, "");
+  
+  // Fallback: Hardcoded Mapping (kann erweitert werden)
+  const phonebook = {
+    "Manu": "41798385590",
+    "Corina": "41795553906",
+    "Jasmin": "41762988934",
+    "Dino": "41765740020",
+    "Andy": "41798489999",
+    "Hugues": "41795911251",
+    "Fanny": "41789561100",
+  };
+  return phonebook[name] || null;
+}
+
+exports.checkGiessplanReminders = onSchedule(
+  { schedule: "every day 08:00", timeZone: "Europe/Zurich" },
+  async () => {
+    const snap = await db.collection("giessplan").get();
+    if (snap.empty) return;
+    
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    
+    const duePlants = [];
+    
+    snap.docs.forEach((doc) => {
+      const d = doc.data();
+      if (!d.reminder) return; // Nur wenn Erinnerung aktiviert
+      
+      const lastWatered = d.lastWatered ? new Date(d.lastWatered) : null;
+      const intervalDays = d.intervalDays || 3;
+      
+      let nextDate;
+      if (lastWatered) {
+        nextDate = new Date(lastWatered);
+        nextDate.setDate(nextDate.getDate() + intervalDays);
+      } else {
+        // Noch nie gegossen → heute fällig
+        nextDate = today;
+      }
+      nextDate.setHours(0, 0, 0, 0);
+      
+      // Heute oder überfällig?
+      if (nextDate <= today) {
+        duePlants.push({
+          id: doc.id,
+          plant: d.plant,
+          who: d.who,
+          intervalDays,
+          lastWatered: d.lastWatered,
+          overdue: nextDate < today,
+        });
+      }
+    });
+    
+    if (duePlants.length === 0) {
+      logger.info("Giessplan: Heute keine Pflanzen fällig");
+      return;
+    }
+    
+    // Gruppiere nach Person
+    const byPerson = {};
+    duePlants.forEach((p) => {
+      if (!byPerson[p.who]) byPerson[p.who] = [];
+      byPerson[p.who].push(p);
+    });
+    
+    // Sende Erinnerungen
+    const promises = [];
+    for (const [name, plants] of Object.entries(byPerson)) {
+      const phone = await getBewohnerPhone(name);
+      if (!phone) {
+        logger.warn(`Giessplan: Keine Telefonnummer für ${name}`);
+        continue;
+      }
+      
+      const plantList = plants.map((p) => {
+        const icon = p.overdue ? "⚠️" : "💧";
+        return `${icon} ${p.plant}${p.overdue ? " (überfällig!)" : ""}`;
+      }).join("\n");
+      
+      const msg = `🌱 *Giess-Erinnerung für ${name}*\n\nHeute bitte giessen:\n${plantList}\n\n🦆 Deine Pflanzen danken dir!`;
+      
+      promises.push(sendWhatsApp(phone, msg));
+    }
+    
+    await Promise.all(promises);
+    logger.info(`Giessplan: ${promises.length} Erinnerungen gesendet an ${Object.keys(byPerson).length} Personen`);
+  }
+);
+
+/* ==========================================================================
    Garten: Wochenplan (Europe/Zurich) — zur vollen Minute schalten
    ========================================================================== */
 
@@ -1495,14 +2288,37 @@ async function runGartenPlanTick() {
   const days = data.days && typeof data.days === "object" ? data.days : {};
   const { dayKey, hm } = zurichWeekdayKeyAndHM();
   const slots = Array.isArray(days[dayKey]) ? days[dayKey] : [];
+  const ymd = gartenYmdZurichNow();
+  const sk = data.slotSkips && typeof data.slotSkips === "object" ? data.slotSkips : {};
+
+  if (slots.length) {
+    if (await gartenDayShouldSkipDueToRain(slots, ymd)) {
+      if (gartenRainSkipLoggedYmd !== ymd) {
+        gartenRainSkipLoggedYmd = ymd;
+        await debugLog("garten_plan_skip_rain", { ymd, dayKey });
+        logger.info(`Garten: Gießplan heute (${dayKey}) wegen Niederschlag im ±6h-Fenster übersprungen.`);
+      }
+      return;
+    }
+    gartenRainSkipLoggedYmd = null;
+  }
+
+  let idx = 0;
   for (const slot of slots) {
     const onT = normHM(slot.on);
     const offT = normHM(slot.off);
-    if (!onT || !offT) continue;
+    if (!onT || !offT) {
+      idx += 1;
+      continue;
+    }
+    if (sk[gartenSlotSkipKey(ymd, dayKey, idx)] === true) {
+      idx += 1;
+      continue;
+    }
     if (onT === hm) {
       try {
         await plugs.setPower(device, true);
-        await debugLog("garten_plan_on", { device, hm, dayKey });
+        await debugLog("garten_plan_on", { device, hm, dayKey, slotIndex: idx });
       } catch (e) {
         logger.error("garten_plan_on", e?.message || e);
       }
@@ -1510,11 +2326,12 @@ async function runGartenPlanTick() {
     if (offT === hm) {
       try {
         await plugs.setPower(device, false);
-        await debugLog("garten_plan_off", { device, hm, dayKey });
+        await debugLog("garten_plan_off", { device, hm, dayKey, slotIndex: idx });
       } catch (e) {
         logger.error("garten_plan_off", e?.message || e);
       }
     }
+    idx += 1;
   }
 }
 
@@ -1522,14 +2339,54 @@ async function runGartenPlanTick() {
    Scheduler: Bewässerung Auto-Off + Garten Wochenplan – jede Minute
    ========================================================================== */
 
+// Prüft ob es aktuell regnet (für Bewässerungs-Unterbrechung)
+async function isCurrentlyRaining() {
+  try {
+    const data = await fetchCurrentWeather();
+    const code = data?.current?.weather_code;
+    const precip = data?.current?.precipitation || 0;
+    // Regen/Niesel/Schauer Codes: 51-67 (Niesel/Regen), 80-82 (Schauer), 95-99 (Gewitter)
+    const rainyCode = (code >= 51 && code <= 67) || (code >= 80 && code <= 82) || (code >= 95 && code <= 99);
+    return rainyCode || precip > 0.1;
+  } catch (e) {
+    logger.warn("isCurrentlyRaining: Wetter-Check fehlgeschlagen", e?.message);
+    return false; // Im Zweifel weiterlaufen lassen
+  }
+}
+
 exports.checkBewaesserung = onSchedule(
   { schedule: "every 1 minutes", timeZone: "Europe/Zurich" },
   async () => {
+    const nowISO = new Date().toISOString();
+    const snap = await db.collection("bewaesserung_tasks").where("done", "==", false).get();
+    
+    // 0) REGEN-CHECK: Wenn es regnet, alle laufenden Bewässerungen sofort stoppen!
+    const raining = await isCurrentlyRaining();
+    if (raining && snap.docs.length > 0 && plugs.isConfigured()) {
+      const activePumpTasks = snap.docs.filter(d => {
+        const device = (d.data().device || "").toLowerCase();
+        return device.includes("pump") || device.includes("beet") || device.includes("garten") || device.includes("rasen");
+      });
+      
+      for (const doc of activePumpTasks) {
+        const d = doc.data();
+        try {
+          await plugs.setPower(d.device, false);
+          await doc.ref.update({ done: true, cancelledAt: FieldValue.serverTimestamp(), reason: "rain" });
+          if (d.requestedBy) {
+            await sendWhatsApp(d.requestedBy, `🌧️ *${d.device}* automatisch gestoppt – es regnet! 🦆💧\n\nKein Grund zu giessen wenn der Himmel das übernimmt!`);
+          }
+          await debugLog("plug_rain_stop", { device: d.device });
+          logger.info(`Bewässerung ${d.device} wegen Regen gestoppt`);
+        } catch (e) {
+          logger.error(`Rain-Stop failed for ${d.device}:`, e.message || e);
+        }
+      }
+    }
+    
     // 1) WhatsApp-Timer (einmalig nach X Min ausschalten)
     // Nur where("done","==",false) — dann in Memory nach offAt filtern, damit kein
     // Firestore-Composite-Index nötig ist (Fehler «index required» = nie ausgeschaltet).
-    const nowISO = new Date().toISOString();
-    const snap = await db.collection("bewaesserung_tasks").where("done", "==", false).get();
     const due = snap.docs.filter((d) => {
       const x = d.data().offAt;
       return x && String(x) <= nowISO;
@@ -1538,6 +2395,7 @@ exports.checkBewaesserung = onSchedule(
     if (due.length && plugs.isConfigured()) {
       for (const doc of due) {
         const d = doc.data();
+        if (d.reason === "rain") continue; // Schon wegen Regen gestoppt
         try {
           await plugs.setPower(d.device, false);
           await doc.ref.update({ done: true, offDoneAt: FieldValue.serverTimestamp() });
@@ -1614,5 +2472,77 @@ exports.dailyDigest = onSchedule(
 
     lines.push(`🌐 ${WEBSITE_URL}`);
     await broadcast(lines.join("\n"));
+  }
+);
+
+/* ==========================================================================
+   Scheduler: Regen-Alert (Gartenpolster) – ca. 30 min vor Stunden-Slot, Open-Meteo
+   Einschalten: GARTEN_RAIN_ALERT=1, Empfänger: WHATSAPP_RAIN_ALERT_RECIPIENTS
+   (Fallback: WHATSAPP_GROUP_RECIPIENTS)
+   ========================================================================== */
+
+exports.checkGartenRegenPolster = onSchedule(
+  { schedule: "every 10 minutes", timeZone: "Europe/Zurich" },
+  async () => {
+    if (!gartenRegenPolsterEnabled()) return;
+
+    const targets = rainAlertRecipients();
+    if (!targets.length) {
+      logger.warn("Garten-Regen-Alert: keine Empfänger (setze WHATSAPP_RAIN_ALERT_RECIPIENTS oder WHATSAPP_GROUP_RECIPIENTS)");
+      return;
+    }
+
+    let data;
+    try {
+      data = await fetchOpenMeteoPfaeffikon();
+    } catch (e) {
+      logger.error("checkGartenRegenPolster: open-meteo", e?.message || e);
+      return;
+    }
+
+    const slot = findNextRainyHourSlot(data?.hourly);
+    if (!slot) return;
+
+    const minutesUntil = (slot.slotUnix * 1000 - Date.now()) / 60000;
+    if (minutesUntil < RAIN_ALERT_MIN_MINUTES || minutesUntil > RAIN_ALERT_MAX_MINUTES) {
+      return;
+    }
+
+    const ref = db.doc(GARTEN_POLSTER_ALERT_DOC);
+    const prev = await ref.get();
+    const last = prev.exists ? prev.data()?.lastRainSlotUnix : null;
+    if (last != null && Number(last) === slot.slotUnix) {
+      return;
+    }
+
+    const mRound = Math.max(1, Math.round(minutesUntil));
+    const text = `🌧️🌤️ *Achtung Wetter!*
+
+In ca. *${mRound} Minuten* könnte es in Pfäffikon nass werden (Stunde ab *${slot.whenLabel}* Uhr) 🌦️
+
+🪴🛋️ *Gartenpolster rein bringen!* — bevor’s tropft 💦
+
+Trocken bleiben! 🌿✨`;
+
+    const results = await Promise.all(targets.map((to) => sendWhatsApp(to, text)));
+    const anyOk = results.some(Boolean);
+    if (anyOk) {
+      await ref.set(
+        {
+          lastRainSlotUnix: slot.slotUnix,
+          whenLabel: slot.whenLabel,
+          minutesUntilApprox: Math.round(minutesUntil * 10) / 10,
+          sentAt: FieldValue.serverTimestamp(),
+        },
+        { merge: true }
+      );
+      await debugLog("garten_regen_polster_sent", {
+        slotUnix: slot.slotUnix,
+        whenLabel: slot.whenLabel,
+        minutesUntil: Math.round(minutesUntil * 10) / 10,
+      });
+    } else {
+      logger.warn("checkGartenRegenPolster: alle WhatsApp-Sends fehlgeschlagen");
+    }
   }
 );

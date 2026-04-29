@@ -311,6 +311,7 @@
     <div class="kalender-wrap">
       <div class="kalender-tabs" role="tablist">
         <button class="tab" data-tab="putzplan" data-wg-only>🧹 Putzplan</button>
+        <button class="tab" data-tab="giessplan" data-wg-only>🌱 Giessplan</button>
         <button class="tab active" data-tab="termine">📅 Termine</button>
         <button class="tab" data-tab="anwesend" data-wg-only>🏡 Anwesenheit</button>
       </div>
@@ -325,6 +326,33 @@
               <option value="">Wer?</option>
             </select>
             <input id="putzWhen" type="date" required />
+            <button type="submit" class="btn btn-primary">Speichern</button>
+          </form>
+        </details>
+      </div>
+
+      <div class="kalender-panel hidden" id="tabGiessplan" data-wg-only>
+        <p class="giess-hint">🌿 Wer giesst wann welche Pflanzen? Regelmässige Erinnerungen per WhatsApp möglich.</p>
+        <div class="giessplan-grid" id="giessplanGrid"></div>
+        <details class="admin-toggle" data-wg-only>
+          <summary>➕ Pflanze / Bereich hinzufügen</summary>
+          <form id="giessForm" class="form-card inline">
+            <input id="giessPlant" placeholder="Pflanze/Bereich (z.B. Wohnzimmer, Manus Zimmer)" required />
+            <select id="giessWho" required>
+              <option value="">Wer giesst?</option>
+            </select>
+            <select id="giessInterval" required>
+              <option value="">Intervall</option>
+              <option value="1">Täglich</option>
+              <option value="2">Alle 2 Tage</option>
+              <option value="3">Alle 3 Tage</option>
+              <option value="7">Wöchentlich</option>
+              <option value="14">Alle 2 Wochen</option>
+            </select>
+            <label class="checkbox-row">
+              <input type="checkbox" id="giessReminder" checked />
+              <span>WhatsApp-Erinnerung</span>
+            </label>
             <button type="submit" class="btn btn-primary">Speichern</button>
           </form>
         </details>

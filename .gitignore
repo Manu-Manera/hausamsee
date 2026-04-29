@@ -2,4 +2,7 @@
 node_modules/
 *.log
 .env
+**/.env
 .vscode/
+# Nur diese Datei mit echtem Key niemals committen (Vorlage: *.TEMPLATE.txt)
+secrets/openai-key-fuer-copilot.txt
