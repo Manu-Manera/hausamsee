@@ -951,7 +951,7 @@ async function startGartenSequenz(minutes, requestedBy, config = {}) {
     };
   }
   
-  // 3) Pumpe sofort einschalten (Status-Check war erfolgreich!)
+  // 3) Pumpe einschalten
   try {
     await plugs.setPower(devicePumpe, true);
     await debugLog("garten_seq_pumpe_on", { sequenzId, devicePumpe });
@@ -965,7 +965,27 @@ async function startGartenSequenz(minutes, requestedBy, config = {}) {
     };
   }
   
-  // 4) Tasks für die späteren Schritte anlegen (nur noch AUS-Befehle)
+  // 4) Status-Check: Ist die Pumpe wirklich angegangen?
+  await sleep(GARTEN_STATUS_CHECK_DELAY_MS);
+  try {
+    const pumpeStatus = await plugs.isDeviceOn(devicePumpe);
+    await debugLog("garten_seq_pumpe_check", { sequenzId, pumpeStatus });
+    
+    if (!pumpeStatus.online || !pumpeStatus.on) {
+      // Pumpe ist nicht an – alles stoppen!
+      try { await plugs.setPower(deviceComputer, false); } catch (_) { /* ignore */ }
+      return {
+        success: false,
+        message: `🚨 *Sicherheitsstopp!*\n\nPumpe ist ${!pumpeStatus.online ? "offline" : "nicht angegangen"} – Bewässerungscomputer wurde wieder ausgeschaltet.\n\n🔧 Bitte prüfe die Pumpen-Steckdose.`,
+      };
+    }
+    logger.info(`Sequenz ${sequenzId}: Pumpe-Check OK – Pumpe läuft`);
+  } catch (e) {
+    // Status-Check fehlgeschlagen – trotzdem weitermachen (Pumpe wurde ja eingeschaltet)
+    logger.warn(`Sequenz ${sequenzId}: Pumpe-Status-Check fehlgeschlagen, fahre fort`, e?.message);
+  }
+  
+  // 5) Tasks für die späteren Schritte anlegen (nur noch AUS-Befehle)
   const now = Date.now();
   const t_pumpeAus = now + minutes * 60 * 1000;
   const t_computerAus = t_pumpeAus + nachlaufSec * 1000;
@@ -989,6 +1009,8 @@ async function startGartenSequenz(minutes, requestedBy, config = {}) {
       executeAt: new Date(t_computerAus).toISOString(),
       requestedBy,
       done: false,
+      sendSuccessMessage: true, // Erfolgsmeldung am Ende senden
+      bewässerungsMinuten: minutes, // Für die Meldung
       createdAt: FieldValue.serverTimestamp(),
     },
   ];
@@ -1007,10 +1029,11 @@ async function startGartenSequenz(minutes, requestedBy, config = {}) {
     sequenzId,
     message: `🌿 *Garten-Bewässerung gestartet!*\n\n` +
       `✅ Bewässerungscomputer: AN (2x geprüft)\n` +
-      `✅ Pumpe: AN\n` +
+      `✅ Pumpe: AN (geprüft)\n` +
       `⏱️ Dauer: *${minutes} Minuten*\n` +
       `⏹️ Pumpe AUS: ${pumpeAusTime} Uhr\n` +
       `🔌 Ende: ${endeTime} Uhr\n\n` +
+      `Du bekommst eine Nachricht wenn alles fertig ist! 📬\n\n` +
       `Zum Stoppen: "Bewässerung stopp" oder "Garten aus"`,
   };
 }
@@ -2927,10 +2950,23 @@ exports.checkBewaesserung = onSchedule(
           await doc.ref.update({ done: true, executedAt: FieldValue.serverTimestamp() });
           await debugLog("garten_seq_step", { sequenzId: d.sequenzId, step: d.step, device: d.device, action: d.action });
           logger.info(`Sequenz ${d.sequenzId} Step ${d.step}: ${d.device} ${d.action}`);
+          
+          // Erfolgsmeldung am Ende der Sequenz senden
+          if (d.sendSuccessMessage && d.requestedBy) {
+            const mins = d.bewässerungsMinuten || "?";
+            await sendWhatsApp(d.requestedBy, 
+              `✅ *Garten-Bewässerung abgeschlossen!*\n\n` +
+              `🌿 Dauer: ${mins} Minuten\n` +
+              `🔌 Pumpe: AUS\n` +
+              `🔌 Bewässerungscomputer: AUS\n\n` +
+              `Alles hat geklappt – der Garten ist gegossen! 🌻💧`
+            );
+            await debugLog("garten_seq_success_msg", { sequenzId: d.sequenzId, minutes: mins });
+          }
         } catch (e) {
           logger.error(`Sequenz-Step failed for ${d.device}:`, e.message || e);
           await debugLog("garten_seq_step_error", { sequenzId: d.sequenzId, step: d.step, device: d.device, error: String(e.message || e) });
-          // Bei kritischen Steps (Pumpe an) trotzdem als done markieren nach 10 Min
+          // Bei kritischen Steps trotzdem als done markieren nach 10 Min
           const createdAt = d.createdAt?.toMillis?.() || 0;
           const age = Date.now() - createdAt;
           if (age > 10 * 60 * 1000) {
