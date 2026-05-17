@@ -2917,17 +2917,33 @@ function getWeekendKey() {
 
 let anwesendCache = {};
 
+function parseAnwesendStatus(val) {
+  if (!val) return { status: "unknown", bis: null };
+  if (typeof val === "string") return { status: val, bis: null };
+  return { status: val.status || "unknown", bis: val.bis || null };
+}
+
+function formatWegBis(bis) {
+  if (!bis) return "";
+  try {
+    const d = new Date(bis);
+    return d.toLocaleDateString("de-CH", { day: "numeric", month: "short" });
+  } catch { return ""; }
+}
+
 function renderAnwesend() {
   const grid = $("anwesendGrid");
   const weekendKey = getWeekendKey();
   const weekendData = anwesendCache[weekendKey] || {};
   grid.innerHTML = getActiveBewohner().map(b => {
-    const status = weekendData[b.name] || "unknown";
+    const { status, bis } = parseAnwesendStatus(weekendData[b.name]);
     const canEdit = auth.isAuthed && auth.member === b.name;
+    const bisText = status === "weg" && bis ? `<span class="weg-bis">bis ${formatWegBis(bis)}</span>` : "";
     return `
       <div class="anwesend-card">
         <div class="anwesend-emoji">${mEmoji(b.name)}</div>
         <strong>${escapeHtml(mLabel(b.name))}</strong>
+        ${bisText}
         <div class="anwesend-btn">
           <button class="da ${status==='da'?'active':''}" data-name="${escapeHtml(b.name)}" data-status="da" ${canEdit?"":"disabled"}>Da</button>
           <button class="weg ${status==='weg'?'active':''}" data-name="${escapeHtml(b.name)}" data-status="weg" ${canEdit?"":"disabled"}>Weg</button>
@@ -2938,21 +2954,66 @@ function renderAnwesend() {
   grid.querySelectorAll("button[data-status]").forEach(btn => {
     btn.addEventListener("click", () => {
       if (btn.disabled) return;
-      setAnwesend(btn.dataset.name, btn.dataset.status);
+      if (btn.dataset.status === "weg") {
+        openWegDialog(btn.dataset.name);
+      } else {
+        setAnwesend(btn.dataset.name, "da", null);
+      }
     });
   });
 }
 
-async function setAnwesend(name, status) {
+function openWegDialog(name) {
+  const weekendKey = getWeekendKey();
+  const weekendData = anwesendCache[weekendKey] || {};
+  const { bis } = parseAnwesendStatus(weekendData[name]);
+  
+  const dialog = document.createElement("dialog");
+  dialog.className = "auth-dialog";
+  dialog.innerHTML = `
+    <form method="dialog" class="auth-form" style="max-width:350px;">
+      <h2 class="auth-title">🏖️ Weg bis wann?</h2>
+      <div class="form-row">
+        <label for="wegBisDate">Zurück am (optional)</label>
+        <input id="wegBisDate" type="date" value="${bis || ""}" />
+      </div>
+      <p class="form-note" style="font-size:0.85rem;color:#666;">Leer lassen wenn du nicht weisst wann du zurück bist.</p>
+      <div class="auth-btns">
+        <button type="button" class="btn-secondary" id="wegCancelBtn">Abbrechen</button>
+        <button type="submit" class="btn-primary">✅ Speichern</button>
+      </div>
+    </form>
+  `;
+  document.body.appendChild(dialog);
+  
+  dialog.querySelector("#wegCancelBtn").addEventListener("click", () => {
+    dialog.close();
+    dialog.remove();
+  });
+  
+  dialog.querySelector("form").addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const bisDate = dialog.querySelector("#wegBisDate").value || null;
+    await setAnwesend(name, "weg", bisDate);
+    dialog.close();
+    dialog.remove();
+  });
+  
+  dialog.showModal();
+}
+
+async function setAnwesend(name, status, bis = null) {
   if (!auth.isAuthed || auth.member !== name) {
     showToast("Du kannst nur deinen eigenen Status ändern.", "error");
     return;
   }
   const weekendKey = getWeekendKey();
+  const value = status === "weg" && bis ? { status: "weg", bis } : status;
+  
   if (firebaseReady) {
-    await setDoc(doc(db, "anwesenheit", weekendKey), { [name]: status }, { merge: true });
+    await setDoc(doc(db, "anwesenheit", weekendKey), { [name]: value }, { merge: true });
   } else {
-    anwesendCache[weekendKey] = { ...(anwesendCache[weekendKey] || {}), [name]: status };
+    anwesendCache[weekendKey] = { ...(anwesendCache[weekendKey] || {}), [name]: value };
     localStore.anwesenheit = anwesendCache;
     saveLocal("anwesenheit", localStore.anwesenheit);
     renderAnwesend();

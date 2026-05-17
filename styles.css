@@ -2016,6 +2016,14 @@ textarea { resize: vertical; font-family: inherit; }
   opacity: 0.55;
 }
 
+.weg-bis {
+  display: block;
+  font-size: 0.75rem;
+  color: var(--berry);
+  margin-top: 2px;
+  font-style: italic;
+}
+
 /* ============================================
    Gästebuch
    ============================================ */
