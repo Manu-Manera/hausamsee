@@ -965,23 +965,25 @@ async function startGartenSequenz(minutes, requestedBy, config = {}) {
     };
   }
   
-  // 4) Status-Check: Ist die Pumpe wirklich angegangen?
+  // 4) Status-Check: Ist die Pumpe angegangen? (nur Warnung, kein Abbruch!)
+  // Kritisch ist nur der Bewässerungscomputer (Wasser). Pumpe ist nur für Druck.
+  let pumpeWarnung = "";
   await sleep(GARTEN_STATUS_CHECK_DELAY_MS);
   try {
     const pumpeStatus = await plugs.isDeviceOn(devicePumpe);
     await debugLog("garten_seq_pumpe_check", { sequenzId, pumpeStatus });
     
-    if (!pumpeStatus.online || !pumpeStatus.on) {
-      // Pumpe ist nicht an – alles stoppen!
-      try { await plugs.setPower(deviceComputer, false); } catch (_) { /* ignore */ }
-      return {
-        success: false,
-        message: `🚨 *Sicherheitsstopp!*\n\nPumpe ist ${!pumpeStatus.online ? "offline" : "nicht angegangen"} – Bewässerungscomputer wurde wieder ausgeschaltet.\n\n🔧 Bitte prüfe die Pumpen-Steckdose.`,
-      };
+    if (!pumpeStatus.online) {
+      pumpeWarnung = "\n\n⚠️ *Hinweis:* Pumpen-Status konnte nicht geprüft werden (offline). Bewässerung läuft trotzdem!";
+      logger.warn(`Sequenz ${sequenzId}: Pumpe ist offline, fahre trotzdem fort`);
+    } else if (!pumpeStatus.on) {
+      pumpeWarnung = "\n\n⚠️ *Hinweis:* Pumpe meldet 'aus' – möglicherweise verzögerte Rückmeldung. Bewässerung läuft trotzdem!";
+      logger.warn(`Sequenz ${sequenzId}: Pumpe meldet 'aus', fahre trotzdem fort`);
+    } else {
+      logger.info(`Sequenz ${sequenzId}: Pumpe-Check OK – Pumpe läuft`);
     }
-    logger.info(`Sequenz ${sequenzId}: Pumpe-Check OK – Pumpe läuft`);
   } catch (e) {
-    // Status-Check fehlgeschlagen – trotzdem weitermachen (Pumpe wurde ja eingeschaltet)
+    pumpeWarnung = "\n\n⚠️ *Hinweis:* Pumpen-Status konnte nicht abgefragt werden. Bewässerung läuft trotzdem!";
     logger.warn(`Sequenz ${sequenzId}: Pumpe-Status-Check fehlgeschlagen, fahre fort`, e?.message);
   }
   
@@ -1029,12 +1031,13 @@ async function startGartenSequenz(minutes, requestedBy, config = {}) {
     sequenzId,
     message: `🌿 *Garten-Bewässerung gestartet!*\n\n` +
       `✅ Bewässerungscomputer: AN (2x geprüft)\n` +
-      `✅ Pumpe: AN (geprüft)\n` +
+      `✅ Pumpe: AN\n` +
       `⏱️ Dauer: *${minutes} Minuten*\n` +
       `⏹️ Pumpe AUS: ${pumpeAusTime} Uhr\n` +
       `🔌 Ende: ${endeTime} Uhr\n\n` +
-      `Du bekommst eine Nachricht wenn alles fertig ist! 📬\n\n` +
-      `Zum Stoppen: "Bewässerung stopp" oder "Garten aus"`,
+      `Du bekommst eine Nachricht wenn alles fertig ist! 📬` +
+      pumpeWarnung +
+      `\n\nZum Stoppen: "Bewässerung stopp" oder "Garten aus"`,
   };
 }
 
