@@ -521,9 +521,11 @@ function applyMemberPrefsDoc(data) {
       const displayName = rawName.replace(/\s+/g, " ").trim().slice(0, 32);
       const rawEmoji = v.emoji != null ? String(v.emoji).trim() : "";
       if (rawEmoji && !EMOJI_CHOICES_SET.has(rawEmoji)) continue;
+      const rawPhone = v.phone != null ? String(v.phone).replace(/[^\d+]/g, "").trim() : "";
       const o = {};
       if (displayName) o.displayName = displayName;
       if (rawEmoji) o.emoji = rawEmoji;
+      if (rawPhone) o.phone = rawPhone;
       if (Object.keys(o).length) next[k] = o;
     }
   }
