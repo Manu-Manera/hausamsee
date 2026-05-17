@@ -2822,9 +2822,33 @@ exports.siriWebhook = onRequest(async (req, res) => {
 exports.onNewNachricht = onDocumentCreated("nachrichten/{id}", async (event) => {
   const data = event.data?.data();
   if (!data) return;
+  
   const isBewerbung = data.type === "bewerbung";
+  logger.info(`Neue ${isBewerbung ? "Bewerbung" : "Nachricht"} von ${data.name || "Anonym"}`);
+  
+  // Bei Bewerbungen: automatisch zu Kandidaten hinzufügen
+  if (isBewerbung && data.name) {
+    try {
+      const kandidatData = {
+        name: data.name,
+        alter: data.alter || null,
+        info: data.message || data.nachricht || "",
+        kontakt: data.email || "",
+        einzug: data.einzug || null,
+        status: "offen",
+        source: "kontaktformular",
+        createdAt: FieldValue.serverTimestamp(),
+      };
+      const ref = await db.collection("kandidaten").add(kandidatData);
+      logger.info(`Bewerbung als Kandidat:in gespeichert: ${ref.id}`);
+    } catch (e) {
+      logger.error("Fehler beim Speichern der Bewerbung als Kandidat:in", e);
+    }
+  }
+  
+  // WhatsApp-Broadcast an WG
   const header = isBewerbung
-    ? "🚪 *Bewerbung über Kontaktformular:*"
+    ? "🚪 *Neue Bewerbung!*"
     : "✉️ *Nachricht über Kontaktformular:*";
   const lines = [
     header, "",
@@ -2835,9 +2859,15 @@ exports.onNewNachricht = onDocumentCreated("nachrichten/{id}", async (event) => 
     "",
     data.message || data.nachricht || "",
     "",
-    `→ ${WEBSITE_URL}/#wg-intern`,
+    isBewerbung ? `→ ${WEBSITE_URL}/#kandidaten` : `→ ${WEBSITE_URL}/#wg-intern`,
   ].filter(Boolean);
-  await broadcast(lines.join("\n"));
+  
+  try {
+    await broadcast(lines.join("\n"));
+    logger.info("WhatsApp-Broadcast gesendet");
+  } catch (e) {
+    logger.error("Fehler beim WhatsApp-Broadcast", e);
+  }
 });
 
 /* ==========================================================================

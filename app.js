@@ -5124,6 +5124,7 @@ function renderNachrichten() {
             ${n.read ? "Als ungelesen markieren" : "Als gelesen markieren"}
           </button>
           ${n.email ? `<a class="mini-btn" href="mailto:${escapeHtml(n.email)}?subject=${encodeURIComponent(mailSubject)}">↩️ Antworten</a>` : ""}
+          ${isBewerbung ? `<button class="mini-btn" data-id="${n.id}" data-action="add-kandidat">🚪 Zu Kandidat:innen</button>` : ""}
           <button class="mini-btn danger" data-id="${n.id}" data-action="delete">Löschen</button>
         </div>
       </article>
@@ -5137,6 +5138,9 @@ function renderNachrichten() {
     btn.addEventListener("click", () => {
       if (confirm("Nachricht wirklich löschen?")) deleteNachricht(btn.dataset.id);
     });
+  });
+  list.querySelectorAll("[data-action='add-kandidat']").forEach(btn => {
+    btn.addEventListener("click", () => addNachrichtToKandidaten(btn.dataset.id));
   });
 }
 
@@ -5167,6 +5171,44 @@ async function deleteNachricht(id) {
     nachrichtenCache = localStore.nachrichten;
     saveLocal("nachrichten", localStore.nachrichten);
     renderNachrichten();
+  }
+}
+
+async function addNachrichtToKandidaten(id) {
+  if (!requireMember("Kandidat:innen verwalten")) return;
+  const n = nachrichtenCache.find(x => x.id === id);
+  if (!n || n.type !== "bewerbung") {
+    showToast("Keine Bewerbung gefunden.", "error");
+    return;
+  }
+  
+  const kandidatData = {
+    name: n.name || "Unbekannt",
+    alter: n.alter || null,
+    info: n.message || "",
+    kontakt: n.email || "",
+    einzug: n.einzug || null,
+    status: "offen",
+    source: "kontaktformular",
+    createdAt: Date.now(),
+  };
+  
+  if (firebaseReady) {
+    try {
+      await addDoc(collection(db, "kandidaten"), { ...kandidatData, createdAt: serverTimestamp() });
+      showToast(`🚪 ${n.name} zu Kandidat:innen hinzugefügt!`, "success");
+    } catch (e) {
+      console.error(e);
+      showToast("Hinzufügen fehlgeschlagen.", "error");
+    }
+  } else {
+    kandidatData.id = "local_" + Date.now();
+    if (!localStore.kandidaten) localStore.kandidaten = [];
+    localStore.kandidaten.push(kandidatData);
+    kandidatenCache = localStore.kandidaten;
+    saveLocal("kandidaten", localStore.kandidaten);
+    renderKandidaten();
+    showToast(`🚪 ${n.name} zu Kandidat:innen hinzugefügt!`, "success");
   }
 }
 
