@@ -67,7 +67,7 @@ const BEWOHNER = [
     bio: "Bringt Farbe ins Haus, liebt lange Gespräche am Feuer und kocht leidenschaftlich gerne."
   },
   {
-    name: "Elliot",
+    name: "Eliot",
     role: "Junior-Abenteurer",
     emoji: "🦊",
     bio: "Jüngster im Haus. Entdeckt den Garten, den Steg und alle Schwäne auf dem See.",
@@ -846,10 +846,15 @@ function populateLoginMemberSelect() {
   if (!select) return;
   const previous = select.value;
   const adults = getActiveAdults();
+  const kids = getActiveBewohner().filter(b => b.kid);
   const now = Date.now();
   const activeGuests = (guestsCache || []).filter(g => !g.expiresAt || g.expiresAt > now);
 
   const memberOpts = adults
+    .map(b => `<option value="${escapeHtml(b.name)}">${mEmoji(b.name)} ${escapeHtml(mLabel(b.name))}</option>`)
+    .join("");
+
+  const kidsOpts = kids
     .map(b => `<option value="${escapeHtml(b.name)}">${mEmoji(b.name)} ${escapeHtml(mLabel(b.name))}</option>`)
     .join("");
 
@@ -863,9 +868,14 @@ function populateLoginMemberSelect() {
     ? `<optgroup label="Gast-Zugänge">${guestOpts}</optgroup>`
     : `<option value="__guest__">🎟️ Gast-Zugang (Passwort eingeben)</option>`;
 
+  const kidsGroup = kids.length
+    ? `<optgroup label="Kids">${kidsOpts}</optgroup>`
+    : "";
+
   select.innerHTML =
     `<option value="" disabled ${previous ? "" : "selected"}>Wähle dich aus…</option>` +
     `<optgroup label="Bewohner:innen">${memberOpts}</optgroup>` +
+    kidsGroup +
     guestGroup;
 
   if (previous) select.value = previous;

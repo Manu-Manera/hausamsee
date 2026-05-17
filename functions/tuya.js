@@ -250,6 +250,111 @@ async function setPower(nameOrId, on) {
   return { id: device.id, name: device.name, on: !!on, code };
 }
 
+/**
+ * Startet Bewässerung bei einem Bewässerungscomputer.
+ * Basierend auf den tatsächlichen Codes: switch, countdown, work_state
+ * @param {string} nameOrId - Gerätename oder ID
+ * @param {number} minutes - Bewässerungsdauer in Minuten
+ */
+async function startIrrigation(nameOrId, minutes) {
+  let devices = await listDevices();
+  let device = devices.find((d) => d.id === nameOrId);
+  if (!device) device = findDevice(devices, nameOrId);
+  if (!device) {
+    throw new Error(`Gerät "${nameOrId}" nicht gefunden.`);
+  }
+  if (!device.online) {
+    throw new Error(`Gerät "${device.name}" ist offline.`);
+  }
+  
+  const statusCodes = (device.status || []).map(s => s.code);
+  let commands = [];
+  
+  // Bewässerungscomputer: Kategorie "sfkzq"
+  // Basierend auf Debug-Output: switch=true, countdown=600 (SEKUNDEN!), work_state="manual"
+  
+  // 1) work_state auf "manual"
+  if (statusCodes.includes("work_state")) {
+    commands.push({ code: "work_state", value: "manual" });
+  }
+  
+  // 2) countdown in SEKUNDEN (nicht Minuten!)
+  if (statusCodes.includes("countdown")) {
+    commands.push({ code: "countdown", value: minutes * 60 }); // SEKUNDEN!
+  } else if (statusCodes.includes("countdown_1")) {
+    commands.push({ code: "countdown_1", value: minutes * 60 });
+  }
+  
+  // 3) switch einschalten - MUSS dabei sein!
+  if (statusCodes.includes("switch")) {
+    commands.push({ code: "switch", value: true });
+  } else if (statusCodes.includes("switch_1")) {
+    commands.push({ code: "switch_1", value: true });
+  }
+  
+  // Fallback für einfache Geräte ohne spezielle Codes
+  if (commands.length === 0) {
+    commands.push({ code: "switch", value: true });
+  }
+  
+  await apiCall({
+    method: "POST",
+    path: `/v1.0/devices/${device.id}/commands`,
+    body: { commands },
+  });
+  
+  return { id: device.id, name: device.name, minutes, commands: commands.map(c => `${c.code}=${JSON.stringify(c.value)}`) };
+}
+
+/**
+ * Stoppt Bewässerung bei einem Bewässerungscomputer.
+ */
+async function stopIrrigation(nameOrId) {
+  let devices = await listDevices();
+  let device = devices.find((d) => d.id === nameOrId);
+  if (!device) device = findDevice(devices, nameOrId);
+  if (!device) {
+    throw new Error(`Gerät "${nameOrId}" nicht gefunden.`);
+  }
+  if (!device.online) {
+    throw new Error(`Gerät "${device.name}" ist offline.`);
+  }
+  
+  const statusCodes = (device.status || []).map(s => s.code);
+  let commands = [];
+  
+  // Timer auf 0 setzen
+  if (statusCodes.includes("countdown")) {
+    commands.push({ code: "countdown", value: 0 });
+  } else if (statusCodes.includes("countdown_1")) {
+    commands.push({ code: "countdown_1", value: 0 });
+  }
+  
+  // Switch aus
+  if (statusCodes.includes("switch")) {
+    commands.push({ code: "switch", value: false });
+  } else if (statusCodes.includes("switch_1")) {
+    commands.push({ code: "switch_1", value: false });
+  }
+  
+  // work_state zurück auf auto
+  if (statusCodes.includes("work_state")) {
+    commands.push({ code: "work_state", value: "auto" });
+  }
+  
+  if (commands.length === 0) {
+    commands.push({ code: "switch", value: false });
+  }
+  
+  await apiCall({
+    method: "POST",
+    path: `/v1.0/devices/${device.id}/commands`,
+    body: { commands },
+  });
+  
+  return { id: device.id, name: device.name, stopped: true };
+}
+
 async function getAllStatus() {
   const devices = await listDevices();
   return devices.map((d) => {
@@ -258,6 +363,20 @@ async function getAllStatus() {
     const on = entry ? !!entry.value : null;
     return { id: d.id, name: d.name, online: !!d.online, on };
   });
+}
+
+/**
+ * Debug: Zeigt alle Geräte mit ihren vollen Status-Codes
+ */
+async function getAllStatusDebug() {
+  const devices = await listDevices();
+  return devices.map((d) => ({
+    id: d.id,
+    name: d.name,
+    online: !!d.online,
+    category: d.category,
+    statusCodes: (d.status || []).map((s) => `${s.code}=${JSON.stringify(s.value)}`),
+  }));
 }
 
 /**
@@ -299,6 +418,9 @@ module.exports = {
   isConfigured,
   listDevices,
   setPower,
+  startIrrigation,
+  stopIrrigation,
   getAllStatus,
+  getAllStatusDebug,
   isDeviceOn,
 };

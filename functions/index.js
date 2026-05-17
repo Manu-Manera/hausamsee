@@ -53,8 +53,8 @@ const RAIN_ALERT_MIN_MINUTES = 20;
 const RAIN_ALERT_MAX_MINUTES = 42;
 const GARTEN_POLSTER_ALERT_DOC = "config/gartenPolsterRainAlert";
 
-const BEWOHNER = ["Corina", "Jasmin", "Dino", "Andy", "Manu", "Hugues", "Fanny", "Elliot", "Oscar"];
-const KIDS = new Set(["Elliot", "Oscar"]);
+const BEWOHNER = ["Corina", "Jasmin", "Dino", "Andy", "Manu", "Hugues", "Fanny", "Eliot", "Oscar"];
+const KIDS = new Set(["Eliot", "Oscar"]);
 const ADULTS = BEWOHNER.filter((n) => !KIDS.has(n));
 
 // Bewässerung: harte Sicherheitsgrenzen für Steckdosen-Timer.
@@ -814,6 +814,18 @@ function parseGiessenUmgang(sIn) {
   if (!s) return null;
   if (/^wie\s+(gie|kann|soll|muss|funk|warum|wieso)\b/i.test(s)) return null; // reine Wissensfrage, keine Aktion
   if (/^(pumpe|beet|rasen|steckdose|plug)\b/i.test(s)) return null; // normaler Pumpe-Pfad (ohne "bewässerung")
+  
+  // Explizite Stopp-Befehle (DE/EN/FR) – OHNE "giess" Keyword
+  // WICHTIG: "Pumpe aus" stoppt auch die ganze Sequenz (Pumpe erst, dann Computer)
+  const explicitStop = 
+    /^(bewässerung|bewaesserung|garten|pumpe)\s*(aus|stop+|stopp?|off|end|quit)$/i.test(s) ||
+    /^stop\s*(watering|irrigation|garden|the\s+garden|the\s+pump|pump)?$/i.test(s) ||
+    /^(arr[eê]te|stop+)\s*(l['']?arrosage|le\s+jardin|la\s+pompe)?$/i.test(s) ||
+    /^(watering|irrigation|pump)\s*(off|stop+)$/i.test(s);
+  if (explicitStop) {
+    return { gartenSequenz: true, on: false, minutes: null };
+  }
+  
   const gieAktion =
     // Deutsch
     /(giess|gieß|giesse|giessen|gewässer|\bbewäss\w+|\bwässer(?!-))/i.test(s) ||
@@ -833,12 +845,15 @@ function parseGiessenUmgang(sIn) {
   const kontext = /(blu-?m|garten|pflanz|bett?|balkon|draus|aussen|aussen|tropf|kra-?ut|hecke|rasen|beet(?!$))/i.test(s);
   const anBot = /(@gustav|@g\b|@bot\b|gustav|kannst du|könnt|bitte|hey|hallo|mach mal|sofort|schnell)/i.test(s) || s.length < 100;
   if (!kontext && !anBot) return null;
-  const willAus =
-    /(hör( mir)?\s*auf|aufhören|stopp?|abstell|schalte (die )?pumpe aus|genug|lass(es)?\s+\w*aus|wasser (ab|aus)|bewässerung\s*(aus|stop))/i.test(s) &&
-    /(pumpe|giess|gieß|wäss|bewäss|garten|blu-?m)/i.test(s) &&
-    !/\b(noch|weiter|an|länger|mehr|start|los)\b/i.test(s);
-  if (willAus) {
-    // Stopp: beide Geräte aus
+  
+  // Einfacher Check: endet mit "aus", "stop", "off", "stoppen" etc.?
+  const endsWithStop = /\s*(aus|stop+|stopp?|off|beenden|aufhören|abstellen)$/i.test(s);
+  // Oder enthält klare Stopp-Phrasen?
+  const hasStopPhrase = /(hör\s*auf|aufhören|stopp?\s*(das|die|es)?|abstell|genug|lass.*aus|wasser\s*(ab|aus))/i.test(s);
+  // Keine "weiter/an" Wörter die das negieren
+  const noContradiction = !/\b(noch|weiter|an|länger|mehr|start|los|bitte\s+an)\b/i.test(s);
+  
+  if ((endsWithStop || hasStopPhrase) && noContradiction) {
     return { gartenSequenz: true, on: false, minutes: null };
   }
   const timeMatch = s.match(/(\d{1,2})\s*(?:min(?:ute[n]?)?|m)(?:\b|[.,])/i);
@@ -899,11 +914,13 @@ async function startGartenSequenz(minutes, requestedBy, config = {}) {
   
   const sequenzId = `seq_${Date.now()}`;
   
-  // 1) Bewässerungscomputer einschalten
+  // 1) Bewässerungscomputer starten (mit Timer für Gesamtdauer + Nachlauf)
+  const computerLaufzeit = minutes + Math.ceil(nachlaufSec / 60) + 1; // Extra Minute Puffer
   try {
-    await plugs.setPower(deviceComputer, true);
-    await debugLog("garten_seq_computer_on", { sequenzId, deviceComputer });
-    logger.info(`Sequenz ${sequenzId}: Bewässerungscomputer eingeschaltet`);
+    // Versuche zuerst den speziellen Bewässerungs-Befehl
+    await plugs.startIrrigation(deviceComputer, computerLaufzeit);
+    await debugLog("garten_seq_computer_on", { sequenzId, deviceComputer, computerLaufzeit });
+    logger.info(`Sequenz ${sequenzId}: Bewässerungscomputer gestartet für ${computerLaufzeit} Min`);
   } catch (e) {
     return {
       success: false,
@@ -911,102 +928,49 @@ async function startGartenSequenz(minutes, requestedBy, config = {}) {
     };
   }
   
-  // 2) Status-Check: Prüfen ob Bewässerungscomputer wirklich AN ist
-  // Abbruch NUR bei: offline oder definitiv AUS (on === false)
-  // Bei unklarem Status (on === null): Warnung, aber weitermachen
+  // 2) Status-Check: Nur zur Info, KEIN Abbruch!
   await sleep(GARTEN_STATUS_CHECK_DELAY_MS);
   
+  let computerStatus = "gesendet"; // "an", "aus", "gesendet"
   let computerWarnung = "";
-  let check1, check2;
   try {
-    check1 = await plugs.isDeviceOn(deviceComputer);
-    await debugLog("garten_seq_check1", { sequenzId, check1 });
+    const check = await plugs.isDeviceOn(deviceComputer);
+    await debugLog("garten_seq_check", { sequenzId, check });
     
-    if (!check1.online) {
-      // Offline = definitiv ein Problem
-      return {
-        success: false,
-        message: `🚨 *Sicherheitsstopp!*\n\nBewässerungscomputer ist offline – Pumpe wurde NICHT gestartet.\n\n🔧 Bitte prüfe:\n• Stromversorgung\n• WLAN-Verbindung`,
-      };
-    }
-    
-    if (check1.on === false) {
-      // Definitiv AUS
-      return {
-        success: false,
-        message: `🚨 *Sicherheitsstopp!*\n\nBewässerungscomputer ist AUS – Pumpe wurde NICHT gestartet.\n\n🔧 Bitte prüfe:\n• Ist das Gerät eingeschaltet?\n• Funktioniert die Smart Life Steuerung?`,
-      };
-    }
-    
-    if (check1.on === null) {
-      // Status unklar – Warnung aber weitermachen
-      computerWarnung = `\n\n⚠️ *Hinweis:* Status vom Bewässerungscomputer konnte nicht eindeutig geprüft werden (Codes: ${check1.statusCodes?.join(", ") || "keine"}). Bewässerung läuft trotzdem!`;
-      logger.warn(`Sequenz ${sequenzId}: Computer-Status unklar, fahre fort. StatusCodes: ${check1.statusCodes?.join(", ")}`);
+    if (!check.online) {
+      computerStatus = "gesendet";
+      computerWarnung = `\n\n⚠️ *Hinweis:* Bewässerungscomputer meldet offline – Befehl wurde gesendet!`;
+      logger.warn(`Sequenz ${sequenzId}: Computer meldet offline nach Einschalten`);
+    } else if (check.on === false) {
+      computerStatus = "aus";
+      computerWarnung = `\n\n⚠️ *Hinweis:* Bewässerungscomputer meldet AUS – Befehl wurde gesendet, aber Gerät reagiert nicht!`;
+      logger.warn(`Sequenz ${sequenzId}: Computer meldet AUS nach Einschalten`);
+    } else if (check.on === null) {
+      computerStatus = "gesendet";
+      computerWarnung = `\n\n⚠️ *Hinweis:* Status unklar. Einschaltbefehl wurde gesendet!`;
+      logger.warn(`Sequenz ${sequenzId}: Computer-Status unklar. Codes: ${check.statusCodes?.join(", ")}`);
     } else {
-      // Zweiter Check nach kurzer Pause (nur wenn erster OK war)
-      await sleep(GARTEN_STATUS_CHECK_DELAY_MS);
-      check2 = await plugs.isDeviceOn(deviceComputer);
-      await debugLog("garten_seq_check2", { sequenzId, check2 });
-      
-      if (!check2.online) {
-        try { await plugs.setPower(deviceComputer, false); } catch (_) { /* ignore */ }
-        return {
-          success: false,
-          message: `🚨 *Sicherheitsstopp!*\n\nBewässerungscomputer ist offline gegangen – Pumpe wurde NICHT gestartet.`,
-        };
-      }
-      
-      if (check2.on === false) {
-        try { await plugs.setPower(deviceComputer, false); } catch (_) { /* ignore */ }
-        return {
-          success: false,
-          message: `🚨 *Sicherheitsstopp!*\n\nBewässerungscomputer ist wieder ausgegangen – Pumpe wurde NICHT gestartet.\n\n⚠️ Möglicherweise gibt es ein Problem mit dem Gerät.`,
-        };
-      }
-      
-      logger.info(`Sequenz ${sequenzId}: Doppelter Status-Check OK – Computer ist AN`);
+      computerStatus = "an";
+      logger.info(`Sequenz ${sequenzId}: Computer-Check OK – meldet AN`);
     }
   } catch (e) {
-    // Status-Check komplett fehlgeschlagen – Warnung aber weitermachen
-    // (Das Einschalten hat ja funktioniert)
-    computerWarnung = `\n\n⚠️ *Hinweis:* Status-Check fehlgeschlagen (${e.message || e}). Bewässerung läuft trotzdem!`;
-    logger.warn(`Sequenz ${sequenzId}: Status-Check Exception, fahre fort`, e?.message);
+    computerStatus = "gesendet";
+    computerWarnung = `\n\n⚠️ *Hinweis:* Status-Check fehlgeschlagen. Einschaltbefehl wurde gesendet!`;
+    logger.warn(`Sequenz ${sequenzId}: Status-Check Exception`, e?.message);
   }
   
-  // 3) Pumpe einschalten
+  // 3) Pumpe einschalten (optional - Bewässerungscomputer bleibt AN auch wenn Pumpe offline!)
+  let pumpeStatus = "gesendet";
+  let pumpeWarnung = "";
   try {
     await plugs.setPower(devicePumpe, true);
     await debugLog("garten_seq_pumpe_on", { sequenzId, devicePumpe });
+    pumpeStatus = "an";
     logger.info(`Sequenz ${sequenzId}: Pumpe eingeschaltet`);
   } catch (e) {
-    // Pumpe konnte nicht eingeschaltet werden – Computer wieder aus
-    try { await plugs.setPower(deviceComputer, false); } catch (_) { /* ignore */ }
-    return {
-      success: false,
-      message: `😕 Konnte *${devicePumpe}* nicht einschalten:\n${e.message || e}\n\nBewässerungscomputer wurde wieder ausgeschaltet.`,
-    };
-  }
-  
-  // 4) Status-Check: Ist die Pumpe angegangen? (nur Warnung, kein Abbruch!)
-  // Kritisch ist nur der Bewässerungscomputer (Wasser). Pumpe ist nur für Druck.
-  let pumpeWarnung = "";
-  await sleep(GARTEN_STATUS_CHECK_DELAY_MS);
-  try {
-    const pumpeStatus = await plugs.isDeviceOn(devicePumpe);
-    await debugLog("garten_seq_pumpe_check", { sequenzId, pumpeStatus });
-    
-    if (!pumpeStatus.online) {
-      pumpeWarnung = "\n\n⚠️ *Hinweis:* Pumpen-Status konnte nicht geprüft werden (offline). Bewässerung läuft trotzdem!";
-      logger.warn(`Sequenz ${sequenzId}: Pumpe ist offline, fahre trotzdem fort`);
-    } else if (!pumpeStatus.on) {
-      pumpeWarnung = "\n\n⚠️ *Hinweis:* Pumpe meldet 'aus' – möglicherweise verzögerte Rückmeldung. Bewässerung läuft trotzdem!";
-      logger.warn(`Sequenz ${sequenzId}: Pumpe meldet 'aus', fahre trotzdem fort`);
-    } else {
-      logger.info(`Sequenz ${sequenzId}: Pumpe-Check OK – Pumpe läuft`);
-    }
-  } catch (e) {
-    pumpeWarnung = "\n\n⚠️ *Hinweis:* Pumpen-Status konnte nicht abgefragt werden. Bewässerung läuft trotzdem!";
-    logger.warn(`Sequenz ${sequenzId}: Pumpe-Status-Check fehlgeschlagen, fahre fort`, e?.message);
+    pumpeStatus = "offline";
+    pumpeWarnung = `\n\n⚠️ *Hinweis:* Pumpe konnte nicht eingeschaltet werden (${e.message || "offline"}).`;
+    logger.warn(`Sequenz ${sequenzId}: Pumpe-Einschaltung fehlgeschlagen`, e?.message);
   }
   
   // 5) Tasks für die späteren Schritte anlegen (nur noch AUS-Befehle)
@@ -1048,18 +1012,30 @@ async function startGartenSequenz(minutes, requestedBy, config = {}) {
   const pumpeAusTime = new Date(t_pumpeAus).toLocaleTimeString("de-CH", { hour: "2-digit", minute: "2-digit", timeZone: "Europe/Zurich" });
   const endeTime = new Date(t_computerAus).toLocaleTimeString("de-CH", { hour: "2-digit", minute: "2-digit", timeZone: "Europe/Zurich" });
   
+  // Status-Zeilen basierend auf tatsächlichem Status
+  const computerLine = computerStatus === "an" 
+    ? `✅ Bewässerungscomputer: AN` 
+    : computerStatus === "aus"
+    ? `❌ Bewässerungscomputer: AUS (reagiert nicht!)`
+    : `📤 Bewässerungscomputer: Befehl gesendet`;
+    
+  const pumpeLine = pumpeStatus === "an"
+    ? `✅ Pumpe: AN`
+    : pumpeStatus === "offline"
+    ? `📴 Pumpe: offline`
+    : `📤 Pumpe: Befehl gesendet`;
+  
   const allWarnings = computerWarnung + pumpeWarnung;
   
   return {
     success: true,
     sequenzId,
-    message: `🌿 *Garten-Bewässerung gestartet!*\n\n` +
-      `✅ Bewässerungscomputer: AN\n` +
-      `✅ Pumpe: AN\n` +
+    message: `🌿 *Garten-Bewässerung*\n\n` +
+      `${computerLine}\n` +
+      `${pumpeLine}\n` +
       `⏱️ Dauer: *${minutes} Minuten*\n` +
       `⏹️ Pumpe AUS: ${pumpeAusTime} Uhr\n` +
-      `🔌 Ende: ${endeTime} Uhr\n\n` +
-      `Du bekommst eine Nachricht wenn alles fertig ist! 📬` +
+      `🔌 Ende: ${endeTime} Uhr` +
       allWarnings +
       `\n\nZum Stoppen: "Bewässerung stopp" oder "Garten aus"`,
   };
@@ -1077,16 +1053,19 @@ async function stopGartenSequenz(requestedBy) {
   }
   
   // Beide Geräte ausschalten
-  const errors = [];
+  let pumpeOk = true;
+  let computerOk = true;
+  
   try {
     await plugs.setPower(devicePumpe, false);
   } catch (e) {
-    errors.push(`Pumpe: ${e.message || e}`);
+    pumpeOk = false;
   }
+  
   try {
-    await plugs.setPower(deviceComputer, false);
+    await plugs.stopIrrigation(deviceComputer);
   } catch (e) {
-    errors.push(`Bewässerungscomputer: ${e.message || e}`);
+    computerOk = false;
   }
   
   // Alle offenen Tasks als erledigt markieren
@@ -1101,21 +1080,18 @@ async function stopGartenSequenz(requestedBy) {
   });
   await Promise.all(ops);
   
-  await debugLog("garten_seq_stopped", { requestedBy, tasksCleared: ops.length });
+  await debugLog("garten_seq_stopped", { requestedBy, tasksCleared: ops.length, pumpeOk, computerOk });
   
-  if (errors.length) {
-    return {
-      success: false,
-      message: `⚠️ Teilweise Fehler beim Stoppen:\n${errors.join("\n")}\n\nOffene Tasks wurden gelöscht.`,
-    };
-  }
+  // Statuszeilen
+  const pumpeStatus = pumpeOk ? "🔌 Pumpe: AUS" : "📴 Pumpe: war offline";
+  const computerStatus = computerOk ? "🔌 Bewässerungscomputer: AUS" : "⚠️ Bewässerungscomputer: Fehler";
   
   return {
-    success: true,
+    success: computerOk, // Erfolg wenn Computer gestoppt wurde
     message: `⏹️ *Garten-Bewässerung gestoppt!*\n\n` +
-      `🔌 Pumpe: AUS\n` +
-      `🔌 Bewässerungscomputer: AUS\n\n` +
-      `${ops.length} geplante Schritte abgebrochen.`,
+      `${computerStatus}\n` +
+      `${pumpeStatus}` +
+      (ops.length > 0 ? `\n\n${ops.length} geplante Schritte abgebrochen.` : ``),
   };
 }
 
@@ -1141,11 +1117,11 @@ async function abortGartenSequenz(sequenzId, requestedBy, reason, userMessage) {
   });
   await Promise.all(ops);
   
-  // Bewässerungscomputer sicherheitshalber ausschalten
+  // Bewässerungscomputer sicherheitshalber stoppen
   try {
-    await plugs.setPower(GARTEN_DEVICE_COMPUTER, false);
+    await plugs.stopIrrigation(GARTEN_DEVICE_COMPUTER);
   } catch (e) {
-    logger.warn("abortGartenSequenz: Konnte Bewässerungscomputer nicht ausschalten", e?.message);
+    logger.warn("abortGartenSequenz: Konnte Bewässerungscomputer nicht stoppen", e?.message);
   }
   
   // User benachrichtigen
@@ -2221,6 +2197,30 @@ async function dispatch(ctx) {
     }
     return true;
   }
+  
+  // 14a2) DEBUG: Detaillierte Geräte-Info
+  if (/^(tuya\s*debug|geräte\s*debug|device\s*debug|steckdosen\s*detail)/i.test(rawInput.trim())) {
+    if (!plugs.isConfigured()) {
+      await reply(`⚠️ Smart Plugs nicht konfiguriert.`);
+      return true;
+    }
+    try {
+      const items = await plugs.getAllStatusDebug();
+      if (!items.length) {
+        await reply(`🔌 Keine Geräte gefunden.`);
+      } else {
+        const lines = items.map((d) => {
+          const status = d.online ? "online" : "OFFLINE";
+          const codes = d.statusCodes?.length ? d.statusCodes.join(", ") : "keine";
+          return `*${d.name}* (${status})\nKategorie: ${d.category || "?"}\nCodes: ${codes}`;
+        });
+        await reply(`🔧 *Geräte-Debug:*\n\n${lines.join("\n\n")}`);
+      }
+    } catch (e) {
+      await reply(`😕 Fehler: ${e.message || e}`);
+    }
+    return true;
+  }
 
   // 14b) Garten-Bewässerung (Sequenz: Bewässerungscomputer → Pumpe)
   const pump = parseBewaesserungMessage(rawInput);
@@ -2586,6 +2586,236 @@ exports.whatsappWebhook = onRequest(
 });
 
 /* ==========================================================================
+   Siri / Shortcuts Webhook – Sprachsteuerung mit natürlicher Sprache
+   ========================================================================== */
+
+const SIRI_SECRET = process.env.SIRI_SECRET || "hausamsee2026";
+
+// Interpretiert natürliche Sprache für Siri-Befehle
+function parseSiriCommand(text) {
+  const s = String(text || "").toLowerCase().trim();
+  if (!s) return null;
+  
+  // Minuten extrahieren
+  const minMatch = s.match(/(\d+)\s*min/i);
+  const minutes = minMatch ? parseInt(minMatch[1], 10) : 20;
+  
+  // STOP zuerst prüfen (wichtig: vor START!)
+  // Bewässerung / Garten STOP
+  if (/(bewässer|garten|blumen|giess|gieß|wasser|pflanz|pumpe).*(stopp?|aus|end|beend|aufhör)/i.test(s) ||
+      /(stopp?|beend|schalt.*aus|mach.*aus|hör.*auf).*(bewässer|garten|blumen|giess|gieß|pumpe)?/i.test(s) ||
+      /^(stopp?e?n?|aus|ende|stop)$/i.test(s) ||
+      /(stopp?e?n?|beenden|ausschalten)$/i.test(s)) {
+    return { action: "garten", cmd: "stop" };
+  }
+  
+  // Bewässerung / Garten START
+  if (/(bewässer|garten|blumen|giess|gieß|wasser|pflanz).*(start|an|ein|los|beginn)/i.test(s) ||
+      /(start|beginn|mach|schalt).*(bewässer|garten|blumen|giess|gieß)/i.test(s) ||
+      /^(bewässer|garten bewässer|giess|gieß)/i.test(s) ||
+      /(starten|einschalten|anmachen)$/i.test(s)) {
+    return { action: "garten", cmd: "start", minutes };
+  }
+  
+  // Status abfragen
+  if (/(status|läuft|an\?|aktiv|check).*(bewässer|garten|pump)/i.test(s) ||
+      /(bewässer|garten|pump).*(status|läuft|an\?|aktiv)/i.test(s) ||
+      /^status$/i.test(s)) {
+    return { action: "garten", cmd: "status" };
+  }
+  
+  // Toggle (umschalten)
+  if (/^(toggle|umschalt|wechsel)$/i.test(s) ||
+      /(bewässer|garten).*(toggle|umschalt|wechsel)/i.test(s) ||
+      /^(garten|bewässer)$/i.test(s)) {
+    return { action: "garten", cmd: "toggle", minutes };
+  }
+  
+  // Licht AN
+  if (/(licht|lichter|lampe|beleuchtung|kette).*(an|ein|start)/i.test(s) ||
+      /(mach|schalt).*(licht|lichter|lampe|kette).*(an|ein)/i.test(s)) {
+    return { action: "licht", cmd: "an" };
+  }
+  
+  // Licht AUS
+  if (/(licht|lichter|lampe|beleuchtung|kette).*(aus|off|stop)/i.test(s) ||
+      /(mach|schalt).*(licht|lichter|lampe|kette).*(aus)/i.test(s)) {
+    return { action: "licht", cmd: "aus" };
+  }
+  
+  // Licht Toggle
+  if (/^(licht|lichter|lampe|lichterkette|kette)$/i.test(s) ||
+      /(licht|lichter|lampe|kette).*(toggle|umschalt|wechsel)/i.test(s)) {
+    return { action: "licht", cmd: "toggle" };
+  }
+  
+  return null;
+}
+
+exports.siriWebhook = onRequest(async (req, res) => {
+  // CORS für Shortcuts
+  res.set("Access-Control-Allow-Origin", "*");
+  if (req.method === "OPTIONS") {
+    res.set("Access-Control-Allow-Methods", "GET, POST");
+    res.set("Access-Control-Allow-Headers", "Content-Type");
+    return res.status(204).send("");
+  }
+  
+  const params = { ...req.query, ...req.body };
+  let { action, cmd, secret, minutes: minParam, text } = params;
+  
+  // Secret prüfen
+  if (secret !== SIRI_SECRET) {
+    return res.status(401).json({ success: false, speech: "Zugriff verweigert. Falsches Secret." });
+  }
+  
+  // Natürliche Sprache interpretieren wenn "text" übergeben wird
+  if (text && !action) {
+    const parsed = parseSiriCommand(text);
+    if (parsed) {
+      action = parsed.action;
+      cmd = parsed.cmd;
+      if (parsed.minutes) minParam = parsed.minutes;
+    } else {
+      return res.json({ 
+        success: false, 
+        speech: "Das habe ich nicht verstanden. Sag zum Beispiel: Bewässerung starten oder Garten aus.",
+        understood: false
+      });
+    }
+  }
+  
+  // Aktion: garten
+  if (action === "garten" || action === "garden") {
+    if (!plugs.isConfigured()) {
+      return res.json({ success: false, speech: "Smart Home nicht konfiguriert." });
+    }
+    
+    if (cmd === "start" || cmd === "an" || cmd === "on") {
+      const minutes = parseInt(minParam, 10) || 20;
+      try {
+        const result = await startGartenSequenz(minutes, null);
+        if (result.success) {
+          return res.json({ 
+            success: true, 
+            speech: `Alles klar! Bewässerung läuft für ${minutes} Minuten.`,
+            sequenzId: result.sequenzId 
+          });
+        } else {
+          return res.json({ success: false, speech: "Bewässerung konnte nicht gestartet werden." });
+        }
+      } catch (e) {
+        return res.json({ success: false, speech: `Fehler: ${e.message}` });
+      }
+    }
+    
+    if (cmd === "stop" || cmd === "aus" || cmd === "off") {
+      try {
+        const result = await stopGartenSequenz("siri");
+        return res.json({ 
+          success: result.success, 
+          speech: result.success ? "Bewässerung wurde gestoppt." : "Fehler beim Stoppen." 
+        });
+      } catch (e) {
+        return res.json({ success: false, speech: `Fehler: ${e.message}` });
+      }
+    }
+    
+    if (cmd === "status") {
+      try {
+        const status = await plugs.isDeviceOn(GARTEN_DEVICE_COMPUTER);
+        const statusText = status.online 
+          ? (status.on ? "Die Bewässerung läuft gerade." : "Die Bewässerung ist aus.") 
+          : "Der Bewässerungscomputer ist offline.";
+        return res.json({ success: true, speech: statusText, status });
+      } catch (e) {
+        return res.json({ success: false, speech: "Status konnte nicht abgefragt werden." });
+      }
+    }
+    
+    // Toggle: Prüft Status und schaltet um
+    if (cmd === "toggle") {
+      try {
+        const status = await plugs.isDeviceOn(GARTEN_DEVICE_COMPUTER);
+        if (status.on) {
+          // Ist an → ausschalten
+          const result = await stopGartenSequenz("siri");
+          return res.json({ 
+            success: result.success, 
+            speech: "Bewässerung wurde gestoppt.",
+            action: "stopped"
+          });
+        } else {
+          // Ist aus → einschalten
+          const minutes = parseInt(minParam, 10) || 20;
+          const result = await startGartenSequenz(minutes, null);
+          return res.json({ 
+            success: result.success, 
+            speech: `Bewässerung gestartet für ${minutes} Minuten.`,
+            action: "started",
+            sequenzId: result.sequenzId
+          });
+        }
+      } catch (e) {
+        return res.json({ success: false, speech: `Fehler: ${e.message}` });
+      }
+    }
+    
+    return res.json({ success: false, speech: "Unbekannter Befehl für Garten." });
+  }
+  
+  // Aktion: licht
+  if (action === "licht" || action === "light") {
+    if (!plugs.isConfigured()) {
+      return res.json({ success: false, speech: "Smart Home nicht konfiguriert." });
+    }
+    
+    const device = "Lichterkette";
+    const turnOn = cmd === "an" || cmd === "on" || cmd === "start";
+    const turnOff = cmd === "aus" || cmd === "off" || cmd === "stop";
+    
+    if (turnOn || turnOff) {
+      try {
+        await plugs.setPower(device, turnOn);
+        return res.json({ 
+          success: true, 
+          speech: turnOn ? "Lichterkette ist jetzt an." : "Lichterkette ist jetzt aus."
+        });
+      } catch (e) {
+        return res.json({ success: false, speech: `Fehler: ${e.message}` });
+      }
+    }
+    
+    // Toggle: Status prüfen und umschalten
+    if (cmd === "toggle") {
+      try {
+        const status = await plugs.isDeviceOn(device);
+        const newState = !status.on;
+        await plugs.setPower(device, newState);
+        return res.json({ 
+          success: true, 
+          speech: newState ? "Lichterkette ist jetzt an." : "Lichterkette ist jetzt aus.",
+          action: newState ? "on" : "off"
+        });
+      } catch (e) {
+        return res.json({ success: false, speech: `Fehler: ${e.message}` });
+      }
+    }
+    
+    return res.json({ success: false, speech: "Unbekannter Befehl für Licht." });
+  }
+  
+  return res.json({ 
+    success: false, 
+    speech: "Sag zum Beispiel: Bewässerung starten, Bewässerung stoppen, oder Licht an.",
+    help: {
+      examples: ["Bewässerung starten", "Garten aus", "Bewässerung stoppen", "Licht an", "Status"],
+      url: "?text=Bewässerung starten&secret=xxx"
+    }
+  });
+});
+
+/* ==========================================================================
    Kontaktformular → WhatsApp
    ========================================================================== */
 
@@ -2836,7 +3066,11 @@ async function runGartenPlanTick() {
             nachlaufSec: data.nachlaufSec ?? GARTEN_SEQUENZ_NACHLAUF_SEC,
           });
           await debugLog("garten_plan_seq_start", { hm, dayKey, slotIndex: idx, minutes, result: result.success });
-          if (!result.success) {
+          
+          // WG benachrichtigen über automatischen Start
+          if (result.success) {
+            await broadcastToWG(`🌿 *Automatische Garten-Bewässerung gestartet!*\n\n⏱️ Dauer: ${minutes} Min\n📅 Zeitplan: ${onT} - ${offT}\n\nZum Stoppen: "Garten aus"`);
+          } else {
             logger.warn("garten_plan_seq_start failed:", result.message);
           }
         } catch (e) {
