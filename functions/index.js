@@ -61,9 +61,9 @@ const ADULTS = BEWOHNER.filter((n) => !KIDS.has(n));
 const PUMP_DEFAULT_MINUTES = 20; // Default-Bewässerungsdauer (Minuten)
 const PUMP_MAX_MINUTES = 60;     // Länger lassen wir die Pumpe NIE laufen
 
-// Garten-Sequenz: Bewässerungscomputer → Pumpe (mit Vorlauf/Nachlauf)
-const GARTEN_SEQUENZ_VORLAUF_SEC = 30;   // Sekunden nach Bewässerungscomputer AN bevor Pumpe AN
-const GARTEN_SEQUENZ_NACHLAUF_SEC = 30;  // Sekunden nach Pumpe AUS bevor Bewässerungscomputer AUS
+// Garten-Sequenz: Bewässerungscomputer → Pumpe (mit Status-Check)
+const GARTEN_STATUS_CHECK_DELAY_MS = 2000; // Millisekunden zwischen Status-Checks
+const GARTEN_SEQUENZ_NACHLAUF_SEC = 30;   // Sekunden nach Pumpe AUS bevor Bewässerungscomputer AUS
 const GARTEN_DEVICE_COMPUTER = "Bewässerungscomputer"; // Smart Life Gerätename
 const GARTEN_DEVICE_PUMPE = "Pumpe";                   // Smart Life Gerätename
 
@@ -850,11 +850,19 @@ function parseGiessenUmgang(sIn) {
 }
 
 /**
+ * Kleine Hilfsfunktion zum Warten
+ */
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+/**
  * Startet die Garten-Bewässerungssequenz:
- *   1. Bewässerungscomputer AN (sofort)
- *   2. Pumpe AN (nach VORLAUF Sekunden)
- *   3. Pumpe AUS (nach Bewässerungsdauer)
- *   4. Bewässerungscomputer AUS (nach NACHLAUF Sekunden)
+ *   1. Bewässerungscomputer AN
+ *   2. Doppelter Status-Check (prüft ob Computer wirklich AN ist)
+ *   3. Pumpe AN (sofort nach erfolgreichem Check)
+ *   4. Pumpe AUS (nach Bewässerungsdauer)
+ *   5. Bewässerungscomputer AUS (nach NACHLAUF Sekunden)
  * 
  * @param {number} minutes - Bewässerungsdauer in Minuten
  * @param {string} requestedBy - WhatsApp-Nummer des Anfordernden
@@ -865,7 +873,6 @@ async function startGartenSequenz(minutes, requestedBy, config = {}) {
   // Gerätenamen aus Config oder Defaults
   const deviceComputer = config.deviceComputer || GARTEN_DEVICE_COMPUTER;
   const devicePumpe = config.devicePumpe || GARTEN_DEVICE_PUMPE;
-  const vorlaufSec = config.vorlaufSec ?? GARTEN_SEQUENZ_VORLAUF_SEC;
   const nachlaufSec = config.nachlaufSec ?? GARTEN_SEQUENZ_NACHLAUF_SEC;
   
   // Regen-Check
@@ -890,19 +897,13 @@ async function startGartenSequenz(minutes, requestedBy, config = {}) {
     };
   }
   
-  const now = Date.now();
-  const sequenzId = `seq_${now}`;
+  const sequenzId = `seq_${Date.now()}`;
   
-  // Zeitpunkte berechnen
-  const t1_computerAn = now;
-  const t2_pumpeAn = now + vorlaufSec * 1000;
-  const t3_pumpeAus = t2_pumpeAn + minutes * 60 * 1000;
-  const t4_computerAus = t3_pumpeAus + nachlaufSec * 1000;
-  
-  // 1) Bewässerungscomputer sofort einschalten
+  // 1) Bewässerungscomputer einschalten
   try {
     await plugs.setPower(deviceComputer, true);
     await debugLog("garten_seq_computer_on", { sequenzId, deviceComputer });
+    logger.info(`Sequenz ${sequenzId}: Bewässerungscomputer eingeschaltet`);
   } catch (e) {
     return {
       success: false,
@@ -910,24 +911,72 @@ async function startGartenSequenz(minutes, requestedBy, config = {}) {
     };
   }
   
-  // Tasks für die späteren Schritte anlegen
+  // 2) Doppelter Status-Check: Prüfen ob Bewässerungscomputer wirklich AN ist
+  await sleep(GARTEN_STATUS_CHECK_DELAY_MS);
+  
+  let check1, check2;
+  try {
+    check1 = await plugs.isDeviceOn(deviceComputer);
+    await debugLog("garten_seq_check1", { sequenzId, check1 });
+    
+    if (!check1.online || !check1.on) {
+      // Erster Check fehlgeschlagen
+      return {
+        success: false,
+        message: `🚨 *Sicherheitsstopp!*\n\nBewässerungscomputer ist ${!check1.online ? "offline" : "nicht eingeschaltet"} – Pumpe wurde NICHT gestartet.\n\n🔧 Bitte prüfe:\n• Stromversorgung\n• WLAN-Verbindung\n• Wasserhahn offen?`,
+      };
+    }
+    
+    // Zweiter Check nach kurzer Pause
+    await sleep(GARTEN_STATUS_CHECK_DELAY_MS);
+    check2 = await plugs.isDeviceOn(deviceComputer);
+    await debugLog("garten_seq_check2", { sequenzId, check2 });
+    
+    if (!check2.online || !check2.on) {
+      // Zweiter Check fehlgeschlagen – Computer ging wieder aus
+      try { await plugs.setPower(deviceComputer, false); } catch (_) { /* ignore */ }
+      return {
+        success: false,
+        message: `🚨 *Sicherheitsstopp!*\n\nBewässerungscomputer ist wieder ${!check2.online ? "offline gegangen" : "ausgegangen"} – Pumpe wurde NICHT gestartet.\n\n⚠️ Möglicherweise gibt es ein Problem mit dem Gerät.`,
+      };
+    }
+    
+    logger.info(`Sequenz ${sequenzId}: Doppelter Status-Check OK – Computer ist AN`);
+  } catch (e) {
+    // Status-Check fehlgeschlagen – Sicherheitshalber abbrechen
+    try { await plugs.setPower(deviceComputer, false); } catch (_) { /* ignore */ }
+    return {
+      success: false,
+      message: `🚨 *Sicherheitsstopp!*\n\nKonnte Status nicht prüfen – Pumpe wurde NICHT gestartet.\n\nFehler: ${e.message || e}`,
+    };
+  }
+  
+  // 3) Pumpe sofort einschalten (Status-Check war erfolgreich!)
+  try {
+    await plugs.setPower(devicePumpe, true);
+    await debugLog("garten_seq_pumpe_on", { sequenzId, devicePumpe });
+    logger.info(`Sequenz ${sequenzId}: Pumpe eingeschaltet`);
+  } catch (e) {
+    // Pumpe konnte nicht eingeschaltet werden – Computer wieder aus
+    try { await plugs.setPower(deviceComputer, false); } catch (_) { /* ignore */ }
+    return {
+      success: false,
+      message: `😕 Konnte *${devicePumpe}* nicht einschalten:\n${e.message || e}\n\nBewässerungscomputer wurde wieder ausgeschaltet.`,
+    };
+  }
+  
+  // 4) Tasks für die späteren Schritte anlegen (nur noch AUS-Befehle)
+  const now = Date.now();
+  const t_pumpeAus = now + minutes * 60 * 1000;
+  const t_computerAus = t_pumpeAus + nachlaufSec * 1000;
+  
   const tasks = [
-    {
-      sequenzId,
-      step: 2,
-      action: "on",
-      device: devicePumpe,
-      executeAt: new Date(t2_pumpeAn).toISOString(),
-      requestedBy,
-      done: false,
-      createdAt: FieldValue.serverTimestamp(),
-    },
     {
       sequenzId,
       step: 3,
       action: "off",
       device: devicePumpe,
-      executeAt: new Date(t3_pumpeAus).toISOString(),
+      executeAt: new Date(t_pumpeAus).toISOString(),
       requestedBy,
       done: false,
       createdAt: FieldValue.serverTimestamp(),
@@ -937,7 +986,7 @@ async function startGartenSequenz(minutes, requestedBy, config = {}) {
       step: 4,
       action: "off",
       device: deviceComputer,
-      executeAt: new Date(t4_computerAus).toISOString(),
+      executeAt: new Date(t_computerAus).toISOString(),
       requestedBy,
       done: false,
       createdAt: FieldValue.serverTimestamp(),
@@ -948,18 +997,17 @@ async function startGartenSequenz(minutes, requestedBy, config = {}) {
     await db.collection("bewaesserung_tasks").add(task);
   }
   
-  await debugLog("garten_seq_started", { sequenzId, minutes, deviceComputer, devicePumpe, vorlaufSec, nachlaufSec });
+  await debugLog("garten_seq_started", { sequenzId, minutes, deviceComputer, devicePumpe, nachlaufSec });
   
-  const pumpeAnTime = new Date(t2_pumpeAn).toLocaleTimeString("de-CH", { hour: "2-digit", minute: "2-digit", timeZone: "Europe/Zurich" });
-  const pumpeAusTime = new Date(t3_pumpeAus).toLocaleTimeString("de-CH", { hour: "2-digit", minute: "2-digit", timeZone: "Europe/Zurich" });
-  const endeTime = new Date(t4_computerAus).toLocaleTimeString("de-CH", { hour: "2-digit", minute: "2-digit", timeZone: "Europe/Zurich" });
+  const pumpeAusTime = new Date(t_pumpeAus).toLocaleTimeString("de-CH", { hour: "2-digit", minute: "2-digit", timeZone: "Europe/Zurich" });
+  const endeTime = new Date(t_computerAus).toLocaleTimeString("de-CH", { hour: "2-digit", minute: "2-digit", timeZone: "Europe/Zurich" });
   
   return {
     success: true,
     sequenzId,
     message: `🌿 *Garten-Bewässerung gestartet!*\n\n` +
-      `💧 Bewässerungscomputer: AN\n` +
-      `💧 Pumpe AN: ${pumpeAnTime} Uhr (in ${vorlaufSec}s)\n` +
+      `✅ Bewässerungscomputer: AN (2x geprüft)\n` +
+      `✅ Pumpe: AN\n` +
       `⏱️ Dauer: *${minutes} Minuten*\n` +
       `⏹️ Pumpe AUS: ${pumpeAusTime} Uhr\n` +
       `🔌 Ende: ${endeTime} Uhr\n\n` +
@@ -2735,7 +2783,6 @@ async function runGartenPlanTick() {
           const result = await startGartenSequenz(minutes, null, {
             deviceComputer,
             devicePumpe,
-            vorlaufSec: data.vorlaufSec ?? GARTEN_SEQUENZ_VORLAUF_SEC,
             nachlaufSec: data.nachlaufSec ?? GARTEN_SEQUENZ_NACHLAUF_SEC,
           });
           await debugLog("garten_plan_seq_start", { hm, dayKey, slotIndex: idx, minutes, result: result.success });
@@ -2873,50 +2920,6 @@ exports.checkBewaesserung = onSchedule(
       for (const doc of sequenzTasks) {
         const d = doc.data();
         if (d.reason === "rain" || d.reason === "safety") continue;
-        
-        // Bei Regen: Sequenz-Tasks überspringen wenn es ums Giessen geht
-        const dev = (d.device || "").toLowerCase();
-        const isGartenDevice = dev.includes("pump") || dev.includes("bewässerung");
-        if (raining && isGartenDevice && d.action === "on") {
-          await doc.ref.update({ done: true, cancelledAt: FieldValue.serverTimestamp(), reason: "rain" });
-          if (d.requestedBy && d.step === 2) {
-            await sendWhatsApp(d.requestedBy, `🌧️ Bewässerung wegen Regen abgebrochen – der Himmel übernimmt! 🦆💧`);
-          }
-          continue;
-        }
-        
-        // 🔒 SICHERHEITSCHECK: Vor Pumpe-Einschalten prüfen ob Bewässerungscomputer AN ist
-        const isPumpeStart = d.step === 2 && d.action === "on" && dev.includes("pump");
-        if (isPumpeStart) {
-          try {
-            const computerStatus = await plugs.isDeviceOn(GARTEN_DEVICE_COMPUTER);
-            if (!computerStatus.found) {
-              logger.error(`Sicherheitsstopp: Bewässerungscomputer "${GARTEN_DEVICE_COMPUTER}" nicht gefunden!`);
-              await abortGartenSequenz(d.sequenzId, d.requestedBy, "computer_not_found",
-                `🚨 *SICHERHEITSSTOPP!*\n\nBewässerungscomputer nicht gefunden – Pumpe wurde NICHT gestartet um Trockenlauf zu verhindern.\n\nBitte prüfe die Smart Life App.`);
-              continue;
-            }
-            if (!computerStatus.online) {
-              logger.error(`Sicherheitsstopp: Bewässerungscomputer "${GARTEN_DEVICE_COMPUTER}" ist offline!`);
-              await abortGartenSequenz(d.sequenzId, d.requestedBy, "computer_offline",
-                `🚨 *SICHERHEITSSTOPP!*\n\nBewässerungscomputer ist offline – Pumpe wurde NICHT gestartet um Trockenlauf zu verhindern.\n\nBitte prüfe WLAN und Stromversorgung.`);
-              continue;
-            }
-            if (!computerStatus.on) {
-              logger.error(`Sicherheitsstopp: Bewässerungscomputer "${GARTEN_DEVICE_COMPUTER}" ist AUS!`);
-              await abortGartenSequenz(d.sequenzId, d.requestedBy, "computer_off",
-                `🚨 *SICHERHEITSSTOPP!*\n\nBewässerungscomputer ist AUS – Pumpe wurde NICHT gestartet um Trockenlauf zu verhindern!\n\n🔧 Prüfe:\n• Ist der Wasserhahn offen?\n• Funktioniert der Bewässerungscomputer?`);
-              continue;
-            }
-            await debugLog("garten_safety_check_ok", { sequenzId: d.sequenzId, computerStatus });
-            logger.info(`Sicherheitscheck OK: Bewässerungscomputer ist AN, Pumpe wird gestartet.`);
-          } catch (e) {
-            logger.error(`Sicherheitscheck fehlgeschlagen:`, e.message || e);
-            await abortGartenSequenz(d.sequenzId, d.requestedBy, "safety_check_failed",
-              `🚨 *SICHERHEITSSTOPP!*\n\nKonnte Bewässerungscomputer-Status nicht prüfen – Pumpe wurde NICHT gestartet.\n\nFehler: ${e.message || e}`);
-            continue;
-          }
-        }
         
         try {
           const turnOn = d.action === "on";

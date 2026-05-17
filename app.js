@@ -4265,7 +4265,6 @@ function defaultGartenPlan() {
     enabled: false,
     deviceName: "Pumpe",
     deviceComputer: "Bewässerungscomputer",
-    vorlaufSec: 30,
     nachlaufSec: 30,
     useSequenz: true,
     days: { mon: [], tue: [], wed: [], thu: [], fri: [], sat: [], sun: [] },
@@ -4281,7 +4280,6 @@ function normalizeGartenPlan(raw) {
   d.enabled = !!raw.enabled;
   d.deviceName = (raw.deviceName || "Pumpe").trim() || "Pumpe";
   d.deviceComputer = (raw.deviceComputer || "Bewässerungscomputer").trim() || "Bewässerungscomputer";
-  d.vorlaufSec = typeof raw.vorlaufSec === "number" ? Math.max(0, Math.min(300, raw.vorlaufSec)) : 30;
   d.nachlaufSec = typeof raw.nachlaufSec === "number" ? Math.max(0, Math.min(300, raw.nachlaufSec)) : 30;
   d.useSequenz = raw.useSequenz !== false;
   d.slotSkips = pruneGartenSlotSkips(raw.slotSkips);
@@ -4327,12 +4325,10 @@ function renderGartenWeek() {
   const en = $("gartenPlanEnabled");
   const dev = $("gartenDeviceName");
   const devComp = $("gartenDeviceComputer");
-  const vorlauf = $("gartenVorlauf");
   const nachlauf = $("gartenNachlauf");
   if (en) en.checked = !!data.enabled;
   if (dev) dev.value = data.deviceName || "Pumpe";
   if (devComp) devComp.value = data.deviceComputer || "Bewässerungscomputer";
-  if (vorlauf) vorlauf.value = data.vorlaufSec ?? 30;
   if (nachlauf) nachlauf.value = data.nachlaufSec ?? 30;
 
   root.innerHTML = GARTEN_DAY_DEF.map(([key, label]) => {
@@ -4482,7 +4478,6 @@ function collectGartenPlanFromDom(prev) {
     enabled: !!$("gartenPlanEnabled")?.checked,
     deviceName: ($("gartenDeviceName")?.value || "Pumpe").trim() || "Pumpe",
     deviceComputer: ($("gartenDeviceComputer")?.value || "Bewässerungscomputer").trim() || "Bewässerungscomputer",
-    vorlaufSec: parseInt($("gartenVorlauf")?.value, 10) || 30,
     nachlaufSec: parseInt($("gartenNachlauf")?.value, 10) || 30,
     useSequenz: true,
   };
