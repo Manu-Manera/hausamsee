@@ -752,15 +752,18 @@ async function markBewohnerZurueck(name) {
 function fillMemberProfileForm() {
   const elName = $("profileDisplayName");
   const elEmoji = $("profileEmoji");
+  const elPhone = $("profilePhone");
   if (!elName || !elEmoji) return;
   if (!auth.isMember) {
     elName.value = "";
+    if (elPhone) elPhone.value = "";
     if (elEmoji.options.length) elEmoji.selectedIndex = 0;
     return;
   }
   const p = authConfig.memberPrefs[auth.member];
   const base = BEWOHNER.find((b) => b.name === auth.member);
   elName.value = p?.displayName || auth.member;
+  if (elPhone) elPhone.value = p?.phone || "";
   const want = p?.emoji && EMOJI_CHOICES_SET.has(p.emoji) ? p.emoji : (base?.emoji || EMOJI_CHOICES[0]);
   if (Array.from(elEmoji.options).some((o) => o.value === want)) elEmoji.value = want;
   else {
@@ -5509,14 +5512,19 @@ $("memberProfileForm")?.addEventListener("submit", async (e) => {
   if (!requireMember("Profil speichern")) return;
   const displayName = $("profileDisplayName")?.value.replace(/\s+/g, " ").trim().slice(0, 32) || "";
   const emoji = $("profileEmoji")?.value || "";
+  const phone = $("profilePhone")?.value.replace(/[^\d+]/g, "").trim() || "";
   if (!displayName) { showToast("Bitte einen Anzeigenamen eintragen.", "error"); return; }
   if (!EMOJI_CHOICES_SET.has(emoji)) { showToast("Bitte ein Icon aus der Liste wählen.", "error"); return; }
+  
+  const profileData = { displayName, emoji, updatedBy: auth.member };
+  if (phone) profileData.phone = phone;
+  
   if (firebaseReady) {
     try {
       await setDoc(doc(db, "config", "memberPrefs"), {
-        [auth.member]: { displayName, emoji, updatedBy: auth.member, updatedAt: serverTimestamp() }
+        [auth.member]: { ...profileData, updatedAt: serverTimestamp() }
       }, { merge: true });
-      authConfig.memberPrefs[auth.member] = { displayName, emoji };
+      authConfig.memberPrefs[auth.member] = { ...profileData };
       showToast("Profil gespeichert.", "success");
       onMemberPrefsChanged();
     } catch (err) {
@@ -5524,7 +5532,7 @@ $("memberProfileForm")?.addEventListener("submit", async (e) => {
       showToast("Speichern fehlgeschlagen.", "error");
     }
   } else {
-    const next = { ...localStore.memberPrefs, [auth.member]: { displayName, emoji } };
+    const next = { ...localStore.memberPrefs, [auth.member]: profileData };
     localStore.memberPrefs = next;
     saveLocal("memberPrefs", next);
     applyMemberPrefsDoc(next);
