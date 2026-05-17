@@ -258,9 +258,31 @@ async function getAllStatus() {
   });
 }
 
+/**
+ * Prüft ob ein spezifisches Gerät eingeschaltet ist.
+ * @param {string} nameOrId - Gerätename oder ID
+ * @returns {Promise<{online: boolean, on: boolean|null, name: string}>}
+ */
+async function isDeviceOn(nameOrId) {
+  const devices = await listDevices();
+  let device = devices.find((d) => d.id === nameOrId);
+  if (!device) device = findDevice(devices, nameOrId);
+  if (!device) {
+    return { online: false, on: null, name: nameOrId, found: false };
+  }
+  if (!device.online) {
+    return { online: false, on: null, name: device.name, found: true };
+  }
+  const code = findSwitchCode(device.status);
+  const entry = (device.status || []).find((s) => s.code === code);
+  const on = entry ? !!entry.value : null;
+  return { online: true, on, name: device.name, found: true };
+}
+
 module.exports = {
   isConfigured,
   listDevices,
   setPower,
   getAllStatus,
+  isDeviceOn,
 };

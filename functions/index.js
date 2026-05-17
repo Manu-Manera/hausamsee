@@ -1021,6 +1021,44 @@ async function stopGartenSequenz(requestedBy) {
   };
 }
 
+/**
+ * Bricht eine Garten-Sequenz wegen Sicherheitsproblem ab.
+ * Alle offenen Tasks der Sequenz werden als abgebrochen markiert,
+ * Bewässerungscomputer wird ausgeschaltet, User wird benachrichtigt.
+ */
+async function abortGartenSequenz(sequenzId, requestedBy, reason, userMessage) {
+  // Alle offenen Tasks dieser Sequenz abbrechen
+  const snap = await db.collection("bewaesserung_tasks").where("done", "==", false).get();
+  const ops = [];
+  snap.forEach((doc) => {
+    const d = doc.data();
+    if (d.sequenzId === sequenzId) {
+      ops.push(doc.ref.update({ 
+        done: true, 
+        cancelledAt: FieldValue.serverTimestamp(), 
+        reason: "safety",
+        safetyReason: reason,
+      }));
+    }
+  });
+  await Promise.all(ops);
+  
+  // Bewässerungscomputer sicherheitshalber ausschalten
+  try {
+    await plugs.setPower(GARTEN_DEVICE_COMPUTER, false);
+  } catch (e) {
+    logger.warn("abortGartenSequenz: Konnte Bewässerungscomputer nicht ausschalten", e?.message);
+  }
+  
+  // User benachrichtigen
+  if (requestedBy && userMessage) {
+    await sendWhatsApp(requestedBy, userMessage);
+  }
+  
+  await debugLog("garten_seq_aborted", { sequenzId, reason, tasksCleared: ops.length });
+  logger.warn(`Garten-Sequenz ${sequenzId} abgebrochen: ${reason}`);
+}
+
 // Erkennt Bewässerungs-Befehle:
 //   "Pumpe an" / "Pumpe aus" / "Pumpe 15 Min" → Gerät "Pumpe" (Smart-Life-Name)
 //   "Beet aus" / "Steckdose Beet aus"         → { device: "beet", on: false }
@@ -2780,6 +2818,48 @@ exports.checkBewaesserung = onSchedule(
       }
     }
     
+    // 0b) 🔒 TROCKENLAUF-SCHUTZ: Prüfen ob Bewässerungscomputer noch AN ist während Pumpe läuft
+    if (!raining && snap.docs.length > 0 && plugs.isConfigured()) {
+      // Finde aktive Pumpe-Tasks (step 3 = Pumpe AUS steht noch aus, d.h. Pumpe läuft gerade)
+      const activePumpeSequenzen = snap.docs.filter(d => {
+        const data = d.data();
+        return data.sequenzId && data.step === 3 && data.action === "off" && !data.done;
+      });
+      
+      if (activePumpeSequenzen.length > 0) {
+        try {
+          const computerStatus = await plugs.isDeviceOn(GARTEN_DEVICE_COMPUTER);
+          
+          // Wenn Bewässerungscomputer AUS oder offline → Pumpe sofort stoppen!
+          if (!computerStatus.on || !computerStatus.online) {
+            logger.error(`🚨 TROCKENLAUF-SCHUTZ: Bewässerungscomputer ist ${!computerStatus.online ? "offline" : "AUS"} während Pumpe läuft!`);
+            
+            // Pumpe sofort ausschalten
+            try {
+              await plugs.setPower(GARTEN_DEVICE_PUMPE, false);
+              logger.info("Pumpe wegen Trockenlauf-Schutz ausgeschaltet");
+            } catch (e) {
+              logger.error("Konnte Pumpe nicht ausschalten:", e?.message);
+            }
+            
+            // Alle betroffenen Sequenzen abbrechen
+            for (const doc of activePumpeSequenzen) {
+              const d = doc.data();
+              await abortGartenSequenz(d.sequenzId, d.requestedBy, "computer_turned_off",
+                `🚨 *NOTFALL-STOPP!*\n\nDer Bewässerungscomputer ist ${!computerStatus.online ? "offline gegangen" : "ausgegangen"} – Pumpe wurde SOFORT gestoppt um Trockenlauf zu verhindern!\n\n⚠️ Bitte prüfe die Anlage!`);
+            }
+            await debugLog("garten_dry_run_prevention", { 
+              computerOnline: computerStatus.online, 
+              computerOn: computerStatus.on,
+              sequenzenAbgebrochen: activePumpeSequenzen.length,
+            });
+          }
+        } catch (e) {
+          logger.warn("Trockenlauf-Check fehlgeschlagen (ignoriert):", e?.message);
+        }
+      }
+    }
+    
     // 1) Sequenz-Tasks (executeAt + action: on/off) – z.B. Garten-Bewässerung
     const sequenzTasks = snap.docs.filter((d) => {
       const data = d.data();
@@ -2792,7 +2872,7 @@ exports.checkBewaesserung = onSchedule(
       
       for (const doc of sequenzTasks) {
         const d = doc.data();
-        if (d.reason === "rain") continue;
+        if (d.reason === "rain" || d.reason === "safety") continue;
         
         // Bei Regen: Sequenz-Tasks überspringen wenn es ums Giessen geht
         const dev = (d.device || "").toLowerCase();
@@ -2803,6 +2883,39 @@ exports.checkBewaesserung = onSchedule(
             await sendWhatsApp(d.requestedBy, `🌧️ Bewässerung wegen Regen abgebrochen – der Himmel übernimmt! 🦆💧`);
           }
           continue;
+        }
+        
+        // 🔒 SICHERHEITSCHECK: Vor Pumpe-Einschalten prüfen ob Bewässerungscomputer AN ist
+        const isPumpeStart = d.step === 2 && d.action === "on" && dev.includes("pump");
+        if (isPumpeStart) {
+          try {
+            const computerStatus = await plugs.isDeviceOn(GARTEN_DEVICE_COMPUTER);
+            if (!computerStatus.found) {
+              logger.error(`Sicherheitsstopp: Bewässerungscomputer "${GARTEN_DEVICE_COMPUTER}" nicht gefunden!`);
+              await abortGartenSequenz(d.sequenzId, d.requestedBy, "computer_not_found",
+                `🚨 *SICHERHEITSSTOPP!*\n\nBewässerungscomputer nicht gefunden – Pumpe wurde NICHT gestartet um Trockenlauf zu verhindern.\n\nBitte prüfe die Smart Life App.`);
+              continue;
+            }
+            if (!computerStatus.online) {
+              logger.error(`Sicherheitsstopp: Bewässerungscomputer "${GARTEN_DEVICE_COMPUTER}" ist offline!`);
+              await abortGartenSequenz(d.sequenzId, d.requestedBy, "computer_offline",
+                `🚨 *SICHERHEITSSTOPP!*\n\nBewässerungscomputer ist offline – Pumpe wurde NICHT gestartet um Trockenlauf zu verhindern.\n\nBitte prüfe WLAN und Stromversorgung.`);
+              continue;
+            }
+            if (!computerStatus.on) {
+              logger.error(`Sicherheitsstopp: Bewässerungscomputer "${GARTEN_DEVICE_COMPUTER}" ist AUS!`);
+              await abortGartenSequenz(d.sequenzId, d.requestedBy, "computer_off",
+                `🚨 *SICHERHEITSSTOPP!*\n\nBewässerungscomputer ist AUS – Pumpe wurde NICHT gestartet um Trockenlauf zu verhindern!\n\n🔧 Prüfe:\n• Ist der Wasserhahn offen?\n• Funktioniert der Bewässerungscomputer?`);
+              continue;
+            }
+            await debugLog("garten_safety_check_ok", { sequenzId: d.sequenzId, computerStatus });
+            logger.info(`Sicherheitscheck OK: Bewässerungscomputer ist AN, Pumpe wird gestartet.`);
+          } catch (e) {
+            logger.error(`Sicherheitscheck fehlgeschlagen:`, e.message || e);
+            await abortGartenSequenz(d.sequenzId, d.requestedBy, "safety_check_failed",
+              `🚨 *SICHERHEITSSTOPP!*\n\nKonnte Bewässerungscomputer-Status nicht prüfen – Pumpe wurde NICHT gestartet.\n\nFehler: ${e.message || e}`);
+            continue;
+          }
         }
         
         try {
