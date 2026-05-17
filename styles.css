@@ -3687,6 +3687,18 @@ body.is-spotify-track .vinyl {
 .garten-plan-form {
   text-align: left;
 }
+.garten-sequenz-box {
+  border: 1px solid var(--card-border);
+  background: rgba(240, 248, 255, 0.6);
+  border-radius: var(--r-md);
+  padding: 14px 16px;
+  margin: 12px 0;
+}
+.garten-sequenz-box legend {
+  font-weight: 600;
+  font-size: 0.95rem;
+  padding: 0 6px;
+}
 .garten-week {
   display: flex;
   flex-direction: column;

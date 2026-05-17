@@ -58,8 +58,14 @@ const KIDS = new Set(["Elliot", "Oscar"]);
 const ADULTS = BEWOHNER.filter((n) => !KIDS.has(n));
 
 // Bewässerung: harte Sicherheitsgrenzen für Steckdosen-Timer.
-const PUMP_DEFAULT_MINUTES = 30; // Default-Timeout, wenn "Pumpe an" ohne Minuten kommt
+const PUMP_DEFAULT_MINUTES = 20; // Default-Bewässerungsdauer (Minuten)
 const PUMP_MAX_MINUTES = 60;     // Länger lassen wir die Pumpe NIE laufen
+
+// Garten-Sequenz: Bewässerungscomputer → Pumpe (mit Vorlauf/Nachlauf)
+const GARTEN_SEQUENZ_VORLAUF_SEC = 30;   // Sekunden nach Bewässerungscomputer AN bevor Pumpe AN
+const GARTEN_SEQUENZ_NACHLAUF_SEC = 30;  // Sekunden nach Pumpe AUS bevor Bewässerungscomputer AUS
+const GARTEN_DEVICE_COMPUTER = "Bewässerungscomputer"; // Smart Life Gerätename
+const GARTEN_DEVICE_PUMPE = "Pumpe";                   // Smart Life Gerätename
 
 // Geräte ohne Auto-Off-Timer (bleiben an bis manuell ausgeschaltet)
 const NO_TIMER_DEVICES = ["lichterkette", "licht"];
@@ -802,12 +808,12 @@ function parseErinnerungMessage(raw) {
 
 /* --- Bewässerung / Smart Plugs --- */
 
-// Umgangssprache: "Giesse die Blumen", "Garten bewässern 15 min" → { device: "Pumpe", on, minutes } (default 20)
+// Umgangssprache: "Giesse die Blumen", "Garten bewässern 15 min" → Garten-Sequenz mit Bewässerungscomputer + Pumpe
 function parseGiessenUmgang(sIn) {
   const s = String(sIn).trim();
   if (!s) return null;
   if (/^wie\s+(gie|kann|soll|muss|funk|warum|wieso)\b/i.test(s)) return null; // reine Wissensfrage, keine Aktion
-  if (/^(pumpe|beet|rasen|steckdose|plug|bewässerung|bewaesserung)\b/i.test(s)) return null; // normaler Pumpe-Pfad
+  if (/^(pumpe|beet|rasen|steckdose|plug)\b/i.test(s)) return null; // normaler Pumpe-Pfad (ohne "bewässerung")
   const gieAktion =
     // Deutsch
     /(giess|gieß|giesse|giessen|gewässer|\bbewäss\w+|\bwässer(?!-))/i.test(s) ||
@@ -828,17 +834,191 @@ function parseGiessenUmgang(sIn) {
   const anBot = /(@gustav|@g\b|@bot\b|gustav|kannst du|könnt|bitte|hey|hallo|mach mal|sofort|schnell)/i.test(s) || s.length < 100;
   if (!kontext && !anBot) return null;
   const willAus =
-    /(hör( mir)?\s*auf|aufhören|stopp?|abstell|schalte (die )?pumpe aus|genug|lass(es)?\s+\w*aus|wasser (ab|aus))/i.test(s) &&
+    /(hör( mir)?\s*auf|aufhören|stopp?|abstell|schalte (die )?pumpe aus|genug|lass(es)?\s+\w*aus|wasser (ab|aus)|bewässerung\s*(aus|stop))/i.test(s) &&
     /(pumpe|giess|gieß|wäss|bewäss|garten|blu-?m)/i.test(s) &&
     !/\b(noch|weiter|an|länger|mehr|start|los)\b/i.test(s);
   if (willAus) {
-    return { device: "Pumpe", on: false, minutes: null };
+    // Stopp: beide Geräte aus
+    return { gartenSequenz: true, on: false, minutes: null };
   }
   const timeMatch = s.match(/(\d{1,2})\s*(?:min(?:ute[n]?)?|m)(?:\b|[.,])/i);
   const minutes = timeMatch
     ? Math.max(1, Math.min(PUMP_MAX_MINUTES, parseInt(timeMatch[1], 10)))
-    : 20;
-  return { device: "Pumpe", on: true, minutes };
+    : PUMP_DEFAULT_MINUTES;
+  // Garten-Sequenz starten: Bewässerungscomputer → Pumpe
+  return { gartenSequenz: true, on: true, minutes };
+}
+
+/**
+ * Startet die Garten-Bewässerungssequenz:
+ *   1. Bewässerungscomputer AN (sofort)
+ *   2. Pumpe AN (nach VORLAUF Sekunden)
+ *   3. Pumpe AUS (nach Bewässerungsdauer)
+ *   4. Bewässerungscomputer AUS (nach NACHLAUF Sekunden)
+ * 
+ * @param {number} minutes - Bewässerungsdauer in Minuten
+ * @param {string} requestedBy - WhatsApp-Nummer des Anfordernden
+ * @param {object} config - Optionale Konfiguration aus gartenPlan
+ * @returns {Promise<{success: boolean, message: string, sequenzId?: string}>}
+ */
+async function startGartenSequenz(minutes, requestedBy, config = {}) {
+  // Gerätenamen aus Config oder Defaults
+  const deviceComputer = config.deviceComputer || GARTEN_DEVICE_COMPUTER;
+  const devicePumpe = config.devicePumpe || GARTEN_DEVICE_PUMPE;
+  const vorlaufSec = config.vorlaufSec ?? GARTEN_SEQUENZ_VORLAUF_SEC;
+  const nachlaufSec = config.nachlaufSec ?? GARTEN_SEQUENZ_NACHLAUF_SEC;
+  
+  // Regen-Check
+  try {
+    const raining = await isCurrentlyRaining();
+    if (raining) {
+      return {
+        success: false,
+        message: `🌧️ Es regnet gerade – Bewässerung übersprungen!\n\nDer Himmel übernimmt das Giessen für euch. 🦆💧`,
+        skippedRain: true,
+      };
+    }
+  } catch (e) {
+    logger.warn("startGartenSequenz: Wetter-Check fehlgeschlagen, fahre fort", e?.message);
+  }
+  
+  // Prüfe ob Tuya konfiguriert ist
+  if (!plugs.isConfigured()) {
+    return {
+      success: false,
+      message: `⚠️ Smart Plugs nicht konfiguriert (TUYA_ACCESS_ID etc. in functions/.env).`,
+    };
+  }
+  
+  const now = Date.now();
+  const sequenzId = `seq_${now}`;
+  
+  // Zeitpunkte berechnen
+  const t1_computerAn = now;
+  const t2_pumpeAn = now + vorlaufSec * 1000;
+  const t3_pumpeAus = t2_pumpeAn + minutes * 60 * 1000;
+  const t4_computerAus = t3_pumpeAus + nachlaufSec * 1000;
+  
+  // 1) Bewässerungscomputer sofort einschalten
+  try {
+    await plugs.setPower(deviceComputer, true);
+    await debugLog("garten_seq_computer_on", { sequenzId, deviceComputer });
+  } catch (e) {
+    return {
+      success: false,
+      message: `😕 Konnte *${deviceComputer}* nicht einschalten:\n${e.message || e}`,
+    };
+  }
+  
+  // Tasks für die späteren Schritte anlegen
+  const tasks = [
+    {
+      sequenzId,
+      step: 2,
+      action: "on",
+      device: devicePumpe,
+      executeAt: new Date(t2_pumpeAn).toISOString(),
+      requestedBy,
+      done: false,
+      createdAt: FieldValue.serverTimestamp(),
+    },
+    {
+      sequenzId,
+      step: 3,
+      action: "off",
+      device: devicePumpe,
+      executeAt: new Date(t3_pumpeAus).toISOString(),
+      requestedBy,
+      done: false,
+      createdAt: FieldValue.serverTimestamp(),
+    },
+    {
+      sequenzId,
+      step: 4,
+      action: "off",
+      device: deviceComputer,
+      executeAt: new Date(t4_computerAus).toISOString(),
+      requestedBy,
+      done: false,
+      createdAt: FieldValue.serverTimestamp(),
+    },
+  ];
+  
+  for (const task of tasks) {
+    await db.collection("bewaesserung_tasks").add(task);
+  }
+  
+  await debugLog("garten_seq_started", { sequenzId, minutes, deviceComputer, devicePumpe, vorlaufSec, nachlaufSec });
+  
+  const pumpeAnTime = new Date(t2_pumpeAn).toLocaleTimeString("de-CH", { hour: "2-digit", minute: "2-digit", timeZone: "Europe/Zurich" });
+  const pumpeAusTime = new Date(t3_pumpeAus).toLocaleTimeString("de-CH", { hour: "2-digit", minute: "2-digit", timeZone: "Europe/Zurich" });
+  const endeTime = new Date(t4_computerAus).toLocaleTimeString("de-CH", { hour: "2-digit", minute: "2-digit", timeZone: "Europe/Zurich" });
+  
+  return {
+    success: true,
+    sequenzId,
+    message: `🌿 *Garten-Bewässerung gestartet!*\n\n` +
+      `💧 Bewässerungscomputer: AN\n` +
+      `💧 Pumpe AN: ${pumpeAnTime} Uhr (in ${vorlaufSec}s)\n` +
+      `⏱️ Dauer: *${minutes} Minuten*\n` +
+      `⏹️ Pumpe AUS: ${pumpeAusTime} Uhr\n` +
+      `🔌 Ende: ${endeTime} Uhr\n\n` +
+      `Zum Stoppen: "Bewässerung stopp" oder "Garten aus"`,
+  };
+}
+
+/**
+ * Stoppt alle laufenden Garten-Bewässerungssequenzen sofort.
+ */
+async function stopGartenSequenz(requestedBy) {
+  const deviceComputer = GARTEN_DEVICE_COMPUTER;
+  const devicePumpe = GARTEN_DEVICE_PUMPE;
+  
+  if (!plugs.isConfigured()) {
+    return { success: false, message: `⚠️ Smart Plugs nicht konfiguriert.` };
+  }
+  
+  // Beide Geräte ausschalten
+  const errors = [];
+  try {
+    await plugs.setPower(devicePumpe, false);
+  } catch (e) {
+    errors.push(`Pumpe: ${e.message || e}`);
+  }
+  try {
+    await plugs.setPower(deviceComputer, false);
+  } catch (e) {
+    errors.push(`Bewässerungscomputer: ${e.message || e}`);
+  }
+  
+  // Alle offenen Tasks als erledigt markieren
+  const snap = await db.collection("bewaesserung_tasks").where("done", "==", false).get();
+  const ops = [];
+  snap.forEach((doc) => {
+    const d = doc.data();
+    const dev = (d.device || "").toLowerCase();
+    if (dev.includes("pump") || dev.includes("bewässerung") || d.sequenzId) {
+      ops.push(doc.ref.update({ done: true, cancelledAt: FieldValue.serverTimestamp(), cancelledBy: requestedBy }));
+    }
+  });
+  await Promise.all(ops);
+  
+  await debugLog("garten_seq_stopped", { requestedBy, tasksCleared: ops.length });
+  
+  if (errors.length) {
+    return {
+      success: false,
+      message: `⚠️ Teilweise Fehler beim Stoppen:\n${errors.join("\n")}\n\nOffene Tasks wurden gelöscht.`,
+    };
+  }
+  
+  return {
+    success: true,
+    message: `⏹️ *Garten-Bewässerung gestoppt!*\n\n` +
+      `🔌 Pumpe: AUS\n` +
+      `🔌 Bewässerungscomputer: AUS\n\n` +
+      `${ops.length} geplante Schritte abgebrochen.`,
+  };
 }
 
 // Erkennt Bewässerungs-Befehle:
@@ -1906,9 +2086,27 @@ async function dispatch(ctx) {
     return true;
   }
 
-  // 14b) Bewässerung / Pumpe schalten
+  // 14b) Garten-Bewässerung (Sequenz: Bewässerungscomputer → Pumpe)
   const pump = parseBewaesserungMessage(rawInput);
   if (pump) {
+    // Garten-Sequenz: "giesse die blumen", "garten bewässern", etc.
+    if (pump.gartenSequenz) {
+      if (pump.on) {
+        // Sequenz starten
+        const result = await startGartenSequenz(pump.minutes, from);
+        await reply(result.message);
+        if (result.success) {
+          await debugLog("garten_seq_whatsapp", { sequenzId: result.sequenzId, minutes: pump.minutes, from });
+        }
+      } else {
+        // Sequenz stoppen
+        const result = await stopGartenSequenz(from);
+        await reply(result.message);
+      }
+      return true;
+    }
+    
+    // Einzelgerät-Steuerung: "Pumpe an", "Lichterkette aus", etc.
     if (!plugs.isConfigured()) {
       await reply(`⚠️ Smart Plugs nicht konfiguriert (TUYA_ACCESS_ID / TUYA_ACCESS_SECRET / TUYA_UID in functions/.env).`);
       return true;
@@ -2450,7 +2648,12 @@ async function runGartenPlanTick() {
   if (!planSnap.exists) return;
   const data = planSnap.data();
   if (!data?.enabled) return;
-  const device = String(data.deviceName || "Pumpe").trim() || "Pumpe";
+  
+  // Sequenz-Konfiguration aus dem Plan lesen (oder Defaults)
+  const useSequenz = data.useSequenz !== false; // Default: Sequenz aktiv
+  const deviceComputer = String(data.deviceComputer || GARTEN_DEVICE_COMPUTER).trim();
+  const devicePumpe = String(data.deviceName || GARTEN_DEVICE_PUMPE).trim();
+  
   const days = data.days && typeof data.days === "object" ? data.days : {};
   const { dayKey, hm } = zurichWeekdayKeyAndHM();
   const slots = Array.isArray(days[dayKey]) ? days[dayKey] : [];
@@ -2481,18 +2684,45 @@ async function runGartenPlanTick() {
       idx += 1;
       continue;
     }
+    
+    // Startzeit: Sequenz oder direkt Pumpe
     if (onT === hm) {
-      try {
-        await plugs.setPower(device, true);
-        await debugLog("garten_plan_on", { device, hm, dayKey, slotIndex: idx });
-      } catch (e) {
-        logger.error("garten_plan_on", e?.message || e);
+      if (useSequenz) {
+        // Bewässerungsdauer aus Ein/Aus-Zeit berechnen
+        const [onH, onM] = onT.split(":").map(Number);
+        const [offH, offM] = offT.split(":").map(Number);
+        const minutes = Math.max(1, (offH * 60 + offM) - (onH * 60 + onM));
+        
+        try {
+          const result = await startGartenSequenz(minutes, null, {
+            deviceComputer,
+            devicePumpe,
+            vorlaufSec: data.vorlaufSec ?? GARTEN_SEQUENZ_VORLAUF_SEC,
+            nachlaufSec: data.nachlaufSec ?? GARTEN_SEQUENZ_NACHLAUF_SEC,
+          });
+          await debugLog("garten_plan_seq_start", { hm, dayKey, slotIndex: idx, minutes, result: result.success });
+          if (!result.success) {
+            logger.warn("garten_plan_seq_start failed:", result.message);
+          }
+        } catch (e) {
+          logger.error("garten_plan_seq_start", e?.message || e);
+        }
+      } else {
+        // Legacy: Nur Pumpe einschalten
+        try {
+          await plugs.setPower(devicePumpe, true);
+          await debugLog("garten_plan_on", { device: devicePumpe, hm, dayKey, slotIndex: idx });
+        } catch (e) {
+          logger.error("garten_plan_on", e?.message || e);
+        }
       }
     }
-    if (offT === hm) {
+    
+    // Ausschaltzeit nur bei Legacy-Modus (Sequenz macht das automatisch)
+    if (!useSequenz && offT === hm) {
       try {
-        await plugs.setPower(device, false);
-        await debugLog("garten_plan_off", { device, hm, dayKey, slotIndex: idx });
+        await plugs.setPower(devicePumpe, false);
+        await debugLog("garten_plan_off", { device: devicePumpe, hm, dayKey, slotIndex: idx });
       } catch (e) {
         logger.error("garten_plan_off", e?.message || e);
       }
@@ -2550,12 +2780,58 @@ exports.checkBewaesserung = onSchedule(
       }
     }
     
-    // 1) WhatsApp-Timer (einmalig nach X Min ausschalten)
+    // 1) Sequenz-Tasks (executeAt + action: on/off) – z.B. Garten-Bewässerung
+    const sequenzTasks = snap.docs.filter((d) => {
+      const data = d.data();
+      return data.executeAt && data.action && String(data.executeAt) <= nowISO;
+    });
+    
+    if (sequenzTasks.length && plugs.isConfigured()) {
+      // Sortiere nach step um Reihenfolge einzuhalten
+      sequenzTasks.sort((a, b) => (a.data().step || 0) - (b.data().step || 0));
+      
+      for (const doc of sequenzTasks) {
+        const d = doc.data();
+        if (d.reason === "rain") continue;
+        
+        // Bei Regen: Sequenz-Tasks überspringen wenn es ums Giessen geht
+        const dev = (d.device || "").toLowerCase();
+        const isGartenDevice = dev.includes("pump") || dev.includes("bewässerung");
+        if (raining && isGartenDevice && d.action === "on") {
+          await doc.ref.update({ done: true, cancelledAt: FieldValue.serverTimestamp(), reason: "rain" });
+          if (d.requestedBy && d.step === 2) {
+            await sendWhatsApp(d.requestedBy, `🌧️ Bewässerung wegen Regen abgebrochen – der Himmel übernimmt! 🦆💧`);
+          }
+          continue;
+        }
+        
+        try {
+          const turnOn = d.action === "on";
+          await plugs.setPower(d.device, turnOn);
+          await doc.ref.update({ done: true, executedAt: FieldValue.serverTimestamp() });
+          await debugLog("garten_seq_step", { sequenzId: d.sequenzId, step: d.step, device: d.device, action: d.action });
+          logger.info(`Sequenz ${d.sequenzId} Step ${d.step}: ${d.device} ${d.action}`);
+        } catch (e) {
+          logger.error(`Sequenz-Step failed for ${d.device}:`, e.message || e);
+          await debugLog("garten_seq_step_error", { sequenzId: d.sequenzId, step: d.step, device: d.device, error: String(e.message || e) });
+          // Bei kritischen Steps (Pumpe an) trotzdem als done markieren nach 10 Min
+          const createdAt = d.createdAt?.toMillis?.() || 0;
+          const age = Date.now() - createdAt;
+          if (age > 10 * 60 * 1000) {
+            await doc.ref.update({ done: true, failedAt: FieldValue.serverTimestamp(), lastError: String(e.message || e) });
+          }
+        }
+      }
+    }
+    
+    // 2) WhatsApp-Timer (einmalig nach X Min ausschalten) – Legacy-Format ohne executeAt
     // Nur where("done","==",false) — dann in Memory nach offAt filtern, damit kein
     // Firestore-Composite-Index nötig ist (Fehler «index required» = nie ausgeschaltet).
     const due = snap.docs.filter((d) => {
-      const x = d.data().offAt;
-      return x && String(x) <= nowISO;
+      const data = d.data();
+      // Nur alte Tasks ohne executeAt (neue Sequenz-Tasks haben executeAt statt offAt)
+      const x = data.offAt;
+      return x && !data.executeAt && String(x) <= nowISO;
     });
 
     if (due.length && plugs.isConfigured()) {
