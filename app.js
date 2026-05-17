@@ -1061,7 +1061,7 @@ lightboxDelete?.addEventListener("click", async () => {
    Haus-Features (Cards)
    ========================================================================== */
 
-const HAUS_FEATURES = [
+const HAUS_FEATURES_DEFAULT = [
   { id: "garten",    emoji: "🌿", title: "Garten mit Trampolin",      text: "Liegewiese, Feuerstelle und ein Trampolin, auf dem wir uns bei jedem Wetter austoben." },
   { id: "wohnzimmer",emoji: "🔥", title: "Wohnzimmer mit Kamin",      text: "Das Herzstück: knisterndes Feuer, grosse Sofas und lange Abende mit Gesprächen bis in die Nacht." },
   { id: "kino",      emoji: "🎬", title: "Kinobereich mit Gästebett", text: "Beamer, Leinwand, viele Kissen – und ein ausziehbares Bett für Gäste, die über Nacht bleiben." },
@@ -1071,11 +1071,27 @@ const HAUS_FEATURES = [
 ];
 
 let hausbilderCache = {};
+let hausfeaturesCache = {};
+
+function getHausFeature(id) {
+  const def = HAUS_FEATURES_DEFAULT.find(f => f.id === id) || {};
+  const custom = hausfeaturesCache[id] || {};
+  return {
+    id,
+    emoji: custom.emoji || def.emoji || "🏠",
+    title: custom.title || def.title || id,
+    text: custom.text || def.text || ""
+  };
+}
+
+function getHausFeatures() {
+  return HAUS_FEATURES_DEFAULT.map(f => getHausFeature(f.id));
+}
 
 function renderHausFeatures() {
   const grid = $("hausGrid");
   if (!grid) return;
-  grid.innerHTML = HAUS_FEATURES.map(f => {
+  grid.innerHTML = getHausFeatures().map(f => {
     const photo = hausbilderCache[f.id]?.src;
     const hero = photo
       ? `<img class="haus-photo" src="${escapeHtml(photo)}" alt="${escapeHtml(f.title)}" loading="lazy" />`
@@ -1087,8 +1103,9 @@ function renderHausFeatures() {
         <p>${escapeHtml(f.text)}</p>
         ${auth.isMember ? `
           <div class="haus-card-actions">
-            <button class="mini-btn" data-feature="${f.id}" data-action="upload">${photo ? "📷 Ändern" : "📷 Foto hinzufügen"}</button>
-            ${photo ? `<button class="mini-btn danger" data-feature="${f.id}" data-action="delete">Entfernen</button>` : ""}
+            <button class="mini-btn" data-feature="${f.id}" data-action="edit">✏️ Text</button>
+            <button class="mini-btn" data-feature="${f.id}" data-action="upload">${photo ? "📷 Ändern" : "📷 Foto"}</button>
+            ${photo ? `<button class="mini-btn danger" data-feature="${f.id}" data-action="delete">🗑️</button>` : ""}
           </div>
         ` : ""}
       </div>
@@ -1102,6 +1119,9 @@ function renderHausFeatures() {
     btn.addEventListener("click", () => {
       if (confirm("Foto wirklich entfernen?")) deleteHausBild(btn.dataset.feature);
     });
+  });
+  grid.querySelectorAll("[data-action='edit']").forEach(btn => {
+    btn.addEventListener("click", () => openHausFeatureEditor(btn.dataset.feature));
   });
 }
 
@@ -1150,6 +1170,74 @@ async function deleteHausBild(featureId) {
     renderHausFeatures();
   }
   showToast("Foto entfernt.", "success");
+}
+
+function openHausFeatureEditor(featureId) {
+  if (!requireMember("Feature bearbeiten")) return;
+  const f = getHausFeature(featureId);
+  
+  const dialog = document.createElement("dialog");
+  dialog.className = "auth-dialog";
+  dialog.innerHTML = `
+    <form method="dialog" class="auth-form" style="max-width:500px;">
+      <h2 class="auth-title">✏️ ${escapeHtml(f.emoji)} ${escapeHtml(f.title)} bearbeiten</h2>
+      <div class="form-row">
+        <label for="featureEmoji">Emoji</label>
+        <input id="featureEmoji" type="text" value="${escapeAttr(f.emoji)}" maxlength="4" style="width:60px;font-size:1.5rem;text-align:center;" />
+      </div>
+      <div class="form-row">
+        <label for="featureTitle">Titel</label>
+        <input id="featureTitle" type="text" value="${escapeAttr(f.title)}" maxlength="50" required />
+      </div>
+      <div class="form-row">
+        <label for="featureText">Beschreibung</label>
+        <textarea id="featureText" rows="4" maxlength="500" style="resize:vertical;">${escapeHtml(f.text)}</textarea>
+      </div>
+      <div class="auth-btns">
+        <button type="button" class="btn-secondary" id="featureCancelBtn">Abbrechen</button>
+        <button type="submit" class="btn-primary">💾 Speichern</button>
+      </div>
+    </form>
+  `;
+  document.body.appendChild(dialog);
+  
+  dialog.querySelector("#featureCancelBtn").addEventListener("click", () => {
+    dialog.close();
+    dialog.remove();
+  });
+  
+  dialog.querySelector("form").addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const emoji = dialog.querySelector("#featureEmoji").value.trim() || f.emoji;
+    const title = dialog.querySelector("#featureTitle").value.trim();
+    const text = dialog.querySelector("#featureText").value.trim();
+    
+    if (!title) {
+      showToast("Titel darf nicht leer sein.", "error");
+      return;
+    }
+    
+    try {
+      const payload = { emoji, title, text, updatedBy: auth.member, updatedAt: Date.now() };
+      if (firebaseReady) {
+        await setDoc(doc(db, "hausfeatures", featureId), { ...payload, updatedAt: serverTimestamp() }, { merge: true });
+      } else {
+        localStore.hausfeatures = localStore.hausfeatures || {};
+        localStore.hausfeatures[featureId] = payload;
+        hausfeaturesCache = localStore.hausfeatures;
+        saveLocal("hausfeatures", localStore.hausfeatures);
+        renderHausFeatures();
+      }
+      showToast("Gespeichert!", "success");
+      dialog.close();
+      dialog.remove();
+    } catch (err) {
+      console.error(err);
+      showToast("Speichern fehlgeschlagen.", "error");
+    }
+  });
+  
+  dialog.showModal();
 }
 
 /* ==========================================================================
@@ -5761,6 +5849,12 @@ function setupListeners() {
     snap.docs.forEach(d => { hausbilderCache[d.id] = d.data(); });
     renderHausFeatures();
   }, (err) => console.warn("hausbilder listener:", err.message));
+
+  onSnapshot(collection(db, "hausfeatures"), (snap) => {
+    hausfeaturesCache = {};
+    snap.docs.forEach(d => { hausfeaturesCache[d.id] = d.data(); });
+    renderHausFeatures();
+  }, (err) => console.warn("hausfeatures listener:", err.message));
 
   onSnapshot(query(collection(db, "eventfotos"), orderBy("createdAt", "desc")), (snap) => {
     eventfotosCache = snap.docs.map(d => ({ id: d.id, ...d.data() }));

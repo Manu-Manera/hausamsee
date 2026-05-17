@@ -40,6 +40,9 @@ service cloud.firestore {
     match /hausbilder/{document=**} {
       allow read, write: if true;
     }
+    match /hausfeatures/{document=**} {
+      allow read, write: if true;
+    }
     match /eventfotos/{document=**} {
       allow read, write: if true;
     }
