@@ -911,44 +911,66 @@ async function startGartenSequenz(minutes, requestedBy, config = {}) {
     };
   }
   
-  // 2) Doppelter Status-Check: Prüfen ob Bewässerungscomputer wirklich AN ist
+  // 2) Status-Check: Prüfen ob Bewässerungscomputer wirklich AN ist
+  // Abbruch NUR bei: offline oder definitiv AUS (on === false)
+  // Bei unklarem Status (on === null): Warnung, aber weitermachen
   await sleep(GARTEN_STATUS_CHECK_DELAY_MS);
   
+  let computerWarnung = "";
   let check1, check2;
   try {
     check1 = await plugs.isDeviceOn(deviceComputer);
     await debugLog("garten_seq_check1", { sequenzId, check1 });
     
-    if (!check1.online || !check1.on) {
-      // Erster Check fehlgeschlagen
+    if (!check1.online) {
+      // Offline = definitiv ein Problem
       return {
         success: false,
-        message: `🚨 *Sicherheitsstopp!*\n\nBewässerungscomputer ist ${!check1.online ? "offline" : "nicht eingeschaltet"} – Pumpe wurde NICHT gestartet.\n\n🔧 Bitte prüfe:\n• Stromversorgung\n• WLAN-Verbindung\n• Wasserhahn offen?`,
+        message: `🚨 *Sicherheitsstopp!*\n\nBewässerungscomputer ist offline – Pumpe wurde NICHT gestartet.\n\n🔧 Bitte prüfe:\n• Stromversorgung\n• WLAN-Verbindung`,
       };
     }
     
-    // Zweiter Check nach kurzer Pause
-    await sleep(GARTEN_STATUS_CHECK_DELAY_MS);
-    check2 = await plugs.isDeviceOn(deviceComputer);
-    await debugLog("garten_seq_check2", { sequenzId, check2 });
-    
-    if (!check2.online || !check2.on) {
-      // Zweiter Check fehlgeschlagen – Computer ging wieder aus
-      try { await plugs.setPower(deviceComputer, false); } catch (_) { /* ignore */ }
+    if (check1.on === false) {
+      // Definitiv AUS
       return {
         success: false,
-        message: `🚨 *Sicherheitsstopp!*\n\nBewässerungscomputer ist wieder ${!check2.online ? "offline gegangen" : "ausgegangen"} – Pumpe wurde NICHT gestartet.\n\n⚠️ Möglicherweise gibt es ein Problem mit dem Gerät.`,
+        message: `🚨 *Sicherheitsstopp!*\n\nBewässerungscomputer ist AUS – Pumpe wurde NICHT gestartet.\n\n🔧 Bitte prüfe:\n• Ist das Gerät eingeschaltet?\n• Funktioniert die Smart Life Steuerung?`,
       };
     }
     
-    logger.info(`Sequenz ${sequenzId}: Doppelter Status-Check OK – Computer ist AN`);
+    if (check1.on === null) {
+      // Status unklar – Warnung aber weitermachen
+      computerWarnung = `\n\n⚠️ *Hinweis:* Status vom Bewässerungscomputer konnte nicht eindeutig geprüft werden (Codes: ${check1.statusCodes?.join(", ") || "keine"}). Bewässerung läuft trotzdem!`;
+      logger.warn(`Sequenz ${sequenzId}: Computer-Status unklar, fahre fort. StatusCodes: ${check1.statusCodes?.join(", ")}`);
+    } else {
+      // Zweiter Check nach kurzer Pause (nur wenn erster OK war)
+      await sleep(GARTEN_STATUS_CHECK_DELAY_MS);
+      check2 = await plugs.isDeviceOn(deviceComputer);
+      await debugLog("garten_seq_check2", { sequenzId, check2 });
+      
+      if (!check2.online) {
+        try { await plugs.setPower(deviceComputer, false); } catch (_) { /* ignore */ }
+        return {
+          success: false,
+          message: `🚨 *Sicherheitsstopp!*\n\nBewässerungscomputer ist offline gegangen – Pumpe wurde NICHT gestartet.`,
+        };
+      }
+      
+      if (check2.on === false) {
+        try { await plugs.setPower(deviceComputer, false); } catch (_) { /* ignore */ }
+        return {
+          success: false,
+          message: `🚨 *Sicherheitsstopp!*\n\nBewässerungscomputer ist wieder ausgegangen – Pumpe wurde NICHT gestartet.\n\n⚠️ Möglicherweise gibt es ein Problem mit dem Gerät.`,
+        };
+      }
+      
+      logger.info(`Sequenz ${sequenzId}: Doppelter Status-Check OK – Computer ist AN`);
+    }
   } catch (e) {
-    // Status-Check fehlgeschlagen – Sicherheitshalber abbrechen
-    try { await plugs.setPower(deviceComputer, false); } catch (_) { /* ignore */ }
-    return {
-      success: false,
-      message: `🚨 *Sicherheitsstopp!*\n\nKonnte Status nicht prüfen – Pumpe wurde NICHT gestartet.\n\nFehler: ${e.message || e}`,
-    };
+    // Status-Check komplett fehlgeschlagen – Warnung aber weitermachen
+    // (Das Einschalten hat ja funktioniert)
+    computerWarnung = `\n\n⚠️ *Hinweis:* Status-Check fehlgeschlagen (${e.message || e}). Bewässerung läuft trotzdem!`;
+    logger.warn(`Sequenz ${sequenzId}: Status-Check Exception, fahre fort`, e?.message);
   }
   
   // 3) Pumpe einschalten
@@ -1026,17 +1048,19 @@ async function startGartenSequenz(minutes, requestedBy, config = {}) {
   const pumpeAusTime = new Date(t_pumpeAus).toLocaleTimeString("de-CH", { hour: "2-digit", minute: "2-digit", timeZone: "Europe/Zurich" });
   const endeTime = new Date(t_computerAus).toLocaleTimeString("de-CH", { hour: "2-digit", minute: "2-digit", timeZone: "Europe/Zurich" });
   
+  const allWarnings = computerWarnung + pumpeWarnung;
+  
   return {
     success: true,
     sequenzId,
     message: `🌿 *Garten-Bewässerung gestartet!*\n\n` +
-      `✅ Bewässerungscomputer: AN (2x geprüft)\n` +
+      `✅ Bewässerungscomputer: AN\n` +
       `✅ Pumpe: AN\n` +
       `⏱️ Dauer: *${minutes} Minuten*\n` +
       `⏹️ Pumpe AUS: ${pumpeAusTime} Uhr\n` +
       `🔌 Ende: ${endeTime} Uhr\n\n` +
       `Du bekommst eine Nachricht wenn alles fertig ist! 📬` +
-      pumpeWarnung +
+      allWarnings +
       `\n\nZum Stoppen: "Bewässerung stopp" oder "Garten aus"`,
   };
 }

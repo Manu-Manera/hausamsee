@@ -190,15 +190,17 @@ function findDevice(devices, wantedName) {
 /**
  * Findet den "Switch"-Datapoint-Code des Geräts.
  * Tuya-Plugs benutzen meist "switch_1", manche Multi-Outlet "switch_2" etc.,
- * ältere einfach "switch".
+ * ältere einfach "switch". Bewässerungsventile können andere Codes haben.
  */
 function findSwitchCode(status) {
   if (!Array.isArray(status)) return "switch_1";
-  const preferred = ["switch_1", "switch"];
+  // Erweiterte Liste für verschiedene Gerätetypen (Steckdosen, Ventile, etc.)
+  const preferred = ["switch_1", "switch", "switch_valve", "valve_state", "state", "Power"];
   for (const p of preferred) {
-    if (status.find((s) => s.code === p)) return p;
+    if (status.find((s) => s.code === p || s.code?.toLowerCase() === p.toLowerCase())) return p;
   }
-  const any = status.find((s) => /^switch(_\d+)?$/.test(s.code));
+  // Fallback: irgendein switch-artiger Code
+  const any = status.find((s) => /^(switch|valve|state|power)/i.test(s.code));
   return any ? any.code : "switch_1";
 }
 
@@ -261,22 +263,36 @@ async function getAllStatus() {
 /**
  * Prüft ob ein spezifisches Gerät eingeschaltet ist.
  * @param {string} nameOrId - Gerätename oder ID
- * @returns {Promise<{online: boolean, on: boolean|null, name: string}>}
+ * @returns {Promise<{online: boolean, on: boolean|null, name: string, statusCodes: string[]}>}
  */
 async function isDeviceOn(nameOrId) {
   const devices = await listDevices();
   let device = devices.find((d) => d.id === nameOrId);
   if (!device) device = findDevice(devices, nameOrId);
   if (!device) {
-    return { online: false, on: null, name: nameOrId, found: false };
+    return { online: false, on: null, name: nameOrId, found: false, statusCodes: [] };
   }
   if (!device.online) {
-    return { online: false, on: null, name: device.name, found: true };
+    return { online: false, on: null, name: device.name, found: true, statusCodes: [] };
   }
+  
+  // Alle Status-Codes für Debugging
+  const statusCodes = (device.status || []).map((s) => `${s.code}=${s.value}`);
+  
   const code = findSwitchCode(device.status);
-  const entry = (device.status || []).find((s) => s.code === code);
-  const on = entry ? !!entry.value : null;
-  return { online: true, on, name: device.name, found: true };
+  const entry = (device.status || []).find((s) => s.code === code || s.code?.toLowerCase() === code?.toLowerCase());
+  
+  // Wenn kein passender Code gefunden, versuche jeden boolean-artigen Wert
+  let on = null;
+  if (entry) {
+    on = !!entry.value;
+  } else {
+    // Fallback: Suche nach irgendeinem "true"-Wert
+    const anyOn = (device.status || []).find((s) => s.value === true || s.value === "true" || s.value === "on" || s.value === "open");
+    if (anyOn) on = true;
+  }
+  
+  return { online: true, on, name: device.name, found: true, statusCodes };
 }
 
 module.exports = {
