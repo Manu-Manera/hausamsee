@@ -1890,6 +1890,19 @@ function eventPermalink(ev, hash = "events") {
   return `${base}#${hash}`;
 }
 
+/** iCal-Alarme (werden von iPhone-Kalender, Google Calendar etc. als Erinnerung übernommen). */
+function appendIcsAlarms(lines, alarms) {
+  for (const a of alarms) {
+    lines.push(
+      "BEGIN:VALARM",
+      "ACTION:DISPLAY",
+      `TRIGGER:${a.trigger}`,
+      foldIcsLine(`DESCRIPTION:${icsEscape(a.description || "Erinnerung Haus am See")}`),
+      "END:VALARM"
+    );
+  }
+}
+
 function buildIcs(ev, hash = "events") {
   const start = new Date(ev.date);
   if (isNaN(start.getTime())) return null;
@@ -1916,6 +1929,11 @@ function buildIcs(ev, hash = "events") {
   const description = [ev.description || "", eventPermalink(ev, hash)].filter(Boolean).join("\n\n");
   if (description) lines.push(foldIcsLine(`DESCRIPTION:${icsEscape(description)}`));
   lines.push(foldIcsLine(`URL:${eventPermalink(ev, hash)}`));
+  const title = (ev.emoji ? ev.emoji + " " : "") + (ev.title || "Termin");
+  appendIcsAlarms(lines, [
+    { trigger: "-P1D", description: `Morgen: ${title}` },
+    { trigger: "-PT2H", description: `In 2 Stunden: ${title}` },
+  ]);
   lines.push("END:VEVENT", "END:VCALENDAR");
   return lines.join("\r\n");
 }
@@ -1932,7 +1950,7 @@ function downloadEventIcs(ev, hash = "events") {
   a.click();
   a.remove();
   setTimeout(() => URL.revokeObjectURL(url), 1000);
-  showToast("Termin-Datei heruntergeladen.", "success");
+  showToast("Kalender-Datei mit Erinnerungen heruntergeladen.", "success");
 }
 
 function toIcsDateOnly(date) {
@@ -1945,12 +1963,17 @@ function gartenTodoPermalink() {
 }
 
 function buildGartenTodoIcs(item) {
-  const start = gartenTodoNextDueDate(item);
-  if (isNaN(start.getTime())) return null;
-  const end = addDaysLocal(start, 1);
+  const due = gartenTodoNextDueDate(item);
+  if (isNaN(due.getTime())) return null;
+  const y = due.getFullYear();
+  const mo = due.getMonth() + 1;
+  const da = due.getDate();
+  const dtStart = zurichWallToUtcDate(y, mo, da, 8, 0);
+  const dtEnd = zurichWallToUtcDate(y, mo, da, 8, 30);
   const now = new Date();
-  const uid = `gartentodo-${item.id || start.getTime()}@hausamsee`;
+  const uid = `gartentodo-${item.id || due.getTime()}@hausamsee`;
   const interval = item.intervalDays || 14;
+  const summary = `🌿 ${item.task} – ${mLabel(item.who || "")}`;
   const lines = [
     "BEGIN:VCALENDAR",
     "VERSION:2.0",
@@ -1960,9 +1983,9 @@ function buildGartenTodoIcs(item) {
     "BEGIN:VEVENT",
     `UID:${uid}`,
     `DTSTAMP:${toIcsDate(now)}`,
-    `DTSTART;VALUE=DATE:${toIcsDateOnly(start)}`,
-    `DTEND;VALUE=DATE:${toIcsDateOnly(end)}`,
-    foldIcsLine(`SUMMARY:${icsEscape(`🌿 ${item.task} – ${mLabel(item.who || "")}`)}`),
+    `DTSTART:${toIcsDate(dtStart)}`,
+    `DTEND:${toIcsDate(dtEnd)}`,
+    foldIcsLine(`SUMMARY:${icsEscape(summary)}`),
     foldIcsLine(`LOCATION:${icsEscape("Haus am See, Pilatusstrasse 40, Pfäffikon ZH")}`),
   ];
   const description = [
@@ -1973,6 +1996,10 @@ function buildGartenTodoIcs(item) {
   ].join("\n");
   lines.push(foldIcsLine(`DESCRIPTION:${icsEscape(description)}`));
   lines.push(foldIcsLine(`URL:${gartenTodoPermalink()}`));
+  appendIcsAlarms(lines, [
+    { trigger: "-P1D", description: `Morgen: ${item.task}` },
+    { trigger: "-PT0M", description: `Heute: ${item.task}` },
+  ]);
   lines.push("END:VEVENT", "END:VCALENDAR");
   return lines.join("\r\n");
 }
@@ -1997,7 +2024,7 @@ function downloadGartenTodoIcs(item) {
   a.click();
   a.remove();
   setTimeout(() => URL.revokeObjectURL(url), 1000);
-  showToast("Kalender-Datei heruntergeladen – auf dem Handy öffnen.", "success");
+  showToast("Kalender mit Erinnerungen (morgen + am Tag) – auf dem Handy öffnen.", "success");
 }
 
 function dataUrlToFile(dataUrl, filename) {
