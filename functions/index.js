@@ -48,9 +48,9 @@ const WEBSITE_URL = "https://manu-manera.github.io/hausamsee";
 // Wetter-Alert (Open-Meteo) – dieselbe Lage wie die Homepage
 const WEATHER_LAT = 47.3656;
 const WEATHER_LON = 8.7808;
-/** Min. vor Stundenanfang, ab dem nass laut Vorschau; Alert-Fenster ~30 min davor (siehe checkGartenRegenPolster) */
-const RAIN_ALERT_MIN_MINUTES = 20;
-const RAIN_ALERT_MAX_MINUTES = 42;
+/** Min./Max. vor Regen-Stundenbeginn; Scheduler alle 5 Min (siehe checkGartenRegenPolster) */
+const RAIN_ALERT_MIN_MINUTES = 10;
+const RAIN_ALERT_MAX_MINUTES = 55;
 const GARTEN_POLSTER_ALERT_DOC = "config/gartenPolsterRainAlert";
 
 const BEWOHNER = ["Corina", "Jasmin", "Dino", "Andy", "Manu", "Hugues", "Fanny", "Eliot", "Oscar"];
@@ -270,7 +270,69 @@ function gartenRegenPolsterEnabled() {
 
 function rainAlertRecipients() {
   const raw = process.env.WHATSAPP_RAIN_ALERT_RECIPIENTS || process.env.WHATSAPP_GROUP_RECIPIENTS || "";
-  return raw.split(",").map((s) => s.trim()).filter(Boolean);
+  return raw.split(",").map((s) => s.replace(/\D/g, "")).filter(Boolean);
+}
+
+/** Env-Liste + gespeicherte WhatsApp-Nummern (Bot-Chat) + memberPrefs */
+async function rainAlertRecipientsResolved() {
+  const set = new Set(rainAlertRecipients());
+  for (const name of ADULTS) {
+    try {
+      const phone = await getBewohnerPhone(name);
+      if (phone) set.add(phone);
+    } catch (e) {
+      logger.warn(`rainAlertRecipients: ${name}`, e?.message);
+    }
+  }
+  return [...set];
+}
+
+function buildPolsterRainAlertText(whenLabel, minutesUntil) {
+  const mRound = Math.max(1, Math.round(minutesUntil));
+  return `🌧️🌤️ *Achtung Wetter!*
+
+In ca. *${mRound} Minuten* könnte es in Pfäffikon nass werden (Stunde ab *${whenLabel}* Uhr) 🌦️
+
+🪴🛋️ *Gartenpolster rein bringen!* — bevor's tropft 💦
+
+Trocken bleiben! 🌿✨`;
+}
+
+/**
+ * Nächster Regen-Stunden-Slot für Polster-Alert.
+ * Berücksichtigt auch die laufende Stunde, wenn es dort schon nass wird.
+ */
+function findRainAlertSlot(hourly) {
+  const next = findNextRainyHourSlot(hourly);
+  if (next) return next;
+
+  const times = hourly?.time;
+  const prec = hourly?.precipitation;
+  const codes = hourly?.weathercode;
+  if (!Array.isArray(times) || !times.length) return null;
+
+  const nowMs = Date.now();
+  for (let i = 0; i < times.length; i++) {
+    const raw = times[i];
+    const slotMs = (typeof raw === "number" ? raw : Number(raw)) * 1000;
+    if (Number.isNaN(slotMs)) continue;
+    const slotEnd = slotMs + 3600 * 1000;
+    if (slotMs > nowMs || slotEnd <= nowMs) continue;
+    if (!hourLooksRainy(prec?.[i], codes?.[i])) continue;
+    const whenLabel = fmtTimeZurich(new Date(slotMs));
+    return { slotUnix: Math.floor(slotMs / 1000), whenLabel };
+  }
+  return null;
+}
+
+async function sendPolsterRainAlertToTargets(targets, slot, minutesUntil) {
+  const text = buildPolsterRainAlertText(slot.whenLabel, minutesUntil);
+  const results = await Promise.all(
+    targets.map(async (to) => ({ to, ok: await sendWhatsApp(to, text) }))
+  );
+  const okList = results.filter((r) => r.ok).map((r) => r.to);
+  const failList = results.filter((r) => !r.ok).map((r) => r.to);
+  return { text, okList, failList, anyOk: okList.length > 0 };
 }
 
 /** Niederschlag oder WMO-Code (Regen/Schauer/Gewitter; leichter Schnee zählt für Polster) */
@@ -2509,10 +2571,14 @@ exports.whatsappWebhook = onRequest(
           const effectiveCaption = mediaId ? (mention.addressed ? mention.text : caption) : caption;
           
           // Test-Befehle VOR LLM abfangen (damit LLM sie nicht uminterpretiert)
-          const testMatch = (effectiveText || "").toLowerCase().match(/^(testmsg|test-msg|testnachricht)\s*(giessen|bewerbung|nachricht)?$/i);
+          const testMatch = (effectiveText || "").toLowerCase().match(/^(testmsg|test-msg|testnachricht)\s*(giessen|bewerbung|nachricht|polster)?$/i);
           if (testMatch) {
             const testType = (testMatch[2] || "giessen").toLowerCase();
-            if (testType === "giessen") {
+            if (testType === "polster") {
+              const slot = { whenLabel: fmtTimeZurich(new Date(Date.now() + 30 * 60000)), slotUnix: Math.floor(Date.now() / 1000) + 1800 };
+              const text = buildPolsterRainAlertText(slot.whenLabel, 30) + "\n\n_(Dies ist eine Testnachricht)_";
+              await answer(text);
+            } else if (testType === "giessen") {
               await answer(`🌱 *Giess-Erinnerung für ${senderName}*\n\nHeute bitte giessen:\n💧 Monstera im Wohnzimmer\n⚠️ Ficus (überfällig!)\n\n🦆 Deine Pflanzen danken dir!\n\n_(Dies ist eine Testnachricht)_`);
             } else if (testType === "bewerbung") {
               await answer(`🚪 *Neue Bewerbung!*\n\n*Von:* Lisa Müller\n*Mail:* lisa@example.com\n*Alter:* 26\n*Einzug ab:* per sofort\n\nHallo! Ich bin sehr interessiert an eurem WG-Zimmer am See. Ich arbeite als Grafikerin und liebe Pflanzen! 🌿\n\n→ ${WEBSITE_URL}/#kandidaten\n\n_(Dies ist eine Testnachricht)_`);
@@ -3622,13 +3688,13 @@ exports.dailyDigest = onSchedule(
    ========================================================================== */
 
 exports.checkGartenRegenPolster = onSchedule(
-  { schedule: "every 10 minutes", timeZone: "Europe/Zurich" },
+  { schedule: "every 5 minutes", timeZone: "Europe/Zurich" },
   async () => {
     if (!gartenRegenPolsterEnabled()) return;
 
-    const targets = rainAlertRecipients();
+    const targets = await rainAlertRecipientsResolved();
     if (!targets.length) {
-      logger.warn("Garten-Regen-Alert: keine Empfänger (setze WHATSAPP_RAIN_ALERT_RECIPIENTS oder WHATSAPP_GROUP_RECIPIENTS)");
+      logger.warn("Garten-Regen-Alert: keine Empfänger (WHATSAPP_* oder Bot-Nummern in memberPrefs)");
       return;
     }
 
@@ -3640,7 +3706,7 @@ exports.checkGartenRegenPolster = onSchedule(
       return;
     }
 
-    const slot = findNextRainyHourSlot(data?.hourly);
+    const slot = findRainAlertSlot(data?.hourly);
     if (!slot) return;
 
     const minutesUntil = (slot.slotUnix * 1000 - Date.now()) / 60000;
@@ -3655,17 +3721,8 @@ exports.checkGartenRegenPolster = onSchedule(
       return;
     }
 
-    const mRound = Math.max(1, Math.round(minutesUntil));
-    const text = `🌧️🌤️ *Achtung Wetter!*
+    const { okList, failList, anyOk } = await sendPolsterRainAlertToTargets(targets, slot, minutesUntil);
 
-In ca. *${mRound} Minuten* könnte es in Pfäffikon nass werden (Stunde ab *${slot.whenLabel}* Uhr) 🌦️
-
-🪴🛋️ *Gartenpolster rein bringen!* — bevor’s tropft 💦
-
-Trocken bleiben! 🌿✨`;
-
-    const results = await Promise.all(targets.map((to) => sendWhatsApp(to, text)));
-    const anyOk = results.some(Boolean);
     if (anyOk) {
       await ref.set(
         {
@@ -3673,6 +3730,8 @@ Trocken bleiben! 🌿✨`;
           whenLabel: slot.whenLabel,
           minutesUntilApprox: Math.round(minutesUntil * 10) / 10,
           sentAt: FieldValue.serverTimestamp(),
+          sentTo: okList,
+          failedTo: failList,
         },
         { merge: true }
       );
@@ -3680,9 +3739,49 @@ Trocken bleiben! 🌿✨`;
         slotUnix: slot.slotUnix,
         whenLabel: slot.whenLabel,
         minutesUntil: Math.round(minutesUntil * 10) / 10,
+        ok: okList.length,
+        fail: failList.length,
       });
+      logger.info(`Garten-Regen-Polster: ${okList.length}/${targets.length} WhatsApp (${slot.whenLabel})`);
     } else {
-      logger.warn("checkGartenRegenPolster: alle WhatsApp-Sends fehlgeschlagen");
+      logger.warn("checkGartenRegenPolster: alle WhatsApp-Sends fehlgeschlagen", {
+        targets: targets.length,
+        failList,
+      });
+      await debugLog("garten_regen_polster_failed", {
+        slotUnix: slot.slotUnix,
+        whenLabel: slot.whenLabel,
+        targets,
+      });
     }
   }
 );
+
+exports.testPolsterAlert = onRequest(async (req, res) => {
+  res.set("Access-Control-Allow-Origin", "*");
+  if (req.method === "OPTIONS") {
+    res.set("Access-Control-Allow-Methods", "GET, POST");
+    res.set("Access-Control-Allow-Headers", "Content-Type");
+    return res.status(204).send("");
+  }
+  const secret = req.query.secret || req.body?.secret;
+  if (secret !== process.env.SIRI_SECRET) {
+    return res.status(401).json({ error: "Unauthorized" });
+  }
+  const to = req.query.to || req.body?.to;
+  const targets = to
+    ? [String(to).replace(/\D/g, "")]
+    : await rainAlertRecipientsResolved();
+  if (!targets.length) {
+    return res.status(404).json({ error: "Keine Empfänger" });
+  }
+  const slot = { whenLabel: "14:00", slotUnix: Math.floor(Date.now() / 1000) + 1800 };
+  const { okList, failList, anyOk } = await sendPolsterRainAlertToTargets(targets, slot, 30);
+  return res.json({
+    ok: anyOk,
+    message: anyOk ? `Polster-Alert an ${okList.length} Nummer(n)` : "Alle Sends fehlgeschlagen",
+    okList,
+    failList,
+  });
+});
+
