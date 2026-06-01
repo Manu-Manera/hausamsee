@@ -3283,12 +3283,79 @@ function findGartenTodoHistoryBtn(root, itemId, dueIso) {
   );
 }
 
+function clearGartenTodoHistoryPanelPosition(panel) {
+  if (!panel) return;
+  panel.classList.remove("is-fixed");
+  panel.style.left = "";
+  panel.style.top = "";
+  panel.style.right = "";
+  panel.style.bottom = "";
+  panel.style.maxHeight = "";
+  panel.style.overflowY = "";
+  panel.style.visibility = "";
+}
+
+/** Dropdown im Viewport positionieren (fixed), damit nichts abgeschnitten wird. */
+function positionGartenTodoHistoryPanel(panel, btn) {
+  if (!panel || !btn) return;
+  const margin = 12;
+  const gap = 8;
+  const vw = window.innerWidth;
+  const vh = window.innerHeight;
+
+  panel.classList.add("is-fixed");
+  panel.style.visibility = "hidden";
+  panel.style.left = "0";
+  panel.style.top = "0";
+  panel.style.maxHeight = `${Math.max(120, vh - margin * 2)}px`;
+  panel.style.overflowY = "auto";
+
+  const btnRect = btn.getBoundingClientRect();
+  const panelRect = panel.getBoundingClientRect();
+  const w = Math.min(panelRect.width, vw - margin * 2);
+  const h = Math.min(panelRect.height, vh - margin * 2);
+
+  let left = btnRect.right - w;
+  if (left < margin) left = margin;
+  if (left + w > vw - margin) left = Math.max(margin, vw - margin - w);
+
+  let top = btnRect.bottom + gap;
+  if (top + h > vh - margin) top = btnRect.top - gap - h;
+  if (top < margin) top = margin;
+  if (top + h > vh - margin) top = Math.max(margin, vh - margin - h);
+
+  panel.style.left = `${Math.round(left)}px`;
+  panel.style.top = `${Math.round(top)}px`;
+  panel.style.visibility = "";
+}
+
+function refreshOpenGartenTodoHistoryPanels() {
+  document.querySelectorAll(".gartentodo-history-panel.is-open").forEach((panel) => {
+    const btn = panel.closest(".gartentodo-history-drop")?.querySelector(".gartentodo-verlauf-icon-btn");
+    if (btn) positionGartenTodoHistoryPanel(panel, btn);
+  });
+}
+
+function bindGartenTodoHistoryReposition() {
+  if (window._gartenTodoHistoryRepositionBound) return;
+  window._gartenTodoHistoryRepositionBound = true;
+  const run = () => refreshOpenGartenTodoHistoryPanels();
+  window.addEventListener("resize", run);
+  window.addEventListener("scroll", run, true);
+}
+
 function setGartenTodoHistoryPanelOpen(panel, btn, open) {
   if (!panel) return;
   panel.classList.toggle("is-open", open);
   panel.setAttribute("aria-hidden", open ? "false" : "true");
   if (btn) btn.setAttribute("aria-expanded", open ? "true" : "false");
-  if (!open) panel.classList.remove("gartentodo-history-flash");
+  if (open) {
+    bindGartenTodoHistoryReposition();
+    positionGartenTodoHistoryPanel(panel, btn);
+  } else {
+    clearGartenTodoHistoryPanelPosition(panel);
+    panel.classList.remove("gartentodo-history-flash");
+  }
 }
 
 function closeGartenTodoHistoryPanels(root, exceptPanel = null) {
@@ -3311,7 +3378,7 @@ function toggleGartenTodoRowHistory(itemId, dueIso, root = document) {
   closeGartenTodoHistoryPanels(root, willOpen ? panel : null);
   setGartenTodoHistoryPanelOpen(panel, btn, willOpen);
   if (willOpen) {
-    panel.scrollIntoView({ behavior: "smooth", block: "nearest" });
+    requestAnimationFrame(() => positionGartenTodoHistoryPanel(panel, btn));
     panel.classList.add("gartentodo-history-flash");
     window.setTimeout(() => panel.classList.remove("gartentodo-history-flash"), 2200);
   }

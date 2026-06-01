@@ -1871,6 +1871,7 @@ textarea { resize: vertical; font-family: inherit; }
   grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
   gap: 14px;
   margin-bottom: 16px;
+  overflow: visible;
 }
 .gartentodo-card {
   position: relative;
@@ -2207,6 +2208,9 @@ textarea { resize: vertical; font-family: inherit; }
 }
 .gartentodo-history-drop {
   position: relative;
+  z-index: 1;
+}
+.gartentodo-history-drop:has(.gartentodo-history-panel.is-open) {
   z-index: 2;
 }
 .gartentodo-history-panel {
@@ -2227,6 +2231,15 @@ textarea { resize: vertical; font-family: inherit; }
 }
 .gartentodo-history-panel.is-open {
   display: block;
+}
+.gartentodo-history-panel.is-open.is-fixed {
+  position: fixed;
+  right: auto;
+  bottom: auto;
+  z-index: 10050;
+  max-height: min(70vh, calc(100dvh - 24px));
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
 }
 .gartentodo-history-panel.gartentodo-history-flash {
   animation: gartentodo-history-pulse 2s ease-out;
