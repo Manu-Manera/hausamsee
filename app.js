@@ -3188,6 +3188,9 @@ function gartenTodoIconBtn(className, title, innerSvg, extraAttrs = "") {
   return `<button type="button" class="gartentodo-icon-btn ${className}" title="${t}" aria-label="${t}" ${extraAttrs}>${innerSvg}</button>`;
 }
 
+/** Sentinel für Verlauf-Dropdown auf der Kachel (gesamte history[], nicht nur ein Termin). */
+const GARTEN_TODO_CARD_HISTORY_DUE = "__card__";
+
 function gartenTodoHistoryId(itemId, dueIso) {
   return `gartentodo-history-${itemId}-${dueIso}`;
 }
@@ -3253,6 +3256,23 @@ function gartenTodoHistoryDropdownHtml(item, r) {
   </div>`;
 }
 
+function gartenTodoCardHistoryDropdownHtml(item) {
+  const panelId = gartenTodoHistoryPanelId(item.id, GARTEN_TODO_CARD_HISTORY_DUE);
+  const count = Array.isArray(item.history) ? item.history.length : 0;
+  const title = count ? `Gesamter Verlauf (${count})` : "Gesamter Verlauf";
+  return `<div class="gartentodo-history-drop gartentodo-card-history-drop">
+    ${gartenTodoIconBtn(
+      "gartentodo-verlauf-icon-btn",
+      title,
+      GARTEN_TODO_ICON_SVG.clock,
+      `data-history-for="${escapeHtml(item.id)}" data-history-due="${escapeHtml(GARTEN_TODO_CARD_HISTORY_DUE)}" aria-expanded="false" aria-controls="${escapeHtml(panelId)}"`
+    )}
+    <div class="gartentodo-history-panel gartentodo-card-history-panel" id="${escapeHtml(panelId)}" role="region" aria-label="Gesamter Verlauf">
+      ${gartenTodoHistoryHtml(item)}
+    </div>
+  </div>`;
+}
+
 function findGartenTodoHistoryPanel(itemId, dueIso) {
   return document.getElementById(gartenTodoHistoryPanelId(itemId, dueIso));
 }
@@ -3283,8 +3303,10 @@ function toggleGartenTodoRowHistory(itemId, dueIso, root = document) {
   const panel = findGartenTodoHistoryPanel(itemId, dueIso);
   const btn = findGartenTodoHistoryBtn(root, itemId, dueIso);
   if (!panel || !btn) return;
-  const parentRotation = panel.closest(".gartentodo-subdetails");
-  if (parentRotation && !parentRotation.open) parentRotation.open = true;
+  if (dueIso !== GARTEN_TODO_CARD_HISTORY_DUE) {
+    const parentRotation = panel.closest(".gartentodo-subdetails");
+    if (parentRotation && !parentRotation.open) parentRotation.open = true;
+  }
   const willOpen = !panel.classList.contains("is-open");
   closeGartenTodoHistoryPanels(root, willOpen ? panel : null);
   setGartenTodoHistoryPanelOpen(panel, btn, willOpen);
@@ -3396,29 +3418,6 @@ function gartenTodoHistoryHtml(item) {
   const hist = Array.isArray(item.history) ? item.history : [];
   if (!hist.length) return "<p class=\"form-note\">Noch keine Einträge.</p>";
   return `<ul class="gartentodo-history-list">${hist.map(formatGartenTodoHistoryLine).join("")}</ul>`;
-}
-
-function updateGartenTodoFairPreview(id) {
-  const el = document.querySelector(`[data-fair-preview="${id}"]`);
-  const who = document.querySelector(`[data-garten-who="${id}"]`)?.value;
-  if (!el) return;
-  if (!who) {
-    el.textContent = "";
-    el.className = "gartentodo-fair-preview";
-    return;
-  }
-  const fair = gartenTodoFairnessAfter(who, id);
-  el.className = `gartentodo-fair-preview ${fair.ok ? "ok" : "warn"}`;
-  el.textContent = fair.text;
-}
-
-function wireGartenTodoEditPanels(grid) {
-  grid.querySelectorAll("[data-garten-who]").forEach((sel) => {
-    const id = sel.getAttribute("data-garten-who");
-    const run = () => updateGartenTodoFairPreview(id);
-    sel.addEventListener("change", run);
-    run();
-  });
 }
 
 function pickNextAssignee(currentWho) {
@@ -3607,14 +3606,6 @@ function formatGartenTodoNext(item) {
   return { text: `Fällig ${slot} (in ${days} Tag${days > 1 ? "en" : ""})${planNote}`, kw, cls: "" };
 }
 
-function gartenTodoBadgesHtml(item) {
-  const parts = [];
-  if (item.whoManual) parts.push('<span class="gartentodo-badge manual">👤 Manuell zugewiesen</span>');
-  if (item.nextDueManual) parts.push('<span class="gartentodo-badge manual">📅 Datum festgelegt</span>');
-  if (!parts.length) return "";
-  return `<div class="gartentodo-badges">${parts.join("")}</div>`;
-}
-
 /** Terminzeile auf der Kachel: nur «bis spätestens» (letzter KW-Tag), ohne Kalender-Uhrzeit. */
 function formatGartenTodoCardWhenLine(next) {
   return formatKwLabel(next);
@@ -3665,14 +3656,11 @@ function renderGartenTodos() {
   grid.innerHTML = sorted.map((item) => {
     const status = getGartenTodoStatus(item);
     const summary = formatGartenTodoCardSummary(item);
-    const intervalText = GARTEN_TODO_INTERVAL_LABELS[item.intervalDays] || `Alle ${item.intervalDays} Tage`;
     const whoName = item.who ? mLabel(item.who) : "Noch offen";
     const whoEmoji = item.who ? mEmoji(item.who) : "👤";
     const canEdit = auth.isMember;
-    const roundComplete = gartenTodoRoundComplete(item);
-    const dueVal = item.nextDue || toISODateLocal(gartenTodoNextDueDate(item));
-    const planHint = item.whoManual || item.nextDueManual ? " · angepasst" : "";
     const showDoneBtn = gartenTodoShowDoneButton(item);
+    const cardHistoryDrop = gartenTodoCardHistoryDropdownHtml(item);
     const assigneeHint = summary.assigneeHint
       ? `<span class="gartentodo-assignee-hint">${escapeHtml(summary.assigneeHint)}</span>`
       : "";
@@ -3694,28 +3682,6 @@ function renderGartenTodos() {
         </header>
         <p class="gartentodo-when-line">${escapeHtml(summary.when)}</p>
         ${canEdit ? `
-          <details class="gartentodo-more">
-            <summary>Details${planHint}</summary>
-            <div class="gartentodo-more-body">
-              <p class="gartentodo-more-meta">${escapeHtml(intervalText)}${item.whoManual || item.nextDueManual ? " · Planung angepasst" : ""}</p>
-              ${gartenTodoBadgesHtml(item)}
-            </div>
-          </details>
-          <details class="gartentodo-edit">
-            <summary>Planung anpassen</summary>
-            <div class="gartentodo-edit-panel">
-              <div class="field">
-                <label>Wer</label>
-                <select data-garten-who="${item.id}">${gartenTodoWhoOptionsHtml(item.who || "", false)}</select>
-              </div>
-              <div class="field">
-                <label>Fällig am</label>
-                <input type="date" data-garten-due="${item.id}" value="${dueVal}" />
-              </div>
-              <div class="gartentodo-fair-preview ok" data-fair-preview="${item.id}" aria-live="polite"></div>
-              <button type="button" class="mini-btn" data-id="${item.id}" data-action="save-plan">Speichern</button>
-            </div>
-          </details>
           <details class="gartentodo-subdetails">
             <summary>📅 Wochen-Reihenfolge &amp; Tausch</summary>
             ${gartenTodoRotationHtml(item, true)}
@@ -3735,6 +3701,7 @@ function renderGartenTodos() {
               <input type="checkbox" class="gartentodo-reminder-cb" data-id="${item.id}" ${item.reminder ? "checked" : ""} />
               <span>📱 WhatsApp</span>
             </label>
+            ${cardHistoryDrop}
           </div>
           <div class="gartentodo-actions">
             <button type="button" class="mini-btn danger" data-id="${item.id}" data-action="delete">Löschen</button>
@@ -3742,6 +3709,7 @@ function renderGartenTodos() {
         ` : `
           <div class="gartentodo-tools">
             <button type="button" class="event-share-btn gartentodo-share-btn" data-id="${item.id}" data-action="ical" title="In Kalender speichern">📅 Kalender</button>
+            ${cardHistoryDrop}
           </div>
         `}
       </div>
@@ -3753,9 +3721,6 @@ function renderGartenTodos() {
       const rotate = grid.querySelector(`.gartentodo-rotate-next[data-id="${btn.dataset.id}"]`);
       void markGartenTodoDone(btn.dataset.id, rotate ? rotate.checked : true, btn);
     });
-  });
-  grid.querySelectorAll("[data-action='save-plan']").forEach((btn) => {
-    btn.addEventListener("click", () => void saveGartenTodoPlan(btn.dataset.id));
   });
   grid.querySelectorAll("[data-action='delete']").forEach((btn) => {
     btn.addEventListener("click", () => void deleteGartenTodo(btn.dataset.id));
@@ -3815,7 +3780,6 @@ function renderGartenTodos() {
   grid.querySelectorAll(".gartentodo-reminder-cb").forEach((cb) => {
     cb.addEventListener("change", () => void toggleGartenTodoReminder(cb.dataset.id, cb.checked));
   });
-  wireGartenTodoEditPanels(grid);
 }
 
 async function toggleGartenTodoReminder(id, enabled) {
@@ -3870,47 +3834,6 @@ async function persistGartenTodoUpdates(id, updates, toastMsg, toastType = "succ
     showToast(`Speichern fehlgeschlagen: ${err.message || err}`, "error");
     return false;
   }
-}
-
-async function saveGartenTodoPlan(id) {
-  if (!requireMember("Garten To-Do")) return;
-  const item = gartenTodoCache.find((t) => t.id === id);
-  if (!item) return;
-  const who = document.querySelector(`[data-garten-who="${id}"]`)?.value;
-  const due = document.querySelector(`[data-garten-due="${id}"]`)?.value;
-  if (!who || !due) {
-    showToast("Bitte Person und Datum wählen.", "error");
-    return;
-  }
-  const fair = gartenTodoFairnessAfter(who, id);
-  const prevWho = item.who;
-  const prevDue = item.nextDue || toISODateLocal(gartenTodoNextDueDate(item));
-  const history = appendGartenTodoHistory(
-    item,
-    gartenTodoHistoryEntry("plan", {
-      who,
-      nextDue: due,
-      prevWho,
-      prevDue,
-      fairNote: fair.text,
-    })
-  );
-  const rotationOverrides = removeGartenTodoRotationOverride(normalizeGartenTodoRotationOverrides(item), due);
-  const swapMeta = prevWho !== who ? gartenTodoNewSwapMeta() : null;
-  await persistGartenTodoUpdates(
-    id,
-    {
-      who,
-      nextDue: due,
-      whoManual: true,
-      nextDueManual: true,
-      rotationOverrides,
-      ...(swapMeta ? { whoSwappedBy: swapMeta.swappedBy, whoSwappedAt: swapMeta.swappedAt } : {}),
-      history,
-    },
-    fair.ok ? `Gespeichert. ${fair.text}` : `Gespeichert (Abweichung). ${fair.text}`,
-    fair.ok ? "success" : "info"
-  );
 }
 
 async function saveGartenTodoRotationSlot(id, dueIso, roundIndex, who, triggerBtn = null) {

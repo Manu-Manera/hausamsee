@@ -1856,24 +1856,6 @@ textarea { resize: vertical; font-family: inherit; }
   font-weight: 500;
   line-height: 1.35;
 }
-.gartentodo-edit {
-  margin-top: 10px;
-  font-size: 0.88rem;
-}
-.gartentodo-edit summary {
-  cursor: pointer;
-  color: var(--moss-dark, #2d5016);
-  font-weight: 500;
-}
-.gartentodo-edit-panel {
-  margin-top: 10px;
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
-}
-.gartentodo-edit-panel .field label {
-  font-size: 0.82rem;
-}
 .gartentodo-rotate-row {
   display: flex;
   align-items: flex-start;
@@ -1995,25 +1977,6 @@ textarea { resize: vertical; font-family: inherit; }
   color: #5a6554;
   line-height: 1.35;
 }
-.gartentodo-more {
-  margin-top: 2px;
-  font-size: 0.82rem;
-}
-.gartentodo-more summary {
-  cursor: pointer;
-  color: #6b7a64;
-  font-weight: 500;
-}
-.gartentodo-more-body {
-  margin-top: 6px;
-  padding-top: 6px;
-  border-top: 1px dashed rgba(45, 80, 22, 0.15);
-}
-.gartentodo-more-meta {
-  margin: 0 0 6px;
-  font-size: 0.8rem;
-  color: #666;
-}
 .gartentodo-meta { font-size: 0.88rem; color: #555; display: flex; flex-direction: column; gap: 4px; }
 .gartentodo-kw { font-weight: 600; color: var(--moss-dark, #2d5016); }
 .gartentodo-next.overdue { color: #c62828; font-weight: 600; }
@@ -2043,6 +2006,10 @@ textarea { resize: vertical; font-family: inherit; }
   align-items: center;
   gap: 10px;
   margin-top: 10px;
+}
+.gartentodo-card-history-panel {
+  min-width: min(20rem, 92vw);
+  max-width: 24rem;
 }
 .gartentodo-reminder-toggle {
   display: inline-flex;
