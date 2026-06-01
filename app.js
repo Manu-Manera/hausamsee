@@ -448,6 +448,7 @@ const auth = {
     renderGiessplan();
     renderGartenTodos();
     populateGiessWhoSelect();
+    populateGartenTodoWhoSelect();
     renderPlaylist();
     renderKandidaten();
     renderSchaeden();
@@ -2823,15 +2824,87 @@ function today0() {
   return t;
 }
 
+function toISODateLocal(d) {
+  const x = d instanceof Date ? d : new Date(d);
+  const y = x.getFullYear();
+  const m = String(x.getMonth() + 1).padStart(2, "0");
+  const day = String(x.getDate()).padStart(2, "0");
+  return `${y}-${m}-${day}`;
+}
+
+function addDaysLocal(date, days) {
+  const d = new Date(date);
+  d.setDate(d.getDate() + days);
+  return d;
+}
+
+function parseGartenTodoDueISO(iso) {
+  if (!iso) return null;
+  const m = String(iso).match(/^(\d{4})-(\d{2})-(\d{2})/);
+  if (!m) return null;
+  const d = new Date(+m[1], +m[2] - 1, +m[3]);
+  d.setHours(0, 0, 0, 0);
+  return d;
+}
+
+/** Nächstes Fälligkeitsdatum: festgelegtes nextDue, sonst lastDone+Intervall, sonst heute. */
 function gartenTodoNextDueDate(item) {
+  const manual = parseGartenTodoDueISO(item.nextDue);
+  if (manual) return manual;
   const interval = item.intervalDays || 14;
-  const base = item.lastDone ? new Date(item.lastDone) : new Date();
-  const next = new Date(base);
   if (item.lastDone) {
+    const next = startOfDayLocal(new Date(item.lastDone));
     next.setDate(next.getDate() + interval);
+    return next;
   }
-  next.setHours(0, 0, 0, 0);
-  return next;
+  return today0();
+}
+
+function startOfDayLocal(d) {
+  const x = new Date(d);
+  x.setHours(0, 0, 0, 0);
+  return x;
+}
+
+function gartenTodoWhoOptionsHtml(selected = "", includeFair = false) {
+  const adults = [...getActiveAdultNames()].sort((a, b) => a.localeCompare(b, "de"));
+  let html = "";
+  if (includeFair) {
+    const fair = pickFairAssignee();
+    const fairLabel = fair ? `Fair vorschlagen (${mLabel(fair)})` : "Fair vorschlagen";
+    html += `<option value=""${!selected ? " selected" : ""}>${escapeHtml(fairLabel)}</option>`;
+  }
+  html += adults
+    .map(
+      (n) =>
+        `<option value="${escapeHtml(n)}"${n === selected ? " selected" : ""}>${mEmoji(n)} ${escapeHtml(mLabel(n))}</option>`
+    )
+    .join("");
+  return html;
+}
+
+function populateGartenTodoWhoSelect() {
+  const sel = $("gartenTodoWho");
+  if (!sel) return;
+  sel.innerHTML = gartenTodoWhoOptionsHtml("", true);
+}
+
+function renderGartenTodoBalance() {
+  const el = $("gartenTodoBalance");
+  if (!el) return;
+  const adults = [...getActiveAdultNames()].sort((a, b) => a.localeCompare(b, "de"));
+  if (!adults.length) {
+    el.textContent = "";
+    return;
+  }
+  const counts = {};
+  adults.forEach((n) => { counts[n] = 0; });
+  gartenTodoCache.forEach((t) => {
+    if (getGartenTodoStatus(t) === "done-today") return;
+    if (t.who && counts[t.who] !== undefined) counts[t.who]++;
+  });
+  const line = adults.map((n) => `${mEmoji(n)} ${counts[n]}`).join(" · ");
+  el.textContent = `Offene Aufgaben: ${line}`;
 }
 
 function getGartenTodoStatus(item) {
@@ -2853,20 +2926,30 @@ function formatGartenTodoNext(item) {
   const next = gartenTodoNextDueDate(item);
   const kw = formatKwLabel(next);
   const dateStr = next.toLocaleDateString("de-CH", { weekday: "short", day: "2-digit", month: "short", timeZone: "Europe/Zurich" });
+  const planNote = item.nextDueManual ? " · Datum festgelegt" : "";
   if (status === "done-today") return { text: "✅ Heute erledigt – nächste Runde später", kw, cls: "" };
   if (status === "overdue") {
     const days = Math.ceil((today0() - next) / 86400000);
-    return { text: `⚠️ ${days} Tag${days > 1 ? "e" : ""} überfällig · ${dateStr}`, kw, cls: "overdue" };
+    return { text: `⚠️ ${days} Tag${days > 1 ? "e" : ""} überfällig · ${dateStr}${planNote}`, kw, cls: "overdue" };
   }
-  if (status === "due-today") return { text: `📋 Heute fällig · ${dateStr}`, kw, cls: "due-today" };
+  if (status === "due-today") return { text: `📋 Heute fällig · ${dateStr}${planNote}`, kw, cls: "due-today" };
   const days = Math.ceil((next - today0()) / 86400000);
-  return { text: `Fällig ${dateStr} (in ${days} Tag${days > 1 ? "en" : ""})`, kw, cls: "" };
+  return { text: `Fällig ${dateStr} (in ${days} Tag${days > 1 ? "en" : ""})${planNote}`, kw, cls: "" };
+}
+
+function gartenTodoBadgesHtml(item) {
+  const parts = [];
+  if (item.whoManual) parts.push('<span class="gartentodo-badge manual">👤 Manuell zugewiesen</span>');
+  if (item.nextDueManual) parts.push('<span class="gartentodo-badge manual">📅 Datum festgelegt</span>');
+  if (!parts.length) return "";
+  return `<div class="gartentodo-badges">${parts.join("")}</div>`;
 }
 
 function renderGartenTodos() {
   const grid = $("gartenTodoGrid");
   if (!grid) return;
   updateGartenTodoKwHead();
+  renderGartenTodoBalance();
 
   const sorted = [...gartenTodoCache].sort((a, b) => {
     const order = { overdue: 0, "due-today": 1, upcoming: 2, "done-today": 3 };
@@ -2885,21 +2968,43 @@ function renderGartenTodos() {
     const whoLabel = item.who ? `${mEmoji(item.who)} ${escapeHtml(mLabel(item.who))}` : "—";
     const canEdit = auth.isAuthed;
     const checked = status === "done-today";
+    const dueVal = item.nextDue || toISODateLocal(gartenTodoNextDueDate(item));
 
     return `
       <div class="gartentodo-card ${status}">
         ${item.reminder ? '<span class="giess-reminder-badge">📱 Erinnerung</span>' : ""}
         <div class="gartentodo-task">${escapeHtml(item.task)}</div>
+        ${gartenTodoBadgesHtml(item)}
         <div class="gartentodo-meta">
           <span>👤 ${whoLabel} · ${intervalText}</span>
           <span class="gartentodo-kw">${nextInfo.kw}</span>
           <span class="gartentodo-next ${nextInfo.cls}">${nextInfo.text}</span>
         </div>
         ${canEdit ? `
+          <details class="gartentodo-edit">
+            <summary>Planung anpassen</summary>
+            <div class="gartentodo-edit-panel">
+              <div class="field">
+                <label>Wer</label>
+                <select data-garten-who="${item.id}">${gartenTodoWhoOptionsHtml(item.who || "", false)}</select>
+              </div>
+              <div class="field">
+                <label>Fällig am</label>
+                <input type="date" data-garten-due="${item.id}" value="${dueVal}" />
+              </div>
+              <button type="button" class="mini-btn" data-id="${item.id}" data-action="save-plan">Speichern</button>
+            </div>
+          </details>
           <label class="gartentodo-done-row">
             <input type="checkbox" class="gartentodo-done-cb" data-id="${item.id}" ${checked ? "checked disabled" : ""} />
             <span>Erledigt</span>
           </label>
+          ${!checked ? `
+          <label class="gartentodo-rotate-row">
+            <input type="checkbox" class="gartentodo-rotate-next" data-id="${item.id}" checked />
+            <span>Nächste Runde fair an nächste Person (empfohlen)</span>
+          </label>
+          ` : ""}
           <div class="gartentodo-actions">
             <button type="button" class="mini-btn danger" data-id="${item.id}" data-action="delete">Löschen</button>
           </div>
@@ -2910,21 +3015,60 @@ function renderGartenTodos() {
 
   grid.querySelectorAll(".gartentodo-done-cb").forEach((cb) => {
     cb.addEventListener("change", () => {
-      if (cb.checked) void markGartenTodoDone(cb.dataset.id);
+      if (!cb.checked) return;
+      const rotate = grid.querySelector(`.gartentodo-rotate-next[data-id="${cb.dataset.id}"]`);
+      void markGartenTodoDone(cb.dataset.id, rotate ? rotate.checked : true);
     });
+  });
+  grid.querySelectorAll("[data-action='save-plan']").forEach((btn) => {
+    btn.addEventListener("click", () => void saveGartenTodoPlan(btn.dataset.id));
   });
   grid.querySelectorAll("[data-action='delete']").forEach((btn) => {
     btn.addEventListener("click", () => void deleteGartenTodo(btn.dataset.id));
   });
 }
 
-async function markGartenTodoDone(id) {
+async function saveGartenTodoPlan(id) {
+  if (!requireAuth("Garten To-Do")) return;
+  const item = gartenTodoCache.find((t) => t.id === id);
+  if (!item) return;
+  const who = document.querySelector(`[data-garten-who="${id}"]`)?.value;
+  const due = document.querySelector(`[data-garten-due="${id}"]`)?.value;
+  if (!who || !due) {
+    showToast("Bitte Person und Datum wählen.", "error");
+    return;
+  }
+  const updates = {
+    who,
+    nextDue: due,
+    whoManual: true,
+    nextDueManual: true,
+  };
+  if (firebaseReady) {
+    await updateDoc(doc(db, "gartentodos", id), updates);
+  } else {
+    Object.assign(item, updates);
+    localStore.gartentodos = gartenTodoCache;
+    saveLocal("gartentodos", localStore.gartentodos);
+    renderGartenTodos();
+  }
+  showToast("Planung gespeichert – für alle sichtbar.", "success");
+}
+
+async function markGartenTodoDone(id, rotateNext = true) {
   if (!requireAuth("Garten To-Do")) return;
   const item = gartenTodoCache.find((t) => t.id === id);
   if (!item) return;
   const now = new Date().toISOString();
-  const nextWho = pickNextAssignee(item.who);
-  const updates = { lastDone: now, who: nextWho };
+  const interval = item.intervalDays || 14;
+  const nextWho = rotateNext ? pickNextAssignee(item.who) : item.who;
+  const updates = {
+    lastDone: now,
+    who: nextWho,
+    nextDue: toISODateLocal(addDaysLocal(today0(), interval)),
+    whoManual: false,
+    nextDueManual: false,
+  };
 
   if (firebaseReady) {
     await updateDoc(doc(db, "gartentodos", id), updates);
@@ -2934,7 +3078,8 @@ async function markGartenTodoDone(id) {
     saveLocal("gartentodos", localStore.gartentodos);
     renderGartenTodos();
   }
-  showToast(`✅ Erledigt! Nächste Runde: ${nextWho || "—"}`, "success");
+  const rotHint = rotateNext ? `Nächste Person: ${nextWho || "—"}` : "Gleiche Person bleibt dran";
+  showToast(`✅ Erledigt! ${rotHint}`, "success");
 }
 
 async function deleteGartenTodo(id) {
@@ -2960,16 +3105,27 @@ $("gartenTodoForm")?.addEventListener("submit", async (e) => {
     showToast("Bitte Aufgabe und Intervall ausfüllen.", "error");
     return;
   }
-  const who = pickFairAssignee();
+  const whoPick = $("gartenTodoWho")?.value || "";
+  const duePick = $("gartenTodoDue")?.value || "";
+  let who = whoPick;
+  let whoManual = false;
   if (!who) {
-    showToast("Keine aktiven Erwachsenen für die Verteilung.", "error");
-    return;
+    who = pickFairAssignee();
+    if (!who) {
+      showToast("Keine aktiven Erwachsenen für die Verteilung.", "error");
+      return;
+    }
+  } else {
+    whoManual = true;
   }
   const entry = {
     task,
     intervalDays,
     reminder: $("gartenTodoReminder").checked,
     who,
+    whoManual,
+    nextDue: duePick || null,
+    nextDueManual: !!duePick,
     lastDone: null,
   };
   if (firebaseReady) {
@@ -2984,7 +3140,9 @@ $("gartenTodoForm")?.addEventListener("submit", async (e) => {
   }
   e.target.reset();
   $("gartenTodoReminder").checked = true;
-  showToast(`🌿 Gespeichert – ${who} ist als Erste:r dran.`, "success");
+  populateGartenTodoWhoSelect();
+  const dueHint = duePick ? `fällig ${duePick}` : "heute fällig";
+  showToast(`🌿 Gespeichert – ${who}, ${dueHint}.`, "success");
 });
 
 /* ==========================================================================
@@ -6334,6 +6492,7 @@ function setupListeners() {
     renderGiessplan();
     renderGartenTodos();
     populateGiessWhoSelect();
+    populateGartenTodoWhoSelect();
     renderTermine();
     renderAnwesend();
     renderGaestebuch();

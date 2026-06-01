@@ -1821,9 +1821,61 @@ textarea { resize: vertical; font-family: inherit; }
 .gartentodo-kw-head {
   font-weight: 600;
   font-size: 1.05rem;
-  margin: 0 0 8px;
+  margin: 0 0 4px;
   color: var(--moss-dark, #2d5016);
 }
+.gartentodo-balance {
+  font-size: 0.88rem;
+  color: #555;
+  margin: 0 0 10px;
+  line-height: 1.4;
+}
+.gartentodo-badges {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-bottom: 8px;
+}
+.gartentodo-badge {
+  font-size: 0.72rem;
+  font-weight: 600;
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: #eef3ea;
+  color: var(--moss-dark, #2d5016);
+}
+.gartentodo-badge.manual {
+  background: #fff3e0;
+  color: #8d5524;
+}
+.gartentodo-edit {
+  margin-top: 10px;
+  font-size: 0.88rem;
+}
+.gartentodo-edit summary {
+  cursor: pointer;
+  color: var(--moss-dark, #2d5016);
+  font-weight: 500;
+}
+.gartentodo-edit-panel {
+  margin-top: 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.gartentodo-edit-panel .field label {
+  font-size: 0.82rem;
+}
+.gartentodo-rotate-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  margin-top: 8px;
+  font-size: 0.85rem;
+  color: #555;
+  cursor: pointer;
+}
+.gartentodo-rotate-row input { margin-top: 2px; }
 .gartentodo-grid {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));

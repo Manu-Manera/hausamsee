@@ -1330,6 +1330,10 @@ function giessplanPlantMatchesHint(plant, hint) {
 
 /** Nächster Soll-Termin Garten To-Do (wie Frontend / Scheduler). */
 function gartenTodoNextDueDatePlain(data) {
+  if (data.nextDue) {
+    const parts = String(data.nextDue).match(/^(\d{4})-(\d{2})-(\d{2})/);
+    if (parts) return startOfDay(new Date(+parts[1], +parts[2] - 1, +parts[3]));
+  }
   const intervalDays = data.intervalDays || 14;
   const lastDone = data.lastDone ? new Date(data.lastDone) : null;
   let nextDate;
@@ -1340,6 +1344,15 @@ function gartenTodoNextDueDatePlain(data) {
     nextDate = startOfDay(new Date());
   }
   return nextDate;
+}
+
+function gartenTodoIsoDateAfterDays(days) {
+  const d = startOfDay(new Date());
+  d.setDate(d.getDate() + days);
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, "0");
+  const day = String(d.getDate()).padStart(2, "0");
+  return `${y}-${m}-${day}`;
 }
 
 function gartenTodoIsDueOrOverdueData(data) {
@@ -2381,10 +2394,14 @@ async function dispatch(ctx) {
       return true;
     }
     const markOne = async (one) => {
+      const interval = one.intervalDays || 14;
       const nextWho = gartenTodoPickNextAssignee(one.who);
       await db.collection("gartentodos").doc(one.id).update({
         lastDone: new Date().toISOString(),
         who: nextWho,
+        nextDue: gartenTodoIsoDateAfterDays(interval),
+        whoManual: false,
+        nextDueManual: false,
       });
       return nextWho;
     };
