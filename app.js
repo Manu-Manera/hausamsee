@@ -3543,17 +3543,24 @@ function gartenTodoTodayYmd() {
   return zurichYmd(new Date());
 }
 
+function getGartenTodoLastCompleter(item) {
+  if (item.lastCompletedBy) return item.lastCompletedBy;
+  const entry = (item.history || []).find((h) => h.action === "done");
+  return entry?.completedBy || entry?.by || null;
+}
+
 function getGartenTodoStatus(item) {
   const todayYmd = gartenTodoTodayYmd();
   const today = today0();
   const next = gartenTodoNextDueDate(item);
   const nextYmd = toISODateLocal(next);
 
+  // Letzte Runde erledigt, nächster Termin in der Zukunft → `who` ist die NÄCHSTE Person (noch offen)
+  if (item.lastDone && next > today) return "scheduled";
+
   if (item.lastDone) {
     const lastYmd = zurichYmd(new Date(item.lastDone));
-    if (lastYmd === todayYmd) return "done-today";
-    // Runde erledigt, nächster Termin liegt in der Zukunft
-    if (next > today) return "scheduled";
+    if (lastYmd === todayYmd && nextYmd === todayYmd) return "done-today";
   }
 
   if (next < today) return "overdue";
@@ -3562,8 +3569,12 @@ function getGartenTodoStatus(item) {
 }
 
 function gartenTodoRoundComplete(item) {
+  return getGartenTodoStatus(item) === "scheduled";
+}
+
+function gartenTodoActiveRound(item) {
   const s = getGartenTodoStatus(item);
-  return s === "done-today" || s === "scheduled";
+  return s === "overdue" || s === "due-today" || s === "upcoming" || s === "done-today";
 }
 
 function formatGartenTodoNext(item) {
@@ -3609,25 +3620,28 @@ function formatGartenTodoCardSummary(item) {
   const next = gartenTodoNextDueDate(item);
   const slot = formatGartenWorkSlot(next);
   if (status === "done-today") {
-    return { chip: "Erledigt", chipCls: "done", when: "Heute erledigt" };
+    return { chip: "Erledigt", chipCls: "done", when: "Heute erledigt – gespeichert", assigneeHint: "" };
   }
   if (status === "scheduled") {
-    const lastStr = new Date(item.lastDone).toLocaleDateString("de-CH", {
-      day: "2-digit",
-      month: "short",
-      timeZone: "Europe/Zurich",
-    });
-    return { chip: "Nächste Runde", chipCls: "scheduled", when: `${lastStr} erledigt · dann ${slot}` };
+    const prev = getGartenTodoLastCompleter(item);
+    const prevLabel = prev ? mLabel(prev) : "Letzte Runde";
+    const kw = formatKwLabel(next);
+    return {
+      chip: "Offen",
+      chipCls: "scheduled",
+      when: `${prevLabel} erledigt · ${item.who ? mLabel(item.who) : "—"} bis ${slot} (${kw})`,
+      assigneeHint: "Noch zu erledigen",
+    };
   }
   if (status === "overdue") {
     const days = Math.ceil((today0() - next) / 86400000);
-    return { chip: "Überfällig", chipCls: "overdue", when: `${slot} (${days} Tag${days > 1 ? "e" : ""})` };
+    return { chip: "Überfällig", chipCls: "overdue", when: `${slot} (${days} Tag${days > 1 ? "e" : ""})`, assigneeHint: "" };
   }
   if (status === "due-today") {
-    return { chip: "Heute", chipCls: "due-today", when: slot };
+    return { chip: "Heute", chipCls: "due-today", when: slot, assigneeHint: "" };
   }
   const days = Math.ceil((next - today0()) / 86400000);
-  return { chip: "Demnächst", chipCls: "upcoming", when: `${slot} (in ${days} T.)` };
+  return { chip: "Demnächst", chipCls: "upcoming", when: `${slot} (in ${days} T.)`, assigneeHint: "" };
 }
 
 function renderGartenTodos() {
@@ -3656,6 +3670,10 @@ function renderGartenTodos() {
     const roundComplete = gartenTodoRoundComplete(item);
     const dueVal = item.nextDue || toISODateLocal(gartenTodoNextDueDate(item));
     const planHint = item.whoManual || item.nextDueManual ? " · angepasst" : "";
+    const activeRound = gartenTodoActiveRound(item);
+    const assigneeHint = summary.assigneeHint
+      ? `<span class="gartentodo-assignee-hint">${escapeHtml(summary.assigneeHint)}</span>`
+      : "";
 
     return `
       <div class="gartentodo-card ${status}">
@@ -3664,9 +3682,10 @@ function renderGartenTodos() {
           <div class="gartentodo-hero">
             <p class="gartentodo-hero-label">Aufgabe</p>
             <h3 class="gartentodo-task-title">${escapeHtml(item.task)}</h3>
-            <div class="gartentodo-assignee${item.who ? "" : " is-empty"}">
-              <span class="gartentodo-assignee-label">Zuständig</span>
+            <div class="gartentodo-assignee${item.who ? "" : " is-empty"}${status === "scheduled" ? " is-pending" : ""}">
+              <span class="gartentodo-assignee-label">${status === "scheduled" ? "Nächste Person" : "Zuständig"}</span>
               <span class="gartentodo-assignee-value"><span class="gartentodo-assignee-emoji" aria-hidden="true">${whoEmoji}</span> ${escapeHtml(whoName)}</span>
+              ${assigneeHint}
             </div>
           </div>
           <span class="gartentodo-status-chip ${summary.chipCls}">${escapeHtml(summary.chip)}</span>
@@ -3699,9 +3718,8 @@ function renderGartenTodos() {
             <summary>📅 Wochen-Reihenfolge &amp; Tausch</summary>
             ${gartenTodoRotationHtml(item, true)}
           </details>
-          ${roundComplete
-            ? ""
-            : `<div class="gartentodo-done-actions">
+          ${activeRound
+            ? `<div class="gartentodo-done-actions">
             <button type="button" class="mini-btn gartentodo-done-btn" data-id="${item.id}" data-action="done">✅ Erledigt speichern</button>
             <label class="gartentodo-rotate-row">
               <input type="checkbox" class="gartentodo-rotate-next" data-id="${item.id}" checked />
@@ -3965,7 +3983,8 @@ async function markGartenTodoDone(id, rotateNext = true, triggerBtn = null) {
   if (!item) return;
   if (gartenTodoRoundComplete(item)) {
     const next = formatGartenWorkSlot(gartenTodoNextDueDate(item));
-    showToast(`Diese Runde ist erledigt. Nächste Runde: ${next}`, "info");
+    const whoNext = item.who ? mLabel(item.who) : "—";
+    showToast(`Diese Runde ist erledigt. ${whoNext} ist dran ab ${next}.`, "info");
     return;
   }
 
@@ -3986,6 +4005,7 @@ async function markGartenTodoDone(id, rotateNext = true, triggerBtn = null) {
   );
   const updates = {
     lastDone: now,
+    lastCompletedBy: completedBy,
     who: nextWho,
     nextDue,
     whoManual: false,

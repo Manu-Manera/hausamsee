@@ -1392,6 +1392,8 @@ function gartenTodoIsDueOrOverdueData(data) {
 function gartenTodoDoneToday(data) {
   if (!data.lastDone) return false;
   const today = startOfDay(new Date());
+  const next = gartenTodoNextDueDatePlain(data);
+  if (next.getTime() > today.getTime()) return false;
   const last = startOfDay(new Date(data.lastDone));
   return last.getTime() === today.getTime();
 }
@@ -2437,6 +2439,14 @@ async function dispatch(ctx) {
       const one = candidates[0];
       if (gartenTodoDoneToday(one)) {
         await reply(`✅ *${one.task}* ist heute schon erledigt.`);
+        return true;
+      }
+      if (!gartenTodoIsDueOrOverdueData(one)) {
+        const nd = gartenTodoNextDueDatePlain(one);
+        const fmt = nd.toLocaleDateString("de-CH", { weekday: "short", day: "2-digit", month: "short" });
+        await reply(
+          `✅ Letzte Runde ist erledigt.\nNächste Person: *${one.who || "—"}* ab ${fmt} – dann kann sie «garten erledigt» senden.`
+        );
         return true;
       }
       try {

@@ -1903,8 +1903,11 @@ textarea { resize: vertical; font-family: inherit; }
 }
 .gartentodo-card.overdue { border-color: #e57373; background: #fff8f8; }
 .gartentodo-card.due-today { border-color: var(--terracotta, #c67b4e); border-width: 2px; }
-.gartentodo-card.done-today,
-.gartentodo-card.scheduled { border-color: #81c784; background: #f6fbf6; }
+.gartentodo-card.done-today { border-color: #81c784; background: #f6fbf6; }
+.gartentodo-card.scheduled {
+  border-color: #b8d4f0;
+  background: #f8fbff;
+}
 .gartentodo-card-head {
   display: flex;
   align-items: flex-start;
@@ -1947,6 +1950,19 @@ textarea { resize: vertical; font-family: inherit; }
 .gartentodo-assignee.is-empty {
   background: #f3f3f3;
   border-color: #ddd;
+}
+.gartentodo-assignee.is-pending {
+  background: linear-gradient(135deg, #f0f7fc 0%, #dceaf8 100%);
+  border-color: rgba(58, 122, 181, 0.28);
+}
+.gartentodo-assignee-hint {
+  display: block;
+  margin-top: 4px;
+  font-size: 0.72rem;
+  font-weight: 700;
+  color: #356da3;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
 }
 .gartentodo-assignee-value {
   font-size: 1.12rem;
