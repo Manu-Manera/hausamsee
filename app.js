@@ -3233,17 +3233,20 @@ function renderGartenTodoBalance() {
   el.textContent = `Offene Aufgaben: ${line}`;
 }
 
+function gartenTodoTodayYmd() {
+  return zurichYmd(new Date());
+}
+
 function getGartenTodoStatus(item) {
-  const today = new Date();
-  today.setHours(0, 0, 0, 0);
-  const last = item.lastDone ? new Date(item.lastDone) : null;
-  if (last) {
-    last.setHours(0, 0, 0, 0);
-    if (last.getTime() === today.getTime()) return "done-today";
+  const todayYmd = gartenTodoTodayYmd();
+  if (item.lastDone) {
+    const lastYmd = zurichYmd(new Date(item.lastDone));
+    if (lastYmd === todayYmd) return "done-today";
   }
+  const today = today0();
   const next = gartenTodoNextDueDate(item);
   if (next < today) return "overdue";
-  if (next.getTime() === today.getTime()) return "due-today";
+  if (toISODateLocal(next) === todayYmd) return "due-today";
   return "upcoming";
 }
 
@@ -3293,7 +3296,7 @@ function renderGartenTodos() {
     const intervalText = GARTEN_TODO_INTERVAL_LABELS[item.intervalDays] || `Alle ${item.intervalDays} Tage`;
     const whoLabel = item.who ? `${mEmoji(item.who)} ${escapeHtml(mLabel(item.who))}` : "—";
     const canEdit = auth.isAuthed;
-    const checked = status === "done-today";
+    const doneToday = status === "done-today";
     const dueVal = item.nextDue || toISODateLocal(gartenTodoNextDueDate(item));
 
     return `
@@ -3330,16 +3333,15 @@ function renderGartenTodos() {
             <summary>📜 Verlauf</summary>
             ${gartenTodoHistoryHtml(item)}
           </details>
-          <label class="gartentodo-done-row">
-            <input type="checkbox" class="gartentodo-done-cb" data-id="${item.id}" ${checked ? "checked disabled" : ""} />
-            <span>Erledigt</span>
-          </label>
-          ${!checked ? `
-          <label class="gartentodo-rotate-row">
-            <input type="checkbox" class="gartentodo-rotate-next" data-id="${item.id}" checked />
-            <span>Nächste Runde fair an nächste Person (empfohlen)</span>
-          </label>
-          ` : ""}
+          ${doneToday
+            ? `<p class="gartentodo-done-badge">✅ Heute erledigt – gespeichert</p>`
+            : `<div class="gartentodo-done-actions">
+            <button type="button" class="mini-btn gartentodo-done-btn" data-id="${item.id}" data-action="done">✅ Erledigt speichern</button>
+            <label class="gartentodo-rotate-row">
+              <input type="checkbox" class="gartentodo-rotate-next" data-id="${item.id}" checked />
+              <span>Nächste Runde fair an nächste Person (empfohlen)</span>
+            </label>
+          </div>`}
           <div class="gartentodo-tools">
             <button type="button" class="event-share-btn gartentodo-share-btn" data-id="${item.id}" data-action="ical" title="In Kalender speichern (iPhone/Android)">📅 Kalender</button>
             <label class="gartentodo-reminder-toggle" title="WhatsApp-Erinnerung täglich bis erledigt">
@@ -3359,11 +3361,10 @@ function renderGartenTodos() {
     `;
   }).join("");
 
-  grid.querySelectorAll(".gartentodo-done-cb").forEach((cb) => {
-    cb.addEventListener("change", () => {
-      if (!cb.checked) return;
-      const rotate = grid.querySelector(`.gartentodo-rotate-next[data-id="${cb.dataset.id}"]`);
-      void markGartenTodoDone(cb.dataset.id, rotate ? rotate.checked : true);
+  grid.querySelectorAll(".gartentodo-done-btn[data-action='done']").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      const rotate = grid.querySelector(`.gartentodo-rotate-next[data-id="${btn.dataset.id}"]`);
+      void markGartenTodoDone(btn.dataset.id, rotate ? rotate.checked : true, btn);
     });
   });
   grid.querySelectorAll("[data-action='save-plan']").forEach((btn) => {
@@ -3385,7 +3386,7 @@ function renderGartenTodos() {
 }
 
 async function toggleGartenTodoReminder(id, enabled) {
-  if (!requireAuth("Garten To-Do")) return;
+  if (!requireMember("Garten To-Do")) return;
   const item = gartenTodoCache.find((t) => t.id === id);
   if (!item) return;
   const history = appendGartenTodoHistory(
@@ -3395,19 +3396,24 @@ async function toggleGartenTodoReminder(id, enabled) {
     })
   );
   const updates = { reminder: !!enabled, history };
-  if (firebaseReady) {
-    await updateDoc(doc(db, "gartentodos", id), updates);
-  } else {
-    Object.assign(item, updates);
-    localStore.gartentodos = gartenTodoCache;
-    saveLocal("gartentodos", localStore.gartentodos);
-    renderGartenTodos();
+  try {
+    if (firebaseReady) {
+      await updateDoc(doc(db, "gartentodos", id), updates);
+    } else {
+      Object.assign(item, updates);
+      localStore.gartentodos = gartenTodoCache;
+      saveLocal("gartentodos", localStore.gartentodos);
+      renderGartenTodos();
+    }
+    showToast(enabled ? "📱 WhatsApp-Erinnerung an." : "WhatsApp-Erinnerung aus.", "success");
+  } catch (err) {
+    console.error("toggleGartenTodoReminder", err);
+    showToast(`Speichern fehlgeschlagen: ${err.message || err}`, "error");
   }
-  showToast(enabled ? "📱 WhatsApp-Erinnerung an." : "WhatsApp-Erinnerung aus.", "success");
 }
 
 async function saveGartenTodoPlan(id) {
-  if (!requireAuth("Garten To-Do")) return;
+  if (!requireMember("Garten To-Do")) return;
   const item = gartenTodoCache.find((t) => t.id === id);
   if (!item) return;
   const who = document.querySelector(`[data-garten-who="${id}"]`)?.value;
@@ -3436,21 +3442,30 @@ async function saveGartenTodoPlan(id) {
     nextDueManual: true,
     history,
   };
-  if (firebaseReady) {
-    await updateDoc(doc(db, "gartentodos", id), updates);
-  } else {
-    Object.assign(item, updates);
-    localStore.gartentodos = gartenTodoCache;
-    saveLocal("gartentodos", localStore.gartentodos);
+  try {
+    if (firebaseReady) {
+      await updateDoc(doc(db, "gartentodos", id), updates);
+    } else {
+      localStore.gartentodos = gartenTodoCache;
+      saveLocal("gartentodos", localStore.gartentodos);
+    }
     renderGartenTodos();
+    showToast(fair.ok ? `Gespeichert. ${fair.text}` : `Gespeichert (Abweichung). ${fair.text}`, fair.ok ? "success" : "info");
+  } catch (err) {
+    console.error("saveGartenTodoPlan", err);
+    showToast(`Speichern fehlgeschlagen: ${err.message || err}`, "error");
   }
-  showToast(fair.ok ? `Gespeichert. ${fair.text}` : `Gespeichert (Abweichung). ${fair.text}`, fair.ok ? "success" : "info");
 }
 
-async function markGartenTodoDone(id, rotateNext = true) {
-  if (!requireAuth("Garten To-Do")) return;
+async function markGartenTodoDone(id, rotateNext = true, triggerBtn = null) {
+  if (!requireMember("Garten To-Do")) return;
   const item = gartenTodoCache.find((t) => t.id === id);
   if (!item) return;
+  if (getGartenTodoStatus(item) === "done-today") {
+    showToast("Heute schon als erledigt gespeichert.", "info");
+    return;
+  }
+
   const now = new Date().toISOString();
   const interval = item.intervalDays || 14;
   const nextWho = rotateNext ? pickNextAssignee(item.who) : item.who;
@@ -3473,16 +3488,38 @@ async function markGartenTodoDone(id, rotateNext = true) {
     history,
   };
 
-  if (firebaseReady) {
-    await updateDoc(doc(db, "gartentodos", id), updates);
-  } else {
-    Object.assign(item, updates);
-    localStore.gartentodos = gartenTodoCache;
-    saveLocal("gartentodos", localStore.gartentodos);
-    renderGartenTodos();
+  const snapshot = {
+    lastDone: item.lastDone,
+    who: item.who,
+    nextDue: item.nextDue,
+    whoManual: item.whoManual,
+    nextDueManual: item.nextDueManual,
+    history: Array.isArray(item.history) ? [...item.history] : [],
+  };
+
+  if (triggerBtn) {
+    triggerBtn.disabled = true;
+    triggerBtn.textContent = "Speichern…";
   }
-  const rotHint = rotateNext ? `Nächste Person: ${nextWho || "—"}` : "Gleiche Person bleibt dran";
-  showToast(`✅ Erledigt! ${rotHint}`, "success");
+
+  Object.assign(item, updates);
+  renderGartenTodos();
+
+  try {
+    if (firebaseReady) {
+      await updateDoc(doc(db, "gartentodos", id), updates);
+    } else {
+      localStore.gartentodos = gartenTodoCache;
+      saveLocal("gartentodos", localStore.gartentodos);
+    }
+    const rotHint = rotateNext ? `Nächste Person: ${nextWho || "—"}` : "Gleiche Person bleibt dran";
+    showToast(`✅ Erledigt gespeichert! ${rotHint}`, "success");
+  } catch (err) {
+    console.error("markGartenTodoDone", err);
+    Object.assign(item, snapshot);
+    renderGartenTodos();
+    showToast(`Speichern fehlgeschlagen: ${err.message || err}`, "error");
+  }
 }
 
 async function deleteGartenTodo(id) {
@@ -3501,7 +3538,7 @@ async function deleteGartenTodo(id) {
 
 $("gartenTodoForm")?.addEventListener("submit", async (e) => {
   e.preventDefault();
-  if (!requireAuth("Garten To-Do")) return;
+  if (!requireMember("Garten To-Do")) return;
   const task = $("gartenTodoTask").value.trim();
   const intervalDays = parseInt($("gartenTodoInterval").value, 10);
   if (!task || !intervalDays) {

@@ -1898,19 +1898,24 @@ textarea { resize: vertical; font-family: inherit; }
 .gartentodo-kw { font-weight: 600; color: var(--moss-dark, #2d5016); }
 .gartentodo-next.overdue { color: #c62828; font-weight: 600; }
 .gartentodo-next.due-today { color: var(--terracotta); font-weight: 600; }
-.gartentodo-done-row {
-  display: flex;
-  align-items: center;
-  gap: 8px;
+.gartentodo-done-actions {
   margin-top: 12px;
-  cursor: pointer;
-  font-size: 0.9rem;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  align-items: flex-start;
 }
-.gartentodo-done-row input[type="checkbox"] {
-  width: 18px;
-  height: 18px;
-  margin: 0;
-  cursor: pointer;
+.gartentodo-done-btn {
+  font-weight: 600;
+}
+.gartentodo-done-badge {
+  margin-top: 12px;
+  padding: 8px 12px;
+  background: #e8f5e9;
+  border-radius: 8px;
+  color: #2e7d32;
+  font-weight: 600;
+  font-size: 0.9rem;
 }
 .gartentodo-tools {
   display: flex;
