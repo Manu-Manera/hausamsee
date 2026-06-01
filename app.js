@@ -1962,18 +1962,24 @@ function gartenTodoPermalink() {
   return `${location.href.split("#")[0]}#kalender`;
 }
 
-function buildGartenTodoIcs(item) {
-  const due = gartenTodoNextDueDate(item);
+function buildGartenTodoIcs(item, slot = {}) {
+  let due = gartenTodoNextDueDate(item);
+  if (slot.date) {
+    const parsed = slot.date instanceof Date ? startOfDayLocal(slot.date) : parseGartenTodoDueISO(slot.date);
+    if (parsed) due = parsed;
+  }
   if (isNaN(due.getTime())) return null;
+  const who = slot.who || item.who || "";
   const y = due.getFullYear();
   const mo = due.getMonth() + 1;
   const da = due.getDate();
-  const dtStart = zurichWallToUtcDate(y, mo, da, 10, 0);
-  const dtEnd = zurichWallToUtcDate(y, mo, da, 10, 30);
+  const dtStart = zurichWallToUtcDate(y, mo, da, GARTEN_TODO_WORK_HOUR, GARTEN_TODO_WORK_MINUTE);
+  const dtEnd = zurichWallToUtcDate(y, mo, da, GARTEN_TODO_WORK_HOUR, GARTEN_TODO_WORK_MINUTE + 30);
   const now = new Date();
-  const uid = `gartentodo-${item.id || due.getTime()}@hausamsee`;
+  const roundSuffix = slot.roundIndex != null ? `-r${slot.roundIndex}` : "";
+  const uid = `gartentodo-${item.id || due.getTime()}${roundSuffix}@hausamsee`;
   const interval = item.intervalDays || 14;
-  const summary = `🌿 ${item.task} – ${mLabel(item.who || "")}`;
+  const summary = `🌿 ${item.task} – ${mLabel(who)}`;
   const lines = [
     "BEGIN:VCALENDAR",
     "VERSION:2.0",
@@ -1988,13 +1994,14 @@ function buildGartenTodoIcs(item) {
     foldIcsLine(`SUMMARY:${icsEscape(summary)}`),
     foldIcsLine(`LOCATION:${icsEscape("Haus am See, Pilatusstrasse 40, Pfäffikon ZH")}`),
   ];
-  const description = [
-    `Garten To-Do · Zuständig: ${item.who || "—"}`,
+  const descParts = [
+    `Garten To-Do · Zuständig: ${who || "—"}`,
     `Intervall: alle ${interval} Tage`,
-    item.reminder ? "WhatsApp-Erinnerung: ein" : "WhatsApp-Erinnerung: aus",
-    gartenTodoPermalink(),
-  ].join("\n");
-  lines.push(foldIcsLine(`DESCRIPTION:${icsEscape(description)}`));
+  ];
+  if (slot.roundIndex != null) descParts.push("Voraussichtliche Rotation (Plan)");
+  descParts.push(item.reminder ? "WhatsApp-Erinnerung: ein" : "WhatsApp-Erinnerung: aus");
+  descParts.push(gartenTodoPermalink());
+  lines.push(foldIcsLine(`DESCRIPTION:${icsEscape(descParts.join("\n"))}`));
   lines.push(foldIcsLine(`URL:${gartenTodoPermalink()}`));
   appendIcsAlarms(lines, [
     { trigger: "-P1D", description: `Morgen: ${item.task}` },
@@ -2004,27 +2011,41 @@ function buildGartenTodoIcs(item) {
   return lines.join("\r\n");
 }
 
+function triggerGartenTodoIcsDownload(ics, item, extraSlug = "") {
+  const blob = new Blob([ics], { type: "text/calendar;charset=utf-8" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  const base = (item.task || "garten")
+    .replace(/[^a-z0-9äöüß -]/gi, "")
+    .trim()
+    .replace(/\s+/g, "-")
+    .toLowerCase() || "garten";
+  a.download = `haus-am-see-garten-${base}${extraSlug}.ics`;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+  showToast("Kalender mit Erinnerungen (morgen + am Tag) – auf dem Handy öffnen.", "success");
+}
+
 function downloadGartenTodoIcs(item) {
   const ics = buildGartenTodoIcs(item);
   if (!ics) {
     showToast("Fälligkeitsdatum ungültig.", "error");
     return;
   }
-  const blob = new Blob([ics], { type: "text/calendar;charset=utf-8" });
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement("a");
-  a.href = url;
-  const slug = (item.task || "garten")
-    .replace(/[^a-z0-9äöüß -]/gi, "")
-    .trim()
-    .replace(/\s+/g, "-")
-    .toLowerCase() || "garten";
-  a.download = `haus-am-see-garten-${slug}.ics`;
-  document.body.appendChild(a);
-  a.click();
-  a.remove();
-  setTimeout(() => URL.revokeObjectURL(url), 1000);
-  showToast("Kalender mit Erinnerungen (morgen + am Tag) – auf dem Handy öffnen.", "success");
+  triggerGartenTodoIcsDownload(ics, item);
+}
+
+function downloadGartenTodoRotationIcs(item, dueIso, who, roundIndex) {
+  const ics = buildGartenTodoIcs(item, { date: dueIso, who, roundIndex });
+  if (!ics) {
+    showToast("Termin ungültig.", "error");
+    return;
+  }
+  const dateSlug = (dueIso || "").replace(/-/g, "") || "termin";
+  triggerGartenTodoIcsDownload(ics, item, `-${dateSlug}`);
 }
 
 function dataUrlToFile(dataUrl, filename) {
@@ -3115,12 +3136,16 @@ function gartenTodoRotationHtml(item) {
   const rows = buildGartenTodoRotation(item);
   if (!rows.length) return "<p class=\"form-note\">Keine aktiven Erwachsenen.</p>";
   const lis = rows
-    .map((r) => {
+    .map((r, i) => {
       const cls = r.current ? " class=\"current\"" : "";
-      return `<li${cls}><strong>${r.kw}</strong> · ${escapeHtml(r.slot)} · ${mEmoji(r.who)} ${escapeHtml(mLabel(r.who))}</li>`;
+      const dueIso = toISODateLocal(r.date);
+      return `<li${cls}>
+        <span class="gartentodo-rotation-text"><strong>${r.kw}</strong> · ${escapeHtml(r.slot)} · ${mEmoji(r.who)} ${escapeHtml(mLabel(r.who))}</span>
+        <button type="button" class="event-share-btn gartentodo-rotation-ical" data-id="${escapeHtml(item.id)}" data-due="${escapeHtml(dueIso)}" data-who="${escapeHtml(r.who)}" data-round="${i}" title="Diesen Termin in den Kalender (${escapeHtml(r.slot)})">📅 Kalender</button>
+      </li>`;
     })
     .join("");
-  return `<ol class="gartentodo-rotation-list">${lis}</ol><p class="form-note">Voraussichtlich Samstag ${pad2(GARTEN_TODO_WORK_HOUR)}:${pad2(GARTEN_TODO_WORK_MINUTE)}, Rotation alle ${item.intervalDays || 14} Tage.</p>`;
+  return `<ol class="gartentodo-rotation-list">${lis}</ol><p class="form-note">Voraussichtlich Samstag ${pad2(GARTEN_TODO_WORK_HOUR)}:${pad2(GARTEN_TODO_WORK_MINUTE)}, Rotation alle ${item.intervalDays || 14} Tage – pro Zeile 📅 für den jeweiligen Termin.</p>`;
 }
 
 function gartenTodoHistoryHtml(item) {
@@ -3437,6 +3462,15 @@ function renderGartenTodos() {
     btn.addEventListener("click", () => {
       const item = gartenTodoCache.find((t) => t.id === btn.dataset.id);
       if (item) downloadGartenTodoIcs(item);
+    });
+  });
+  grid.querySelectorAll(".gartentodo-rotation-ical").forEach((btn) => {
+    btn.addEventListener("click", (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      const item = gartenTodoCache.find((t) => t.id === btn.dataset.id);
+      if (!item) return;
+      downloadGartenTodoRotationIcs(item, btn.dataset.due, btn.dataset.who, parseInt(btn.dataset.round, 10));
     });
   });
   grid.querySelectorAll(".gartentodo-reminder-cb").forEach((cb) => {

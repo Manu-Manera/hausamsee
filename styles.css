@@ -1965,9 +1965,27 @@ textarea { resize: vertical; font-family: inherit; }
   padding-left: 1.2rem;
   color: #444;
 }
+.gartentodo-rotation-list li {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 6px;
+  list-style-position: outside;
+}
 .gartentodo-rotation-list li.current {
   font-weight: 600;
   color: var(--moss-dark, #2d5016);
+}
+.gartentodo-rotation-text {
+  flex: 1 1 12rem;
+  min-width: 0;
+}
+.gartentodo-rotation-ical {
+  flex-shrink: 0;
+  font-size: 0.78rem;
+  padding: 4px 8px;
 }
 .gartentodo-history-list li {
   margin-bottom: 6px;
