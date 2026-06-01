@@ -3141,7 +3141,19 @@ function upsertGartenTodoRotationOverride(list, due, who, swapMeta = null) {
   return next;
 }
 
-function formatGartenTodoSwapBadge(swapInfo) {
+const GARTEN_TODO_ICON_SVG = {
+  clock: `<svg class="gartentodo-icon-svg" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><circle cx="12" cy="12" r="9" fill="none" stroke="currentColor" stroke-width="2"/><path d="M12 7v5l3.5 2.5" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>`,
+  swap: `<svg class="gartentodo-icon-svg" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M7 8h11M7 8l3-3M7 8l3 3M17 16H6M17 16l-3-3M17 16l-3 3" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>`,
+  calendar: `<svg class="gartentodo-icon-svg" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><rect x="4" y="5" width="16" height="15" rx="2" fill="none" stroke="currentColor" stroke-width="2"/><path d="M8 3v4M16 3v4M4 10h16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>`,
+  scroll: `<svg class="gartentodo-icon-svg" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M8 6h12M8 12h12M8 18h8" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/><path d="M4 6v12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>`,
+};
+
+function gartenTodoIconBtn(className, title, innerSvg, extraAttrs = "") {
+  const t = escapeAttr(title);
+  return `<button type="button" class="gartentodo-icon-btn ${className}" title="${t}" aria-label="${t}" ${extraAttrs}>${innerSvg}</button>`;
+}
+
+function formatGartenTodoSwapHint(swapInfo) {
   if (!swapInfo?.at) return "";
   const when = new Date(swapInfo.at).toLocaleDateString("de-CH", {
     day: "2-digit",
@@ -3150,16 +3162,17 @@ function formatGartenTodoSwapBadge(swapInfo) {
     timeZone: "Europe/Zurich",
   });
   const by = swapInfo.by ? mLabel(swapInfo.by) : "WG";
-  return `<span class="gartentodo-badge swapped">Getauscht von ${escapeHtml(by)} · ${escapeHtml(when)}</span>`;
+  const title = `Getauscht von ${by} · ${when}`;
+  return `<span class="gartentodo-icon-btn gartentodo-swap-hint" title="${escapeAttr(title)}" aria-label="${escapeAttr(title)}">${GARTEN_TODO_ICON_SVG.swap}</span>`;
 }
 
 function gartenTodoVerlaufIconBtn(itemId) {
-  return `<button type="button" class="gartentodo-verlauf-icon-btn" data-history-for="${escapeHtml(itemId)}" title="Verlauf anzeigen" aria-label="Verlauf anzeigen">
-    <svg class="gartentodo-verlauf-icon-svg" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
-      <circle cx="12" cy="12" r="9" fill="none" stroke="currentColor" stroke-width="2"/>
-      <path d="M12 7v5l3.5 2.5" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
-    </svg>
-  </button>`;
+  return gartenTodoIconBtn(
+    "gartentodo-verlauf-icon-btn",
+    "Verlauf anzeigen",
+    GARTEN_TODO_ICON_SVG.clock,
+    `data-history-for="${escapeHtml(itemId)}"`
+  );
 }
 
 function openGartenTodoHistory(itemId, root = document) {
@@ -3225,11 +3238,23 @@ function gartenTodoRotationHtml(item, canEdit = false) {
       ]
         .filter(Boolean)
         .join(" ");
-      const roundTitle = r.roundIndex === 0 ? "Nächste Runde" : `Danach · Runde ${n}`;
-      const swapBadge = formatGartenTodoSwapBadge(r.swapInfo);
+      const swapHint = formatGartenTodoSwapHint(r.swapInfo);
+      const saveBtn = canEdit
+        ? gartenTodoIconBtn(
+            "gartentodo-rotation-save",
+            "Person tauschen (z.B. Urlaub)",
+            GARTEN_TODO_ICON_SVG.swap,
+            `data-id="${escapeHtml(item.id)}" data-due="${escapeHtml(r.dueIso)}" data-round="${r.roundIndex}"`
+          )
+        : "";
+      const calBtn = gartenTodoIconBtn(
+        "gartentodo-rotation-ical",
+        "In Kalender speichern",
+        GARTEN_TODO_ICON_SVG.calendar,
+        `data-id="${escapeHtml(item.id)}" data-due="${escapeHtml(r.dueIso)}" data-who="${escapeHtml(r.who)}" data-round="${r.roundIndex}"`
+      );
       const whoControls = canEdit
-        ? `<select class="gartentodo-rotation-who" data-rotation-who="${escapeHtml(item.id)}" data-due="${escapeHtml(r.dueIso)}" data-round="${r.roundIndex}" aria-label="Person für ${escapeHtml(r.slot)}">${gartenTodoWhoOptionsHtml(r.who, false, true)}</select>
-        <button type="button" class="mini-btn gartentodo-rotation-save" data-id="${escapeHtml(item.id)}" data-due="${escapeHtml(r.dueIso)}" data-round="${r.roundIndex}" title="Person für diesen Termin speichern (z.B. Urlaub)">Tauschen</button>`
+        ? `<select class="gartentodo-rotation-who" data-rotation-who="${escapeHtml(item.id)}" data-due="${escapeHtml(r.dueIso)}" data-round="${r.roundIndex}" aria-label="Person für ${escapeHtml(r.slot)}">${gartenTodoWhoOptionsHtml(r.who, false, true)}</select>`
         : `<span class="gartentodo-rotation-person-name">${escapeHtml(mLabel(r.who))}</span>`;
       return `<li class="${itemCls}">
         <div class="gartentodo-rotation-rank" aria-label="Termin ${n}">
@@ -3237,28 +3262,27 @@ function gartenTodoRotationHtml(item, canEdit = false) {
         </div>
         <div class="gartentodo-rotation-body">
           <p class="gartentodo-rotation-heading">
-            <span class="gartentodo-rotation-round-label">${escapeHtml(roundTitle)}</span>
             <span class="gartentodo-rotation-when">${escapeHtml(r.slot)}</span>
           </p>
           <p class="gartentodo-rotation-kw">${r.kw}</p>
-          <div class="gartentodo-rotation-person">${whoControls}</div>
-          ${swapBadge
-            ? `<div class="gartentodo-rotation-swap">${swapBadge}${gartenTodoVerlaufIconBtn(item.id)}</div>`
-            : ""}
-          <div class="gartentodo-rotation-actions">
-            <button type="button" class="event-share-btn gartentodo-rotation-ical" data-id="${escapeHtml(item.id)}" data-due="${escapeHtml(r.dueIso)}" data-who="${escapeHtml(r.who)}" data-round="${r.roundIndex}" title="Diesen Termin in den Kalender">Kalender</button>
+          <div class="gartentodo-rotation-person">
+            ${whoControls}
+            ${saveBtn}
+            ${calBtn}
+            ${swapHint}
+            ${r.swapInfo ? gartenTodoVerlaufIconBtn(item.id) : ""}
           </div>
         </div>
       </li>`;
     })
     .join("");
   const historyBlock = `<details class="gartentodo-rotation-history-details" id="gartentodo-history-${escapeHtml(item.id)}">
-    <summary class="gartentodo-rotation-history-summary">📜 Verlauf</summary>
+    <summary class="gartentodo-rotation-history-summary" title="Verlauf" aria-label="Verlauf">${GARTEN_TODO_ICON_SVG.scroll}</summary>
     <div class="gartentodo-rotation-history-body">${gartenTodoHistoryHtml(item)}</div>
   </details>`;
   const hint = canEdit
-    ? `Person pro Termin wählen und «Tauschen» – z.B. bei Urlaub. Erste Zeile = aktuell/nächste Runde.`
-    : `Voraussichtlich Samstag ${pad2(GARTEN_TODO_WORK_HOUR)}:${pad2(GARTEN_TODO_WORK_MINUTE)}, alle ${item.intervalDays || 14} Tage.`;
+    ? `↔ tauschen · Uhr = Verlauf · Kalender-Icon = Export. Zeile 1 = nächste Runde.`
+    : `Samstag ${pad2(GARTEN_TODO_WORK_HOUR)}:${pad2(GARTEN_TODO_WORK_MINUTE)}, alle ${item.intervalDays || 14} Tage.`;
   return `<ol class="gartentodo-rotation-list" start="1">${lis}</ol><p class="form-note">${hint}</p>${historyBlock}`;
 }
 
@@ -3773,7 +3797,7 @@ async function saveGartenTodoRotationSlot(id, dueIso, roundIndex, who, triggerBt
   );
   if (triggerBtn) {
     triggerBtn.disabled = false;
-    triggerBtn.textContent = "↔ Tauschen";
+    triggerBtn.innerHTML = GARTEN_TODO_ICON_SVG.swap;
   }
   if (!ok) renderGartenTodos();
 }
