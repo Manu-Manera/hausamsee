@@ -3595,6 +3595,33 @@ function gartenTodoBadgesHtml(item) {
   return `<div class="gartentodo-badges">${parts.join("")}</div>`;
 }
 
+/** Kompakte Kachel-Anzeige: Status + Termin (ohne KW/Intervall-Flut). */
+function formatGartenTodoCardSummary(item) {
+  const status = getGartenTodoStatus(item);
+  const next = gartenTodoNextDueDate(item);
+  const slot = formatGartenWorkSlot(next);
+  if (status === "done-today") {
+    return { chip: "Erledigt", chipCls: "done", when: "Heute erledigt" };
+  }
+  if (status === "scheduled") {
+    const lastStr = new Date(item.lastDone).toLocaleDateString("de-CH", {
+      day: "2-digit",
+      month: "short",
+      timeZone: "Europe/Zurich",
+    });
+    return { chip: "Nächste Runde", chipCls: "scheduled", when: `${lastStr} erledigt · dann ${slot}` };
+  }
+  if (status === "overdue") {
+    const days = Math.ceil((today0() - next) / 86400000);
+    return { chip: "Überfällig", chipCls: "overdue", when: `${slot} (${days} Tag${days > 1 ? "e" : ""})` };
+  }
+  if (status === "due-today") {
+    return { chip: "Heute", chipCls: "due-today", when: slot };
+  }
+  const days = Math.ceil((next - today0()) / 86400000);
+  return { chip: "Demnächst", chipCls: "upcoming", when: `${slot} (in ${days} T.)` };
+}
+
 function renderGartenTodos() {
   const grid = $("gartenTodoGrid");
   if (!grid) return;
@@ -3613,24 +3640,38 @@ function renderGartenTodos() {
 
   grid.innerHTML = sorted.map((item) => {
     const status = getGartenTodoStatus(item);
-    const nextInfo = formatGartenTodoNext(item);
+    const summary = formatGartenTodoCardSummary(item);
     const intervalText = GARTEN_TODO_INTERVAL_LABELS[item.intervalDays] || `Alle ${item.intervalDays} Tage`;
-    const whoLabel = item.who ? `${mEmoji(item.who)} ${escapeHtml(mLabel(item.who))}` : "—";
+    const whoName = item.who ? mLabel(item.who) : "Noch offen";
+    const whoEmoji = item.who ? mEmoji(item.who) : "👤";
     const canEdit = auth.isMember;
     const roundComplete = gartenTodoRoundComplete(item);
     const dueVal = item.nextDue || toISODateLocal(gartenTodoNextDueDate(item));
+    const planHint = item.whoManual || item.nextDueManual ? " · angepasst" : "";
 
     return `
       <div class="gartentodo-card ${status}">
-        ${item.reminder ? '<span class="giess-reminder-badge">📱 Erinnerung</span>' : ""}
-        <div class="gartentodo-task">${escapeHtml(item.task)}</div>
-        ${gartenTodoBadgesHtml(item)}
-        <div class="gartentodo-meta">
-          <span>👤 ${whoLabel} · ${intervalText}</span>
-          <span class="gartentodo-kw">${nextInfo.kw}</span>
-          <span class="gartentodo-next ${nextInfo.cls}">${nextInfo.text}</span>
-        </div>
+        ${item.reminder ? '<span class="giess-reminder-badge" title="WhatsApp-Erinnerung">📱</span>' : ""}
+        <header class="gartentodo-card-head">
+          <div class="gartentodo-hero">
+            <p class="gartentodo-hero-label">Aufgabe</p>
+            <h3 class="gartentodo-task-title">${escapeHtml(item.task)}</h3>
+            <div class="gartentodo-assignee${item.who ? "" : " is-empty"}">
+              <span class="gartentodo-assignee-label">Zuständig</span>
+              <span class="gartentodo-assignee-value"><span class="gartentodo-assignee-emoji" aria-hidden="true">${whoEmoji}</span> ${escapeHtml(whoName)}</span>
+            </div>
+          </div>
+          <span class="gartentodo-status-chip ${summary.chipCls}">${escapeHtml(summary.chip)}</span>
+        </header>
+        <p class="gartentodo-when-line">${escapeHtml(summary.when)}</p>
         ${canEdit ? `
+          <details class="gartentodo-more">
+            <summary>Details${planHint}</summary>
+            <div class="gartentodo-more-body">
+              <p class="gartentodo-more-meta">${escapeHtml(intervalText)}${item.whoManual || item.nextDueManual ? " · Planung angepasst" : ""}</p>
+              ${gartenTodoBadgesHtml(item)}
+            </div>
+          </details>
           <details class="gartentodo-edit">
             <summary>Planung anpassen</summary>
             <div class="gartentodo-edit-panel">
@@ -3651,7 +3692,7 @@ function renderGartenTodos() {
             ${gartenTodoRotationHtml(item, true)}
           </details>
           ${roundComplete
-            ? `<p class="gartentodo-done-badge">${escapeHtml(nextInfo.text)}</p>`
+            ? ""
             : `<div class="gartentodo-done-actions">
             <button type="button" class="mini-btn gartentodo-done-btn" data-id="${item.id}" data-action="done">✅ Erledigt speichern</button>
             <label class="gartentodo-rotate-row">
