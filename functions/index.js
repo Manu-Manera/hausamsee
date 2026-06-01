@@ -1328,6 +1328,69 @@ function giessplanPlantMatchesHint(plant, hint) {
   return p.includes(h) || h.includes(p);
 }
 
+/** Nächster Soll-Termin Garten To-Do (wie Frontend / Scheduler). */
+function gartenTodoNextDueDatePlain(data) {
+  const intervalDays = data.intervalDays || 14;
+  const lastDone = data.lastDone ? new Date(data.lastDone) : null;
+  let nextDate;
+  if (lastDone) {
+    nextDate = startOfDay(new Date(lastDone));
+    nextDate.setDate(nextDate.getDate() + intervalDays);
+  } else {
+    nextDate = startOfDay(new Date());
+  }
+  return nextDate;
+}
+
+function gartenTodoIsDueOrOverdueData(data) {
+  const today = startOfDay(new Date());
+  const next = gartenTodoNextDueDatePlain(data);
+  return next.getTime() <= today.getTime();
+}
+
+function gartenTodoDoneToday(data) {
+  if (!data.lastDone) return false;
+  const today = startOfDay(new Date());
+  const last = startOfDay(new Date(data.lastDone));
+  return last.getTime() === today.getTime();
+}
+
+function gartenTodoTaskMatchesHint(task, hint) {
+  const t = String(task || "").toLowerCase().trim();
+  const h = String(hint || "").toLowerCase().trim();
+  if (!h) return true;
+  return t.includes(h) || h.includes(t);
+}
+
+function gartenTodoPickNextAssignee(currentWho) {
+  const adults = [...ADULTS].sort((a, b) => a.localeCompare(b, "de"));
+  if (!adults.length) return "";
+  const idx = adults.indexOf(currentWho);
+  if (idx < 0) return adults[0];
+  return adults[(idx + 1) % adults.length];
+}
+
+/**
+ * Garten To-Do: «garten erledigt», «erledigt Rasen hinten», LLM: *Gartentodo erledigt: …*
+ */
+function parseGartenTodoDoneMessage(raw) {
+  let s = String(raw || "").trim().replace(/^\*+|\*+$/g, "").trim();
+  if (!s) return null;
+  if (/\b(gegossen|watered|arros)/i.test(s)) return null;
+  const llmWith = /^(?:garten(?:\s*todo)?|gartentodo)\s+erledigt(?:\s*[:\-–]\s*|\s+)(.+)$/i.exec(s);
+  if (llmWith) return { taskHint: llmWith[1].trim() };
+  if (/^(?:garten(?:\s*todo)?|gartentodo)\s+erledigt\.?$/i.test(s)) return { taskHint: null };
+  const de = /^(?:erledigt|habe\s+erledigt)(?:\s+(.+))?$/i.exec(s);
+  if (de && de[2] && !/\b(putz|küche|kueche|bad|wc)\b/i.test(de[2])) {
+    return { taskHint: de[2].trim() };
+  }
+  const rev = /^(.{2,80})\s+erledigt\.?$/i.exec(s);
+  if (rev && /\b(rasen|beet|garten|hecken|mähen|maehen|jäten|jaeten|schnitt)\b/i.test(rev[1])) {
+    return { taskHint: rev[1].trim() };
+  }
+  return null;
+}
+
 /**
  * Giessplan-Innenpflanzen: «gegossen», «gegossen Wohnzimmer», LLM: *Giessplan gegossen: …*
  */
@@ -1743,6 +1806,9 @@ const HELP_TEXT =
   `*Putzplan*\n` +
   `➕ "Putz: Manu 20.4. Küche"\n` +
   `📋 "Wer putzt?"\n\n` +
+  `*Garten To-Do / Giessplan (Website WG-Kalender)*\n` +
+  `🌿 "garten erledigt" / "garten erledigt Rasen hinten"\n` +
+  `💧 "gegossen" / "gegossen Wohnzimmer"\n\n` +
   `*Anwesenheit*\n` +
   `✅ "Bin da" / "Bin weg 1.5."\n` +
   `📋 "Wer ist da?"\n\n` +
@@ -2271,6 +2337,105 @@ async function dispatch(ctx) {
     return true;
   }
 
+  // 13c) Garten To-Do: als erledigt markieren
+  let gartenParseText = rawInput.trim();
+  let gartenTodoResidentOverride = null;
+  const gartenNameLead = /^([A-Za-zäöüÄÖÜ]+)\s+(?:garten\s+)?erledigt\b/i.exec(gartenParseText);
+  if (gartenNameLead) {
+    const rLead = resolveResident(gartenNameLead[1], true);
+    if (rLead) {
+      gartenTodoResidentOverride = rLead;
+      gartenParseText = gartenParseText.slice(gartenNameLead[1].length).trim();
+    }
+  }
+  const gartenMark = parseGartenTodoDoneMessage(gartenParseText);
+  if (gartenMark) {
+    let resident = gartenTodoResidentOverride || (await resolveResidentFromWhatsApp(from, senderName));
+    if (!resident) {
+      await reply(
+        "❓ Ich weiss nicht, wer du bist. Schreib z.B. *garten erledigt Rasen* von deiner Nummer, oder *Manu garten erledigt*."
+      );
+      return true;
+    }
+    let snap;
+    try {
+      snap = await db.collection("gartentodos").get();
+    } catch (e) {
+      logger.error("gartentodos load", e);
+      await reply("😕 Garten To-Do konnte nicht geladen werden.");
+      return true;
+    }
+    const items = [];
+    snap.forEach((doc) => items.push({ id: doc.id, ...doc.data() }));
+    const whoEq = (a, b) => String(a || "").trim().toLowerCase() === String(b || "").trim().toLowerCase();
+    let candidates = items.filter((it) => whoEq(it.who, resident));
+    if (gartenMark.taskHint) {
+      candidates = candidates.filter((it) => gartenTodoTaskMatchesHint(it.task, gartenMark.taskHint));
+    }
+    if (candidates.length === 0) {
+      await reply(
+        gartenMark.taskHint
+          ? `🤷 Keine Aufgabe «${gartenMark.taskHint}» für *${resident}* im Garten To-Do.`
+          : `🤷 Kein Garten To-Do für *${resident}*.`
+      );
+      return true;
+    }
+    const markOne = async (one) => {
+      const nextWho = gartenTodoPickNextAssignee(one.who);
+      await db.collection("gartentodos").doc(one.id).update({
+        lastDone: new Date().toISOString(),
+        who: nextWho,
+      });
+      return nextWho;
+    };
+    if (candidates.length === 1) {
+      const one = candidates[0];
+      if (gartenTodoDoneToday(one)) {
+        await reply(`✅ *${one.task}* ist heute schon erledigt.`);
+        return true;
+      }
+      try {
+        const nextWho = await markOne(one);
+        await reply(
+          `✅ *${one.task}* erledigt – danke *${resident}*! 🌿\nNächste Runde: *${nextWho || "—"}*\n\n${WEBSITE_URL}/#kalender`
+        );
+      } catch (e) {
+        logger.error("gartentodos update", e);
+        await reply(`😕 Konnte nicht speichern: ${e.message || e}`);
+      }
+      return true;
+    }
+    if (gartenMark.taskHint) {
+      const lines = candidates.map((c) => `• *${c.task}*`).join("\n");
+      await reply(`🌿 Welche Aufgabe?\n\n${lines}\n\n*z.B. garten erledigt Rasen hinten*`);
+      return true;
+    }
+    const due = candidates.filter((it) => gartenTodoIsDueOrOverdueData(it) && !gartenTodoDoneToday(it));
+    if (due.length === 1) {
+      const one = due[0];
+      try {
+        const nextWho = await markOne(one);
+        await reply(
+          `✅ *${one.task}* erledigt – danke *${resident}*! 🌿\nNächste Runde: *${nextWho || "—"}*\n\n${WEBSITE_URL}/#kalender`
+        );
+      } catch (e) {
+        logger.error("gartentodos update", e);
+        await reply(`😕 Konnte nicht speichern: ${e.message || e}`);
+      }
+      return true;
+    }
+    if (due.length === 0) {
+      const lines = candidates.map((c) => `• *${c.task}*`).join("\n");
+      await reply(
+        `💡 Laut Plan noch nichts fällig. Welche hast du trotzdem erledigt?\n\n${lines}\n\n*z.B. garten erledigt Rasen hinten*`
+      );
+      return true;
+    }
+    const lines = due.map((c) => `• *${c.task}*`).join("\n");
+    await reply(`🌿 Mehrere Aufgaben fällig – welche?\n\n${lines}\n\n*z.B. garten erledigt …*`);
+    return true;
+  }
+
   // 14a) Steckdosen-Status / Liste
   if (isPumpListCommand(rawInput)) {
     if (!plugs.isConfigured()) {
@@ -2548,10 +2713,14 @@ exports.whatsappWebhook = onRequest(
             hasGroupId: messages.some((m) => Boolean(m?.group_id || m?.context?.group_id)),
           });
           
-          // WhatsApp-Nummer des Bewohners speichern (für proaktive Nachrichten wie Giessplan-Reminders)
-          const resolvedResident = resolveResident(senderName, true);
-          if (resolvedResident && from) {
-            saveWhatsAppNumber(resolvedResident, from).catch(() => {});
+          // WhatsApp-Nummer speichern (Profilname oder Abgleich über memberPrefs/Phonebook)
+          if (from) {
+            const resolvedResident =
+              resolveResident(senderName, true) ||
+              (await resolveResidentFromWhatsApp(from, senderName));
+            if (resolvedResident) {
+              saveWhatsAppNumber(resolvedResident, from).catch(() => {});
+            }
           }
 
           // Zusätzliche Heuristik: WhatsApp Cloud API liefert derzeit für Gruppen wenig Metadaten.
@@ -3224,6 +3393,77 @@ exports.checkGiessplanReminders = onSchedule(
   }
 );
 
+/* ==========================================================================
+   Scheduler: Garten To-Do – täglich 8:00 Uhr (wie Giessplan)
+   ========================================================================== */
+
+exports.checkGartenTodoReminders = onSchedule(
+  { schedule: "every day 08:00", timeZone: "Europe/Zurich" },
+  async () => {
+    const snap = await db.collection("gartentodos").get();
+    if (snap.empty) return;
+
+    const today = startOfDay(new Date());
+    const dueTasks = [];
+
+    snap.docs.forEach((doc) => {
+      const d = doc.data();
+      if (!d.reminder) return;
+      if (gartenTodoDoneToday(d)) return;
+
+      const nextDate = gartenTodoNextDueDatePlain(d);
+      if (nextDate.getTime() <= today.getTime()) {
+        dueTasks.push({
+          id: doc.id,
+          task: d.task,
+          who: d.who,
+          intervalDays: d.intervalDays || 14,
+          overdue: nextDate.getTime() < today.getTime(),
+        });
+      }
+    });
+
+    if (dueTasks.length === 0) {
+      logger.info("Garten To-Do: Heute keine Aufgaben fällig");
+      return;
+    }
+
+    const byPerson = {};
+    dueTasks.forEach((t) => {
+      if (!t.who) return;
+      if (!byPerson[t.who]) byPerson[t.who] = [];
+      byPerson[t.who].push(t);
+    });
+
+    const promises = [];
+    for (const [name, tasks] of Object.entries(byPerson)) {
+      const phone = await getBewohnerPhone(name);
+      if (!phone) {
+        logger.warn(`Garten To-Do: Keine Telefonnummer für ${name}`);
+        continue;
+      }
+
+      const taskList = tasks
+        .map((t) => {
+          const icon = t.overdue ? "⚠️" : "🌿";
+          return `${icon} ${t.task}${t.overdue ? " (überfällig!)" : ""}`;
+        })
+        .join("\n");
+
+      const msg =
+        `🌿 *Garten To-Do für ${name}*\n\nHeute bitte erledigen:\n${taskList}\n\n` +
+        `Antwort z.B. *garten erledigt* oder *garten erledigt Rasen hinten*\n\n🦆 Danke!`;
+
+      promises.push(sendWhatsApp(phone, msg));
+    }
+
+    await Promise.all(promises);
+    logger.info(
+      `Garten To-Do: ${promises.length} Erinnerungen an ${Object.keys(byPerson).length} Personen`
+    );
+  }
+);
+
 // Test-Endpoint für Nachrichten/Bewerbungen
 exports.testNachrichtAlert = onRequest(async (req, res) => {
   res.set("Access-Control-Allow-Origin", "*");
@@ -3319,6 +3559,41 @@ exports.testGiessReminder = onRequest(async (req, res) => {
     return res.json({ ok: true, message: `Erinnerung an ${name} gesendet` });
   } catch (err) {
     logger.error("Test-Giessreminder Fehler:", err);
+    return res.status(500).json({ error: err.message });
+  }
+});
+
+exports.testGartenTodoReminder = onRequest(async (req, res) => {
+  res.set("Access-Control-Allow-Origin", "*");
+  if (req.method === "OPTIONS") {
+    res.set("Access-Control-Allow-Methods", "GET, POST");
+    res.set("Access-Control-Allow-Headers", "Content-Type");
+    return res.status(204).send("");
+  }
+
+  const secret = req.query.secret || req.body?.secret;
+  if (secret !== process.env.SIRI_SECRET) {
+    return res.status(401).json({ error: "Unauthorized" });
+  }
+
+  const name = req.query.name || req.body?.name || "Manu";
+  const task = req.query.task || req.body?.task || "Rasen mähen hinten (Test)";
+
+  const phone = await getBewohnerPhone(name);
+  if (!phone) {
+    return res.status(404).json({ error: `Keine Telefonnummer für ${name} gefunden` });
+  }
+
+  const msg =
+    `🌿 *Garten To-Do für ${name}*\n\nHeute bitte erledigen:\n🌿 ${task}\n\n` +
+    `Antwort z.B. *garten erledigt*\n\n🦆 _(Testnachricht)_`;
+
+  try {
+    await sendWhatsApp(phone, msg);
+    logger.info(`Test-Garten-Todo-Reminder an ${name} (${phone}) gesendet`);
+    return res.json({ ok: true, message: `Garten-Erinnerung an ${name} gesendet` });
+  } catch (err) {
+    logger.error("Test-Garten-Todo Fehler:", err);
     return res.status(500).json({ error: err.message });
   }
 });

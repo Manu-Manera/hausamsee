@@ -297,6 +297,7 @@ const localStore = {
   events: JSON.parse(localStorage.getItem("has_events") || "[]"),
   putzplan: JSON.parse(localStorage.getItem("has_putzplan") || "[]"),
   giessplan: JSON.parse(localStorage.getItem("has_giessplan") || "[]"),
+  gartentodos: JSON.parse(localStorage.getItem("has_gartentodos") || "[]"),
   termine: JSON.parse(localStorage.getItem("has_termine") || "[]"),
   anwesenheit: JSON.parse(localStorage.getItem("has_anwesenheit") || "{}"),
   gaestebuch: JSON.parse(localStorage.getItem("has_gaestebuch") || "[]"),
@@ -445,6 +446,7 @@ const auth = {
     renderEvents();
     renderPutzplan();
     renderGiessplan();
+    renderGartenTodos();
     populateGiessWhoSelect();
     renderPlaylist();
     renderKandidaten();
@@ -2749,8 +2751,241 @@ function populateGiessWhoSelect() {
   if (!sel) return;
   const active = getActiveBewohner().filter(b => !b.kid);
   sel.innerHTML = `<option value="">Wer giesst?</option>` + 
-    active.map(b => `<option value="${b.name}">${b.name}</option>`).join("");
+    active.map(b => `<option value="${b.name}">${mEmoji(b.name)} ${escapeHtml(mLabel(b.name))}</option>`).join("");
 }
+
+/* ==========================================================================
+   Garten To-Do (fair verteilt, KW-Anzeige, WhatsApp-Erinnerung)
+   ========================================================================== */
+
+let gartenTodoCache = [];
+
+const GARTEN_TODO_INTERVAL_LABELS = {
+  7: "Wöchentlich",
+  10: "Alle 10 Tage",
+  14: "Alle 2 Wochen",
+  21: "Alle 3 Wochen",
+  28: "Alle 4 Wochen",
+  30: "Monatlich",
+};
+
+function getActiveAdultNames() {
+  return getActiveBewohner().filter((b) => !b.kid).map((b) => b.name);
+}
+
+/** ISO-Kalenderwoche (Europe/Zurich) */
+function getKwInfo(date) {
+  const d = date instanceof Date ? date : new Date(date);
+  const zurich = new Date(d.toLocaleString("en-US", { timeZone: "Europe/Zurich" }));
+  zurich.setHours(12, 0, 0, 0);
+  const th = new Date(zurich);
+  th.setDate(th.getDate() + 4 - (th.getDay() || 7));
+  const yearStart = new Date(th.getFullYear(), 0, 1);
+  const kw = Math.ceil((((th - yearStart) / 86400000) + 1) / 7);
+  return { kw, year: th.getFullYear() };
+}
+
+function formatKwLabel(date) {
+  const { kw, year } = getKwInfo(date);
+  return `KW ${kw} · ${year}`;
+}
+
+function updateGartenTodoKwHead() {
+  const el = $("gartenTodoKwHead");
+  if (!el) return;
+  const now = new Date();
+  el.textContent = `Aktuelle Kalenderwoche: ${formatKwLabel(now)} (${now.toLocaleDateString("de-CH", { weekday: "long", day: "2-digit", month: "long", timeZone: "Europe/Zurich" })})`;
+}
+
+function pickFairAssignee() {
+  const adults = getActiveAdultNames();
+  if (!adults.length) return "";
+  const counts = {};
+  adults.forEach((n) => { counts[n] = 0; });
+  gartenTodoCache.forEach((t) => {
+    if (t.who && counts[t.who] !== undefined) counts[t.who]++;
+  });
+  adults.sort((a, b) => counts[a] - counts[b] || a.localeCompare(b, "de"));
+  return adults[0];
+}
+
+function pickNextAssignee(currentWho) {
+  const adults = [...getActiveAdultNames()].sort((a, b) => a.localeCompare(b, "de"));
+  if (!adults.length) return "";
+  const idx = adults.indexOf(currentWho);
+  if (idx < 0) return pickFairAssignee();
+  return adults[(idx + 1) % adults.length];
+}
+
+function today0() {
+  const t = new Date();
+  t.setHours(0, 0, 0, 0);
+  return t;
+}
+
+function gartenTodoNextDueDate(item) {
+  const interval = item.intervalDays || 14;
+  const base = item.lastDone ? new Date(item.lastDone) : new Date();
+  const next = new Date(base);
+  if (item.lastDone) {
+    next.setDate(next.getDate() + interval);
+  }
+  next.setHours(0, 0, 0, 0);
+  return next;
+}
+
+function getGartenTodoStatus(item) {
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  const last = item.lastDone ? new Date(item.lastDone) : null;
+  if (last) {
+    last.setHours(0, 0, 0, 0);
+    if (last.getTime() === today.getTime()) return "done-today";
+  }
+  const next = gartenTodoNextDueDate(item);
+  if (next < today) return "overdue";
+  if (next.getTime() === today.getTime()) return "due-today";
+  return "upcoming";
+}
+
+function formatGartenTodoNext(item) {
+  const status = getGartenTodoStatus(item);
+  const next = gartenTodoNextDueDate(item);
+  const kw = formatKwLabel(next);
+  const dateStr = next.toLocaleDateString("de-CH", { weekday: "short", day: "2-digit", month: "short", timeZone: "Europe/Zurich" });
+  if (status === "done-today") return { text: "✅ Heute erledigt – nächste Runde später", kw, cls: "" };
+  if (status === "overdue") {
+    const days = Math.ceil((today0() - next) / 86400000);
+    return { text: `⚠️ ${days} Tag${days > 1 ? "e" : ""} überfällig · ${dateStr}`, kw, cls: "overdue" };
+  }
+  if (status === "due-today") return { text: `📋 Heute fällig · ${dateStr}`, kw, cls: "due-today" };
+  const days = Math.ceil((next - today0()) / 86400000);
+  return { text: `Fällig ${dateStr} (in ${days} Tag${days > 1 ? "en" : ""})`, kw, cls: "" };
+}
+
+function renderGartenTodos() {
+  const grid = $("gartenTodoGrid");
+  if (!grid) return;
+  updateGartenTodoKwHead();
+
+  const sorted = [...gartenTodoCache].sort((a, b) => {
+    const order = { overdue: 0, "due-today": 1, upcoming: 2, "done-today": 3 };
+    return (order[getGartenTodoStatus(a)] ?? 2) - (order[getGartenTodoStatus(b)] ?? 2);
+  });
+
+  if (!sorted.length) {
+    grid.innerHTML = `<div class="empty-state" style="grid-column:1/-1;">Noch keine Garten-Aufgaben – Zeit, den Garten zu planen! 🌿</div>`;
+    return;
+  }
+
+  grid.innerHTML = sorted.map((item) => {
+    const status = getGartenTodoStatus(item);
+    const nextInfo = formatGartenTodoNext(item);
+    const intervalText = GARTEN_TODO_INTERVAL_LABELS[item.intervalDays] || `Alle ${item.intervalDays} Tage`;
+    const whoLabel = item.who ? `${mEmoji(item.who)} ${escapeHtml(mLabel(item.who))}` : "—";
+    const canEdit = auth.isAuthed;
+    const checked = status === "done-today";
+
+    return `
+      <div class="gartentodo-card ${status}">
+        ${item.reminder ? '<span class="giess-reminder-badge">📱 Erinnerung</span>' : ""}
+        <div class="gartentodo-task">${escapeHtml(item.task)}</div>
+        <div class="gartentodo-meta">
+          <span>👤 ${whoLabel} · ${intervalText}</span>
+          <span class="gartentodo-kw">${nextInfo.kw}</span>
+          <span class="gartentodo-next ${nextInfo.cls}">${nextInfo.text}</span>
+        </div>
+        ${canEdit ? `
+          <label class="gartentodo-done-row">
+            <input type="checkbox" class="gartentodo-done-cb" data-id="${item.id}" ${checked ? "checked disabled" : ""} />
+            <span>Erledigt</span>
+          </label>
+          <div class="gartentodo-actions">
+            <button type="button" class="mini-btn danger" data-id="${item.id}" data-action="delete">Löschen</button>
+          </div>
+        ` : ""}
+      </div>
+    `;
+  }).join("");
+
+  grid.querySelectorAll(".gartentodo-done-cb").forEach((cb) => {
+    cb.addEventListener("change", () => {
+      if (cb.checked) void markGartenTodoDone(cb.dataset.id);
+    });
+  });
+  grid.querySelectorAll("[data-action='delete']").forEach((btn) => {
+    btn.addEventListener("click", () => void deleteGartenTodo(btn.dataset.id));
+  });
+}
+
+async function markGartenTodoDone(id) {
+  if (!requireAuth("Garten To-Do")) return;
+  const item = gartenTodoCache.find((t) => t.id === id);
+  if (!item) return;
+  const now = new Date().toISOString();
+  const nextWho = pickNextAssignee(item.who);
+  const updates = { lastDone: now, who: nextWho };
+
+  if (firebaseReady) {
+    await updateDoc(doc(db, "gartentodos", id), updates);
+  } else {
+    Object.assign(item, updates);
+    localStore.gartentodos = gartenTodoCache;
+    saveLocal("gartentodos", localStore.gartentodos);
+    renderGartenTodos();
+  }
+  showToast(`✅ Erledigt! Nächste Runde: ${nextWho || "—"}`, "success");
+}
+
+async function deleteGartenTodo(id) {
+  if (!requireAuth("Garten To-Do")) return;
+  if (!confirm("Diese Garten-Aufgabe entfernen?")) return;
+  if (firebaseReady) {
+    await deleteDoc(doc(db, "gartentodos", id));
+  } else {
+    localStore.gartentodos = (localStore.gartentodos || []).filter((t) => t.id !== id);
+    gartenTodoCache = localStore.gartentodos;
+    saveLocal("gartentodos", localStore.gartentodos);
+    renderGartenTodos();
+  }
+  showToast("Entfernt.", "success");
+}
+
+$("gartenTodoForm")?.addEventListener("submit", async (e) => {
+  e.preventDefault();
+  if (!requireAuth("Garten To-Do")) return;
+  const task = $("gartenTodoTask").value.trim();
+  const intervalDays = parseInt($("gartenTodoInterval").value, 10);
+  if (!task || !intervalDays) {
+    showToast("Bitte Aufgabe und Intervall ausfüllen.", "error");
+    return;
+  }
+  const who = pickFairAssignee();
+  if (!who) {
+    showToast("Keine aktiven Erwachsenen für die Verteilung.", "error");
+    return;
+  }
+  const entry = {
+    task,
+    intervalDays,
+    reminder: $("gartenTodoReminder").checked,
+    who,
+    lastDone: null,
+  };
+  if (firebaseReady) {
+    await addDoc(collection(db, "gartentodos"), { ...entry, createdAt: serverTimestamp() });
+  } else {
+    entry.id = "local_" + Date.now();
+    if (!localStore.gartentodos) localStore.gartentodos = [];
+    localStore.gartentodos.push(entry);
+    gartenTodoCache = localStore.gartentodos;
+    saveLocal("gartentodos", localStore.gartentodos);
+    renderGartenTodos();
+  }
+  e.target.reset();
+  $("gartenTodoReminder").checked = true;
+  showToast(`🌿 Gespeichert – ${who} ist als Erste:r dran.`, "success");
+});
 
 /* ==========================================================================
    Termine (mit WG-RSVP)
@@ -6093,9 +6328,11 @@ function setupListeners() {
     bewohnertexteCache = localStore.bewohnertexte || {};
     gartenPlanCache = normalizeGartenPlan(localStore.gartenPlan);
     giessplanCache = localStore.giessplan || [];
+    gartenTodoCache = localStore.gartentodos || [];
     renderEvents();
     renderPutzplan();
     renderGiessplan();
+    renderGartenTodos();
     populateGiessWhoSelect();
     renderTermine();
     renderAnwesend();
@@ -6132,6 +6369,11 @@ function setupListeners() {
     giessplanCache = snap.docs.map(d => ({ id: d.id, ...d.data() }));
     renderGiessplan();
   }, (err) => console.warn("giessplan listener:", err.message));
+
+  onSnapshot(query(collection(db, "gartentodos"), orderBy("createdAt", "desc")), (snap) => {
+    gartenTodoCache = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
+    renderGartenTodos();
+  }, (err) => console.warn("gartentodos listener:", err.message));
 
   onSnapshot(query(collection(db, "termine"), orderBy("createdAt", "desc")), (snap) => {
     termineCache = snap.docs.map(d => ({ id: d.id, ...d.data() }));

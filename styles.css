@@ -1817,6 +1817,51 @@ textarea { resize: vertical; font-family: inherit; }
   margin: 0;
 }
 
+/* Garten To-Do */
+.gartentodo-kw-head {
+  font-weight: 600;
+  font-size: 1.05rem;
+  margin: 0 0 8px;
+  color: var(--moss-dark, #2d5016);
+}
+.gartentodo-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+  gap: 14px;
+  margin-bottom: 16px;
+}
+.gartentodo-card {
+  position: relative;
+  padding: 16px 18px;
+  background: var(--card);
+  border-radius: 12px;
+  border: 1px solid var(--border, #dde5d8);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.04);
+}
+.gartentodo-card.overdue { border-color: #e57373; background: #fff8f8; }
+.gartentodo-card.due-today { border-color: var(--terracotta, #c67b4e); }
+.gartentodo-card.done-today { opacity: 0.75; border-color: #81c784; }
+.gartentodo-task { font-weight: 600; font-size: 1.05rem; margin-bottom: 6px; }
+.gartentodo-meta { font-size: 0.88rem; color: #555; display: flex; flex-direction: column; gap: 4px; }
+.gartentodo-kw { font-weight: 600; color: var(--moss-dark, #2d5016); }
+.gartentodo-next.overdue { color: #c62828; font-weight: 600; }
+.gartentodo-next.due-today { color: var(--terracotta); font-weight: 600; }
+.gartentodo-done-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 12px;
+  cursor: pointer;
+  font-size: 0.9rem;
+}
+.gartentodo-done-row input[type="checkbox"] {
+  width: 18px;
+  height: 18px;
+  margin: 0;
+  cursor: pointer;
+}
+.gartentodo-actions { margin-top: 8px; }
+
 /* Termine mit WG-RSVP */
 .termin-card {
   padding: 20px 22px;

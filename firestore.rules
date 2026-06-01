@@ -13,6 +13,9 @@ service cloud.firestore {
     match /giessplan/{document=**} {
       allow read, write: if true;
     }
+    match /gartentodos/{document=**} {
+      allow read, write: if true;
+    }
     match /termine/{document=**} {
       allow read, write: if true;
     }
