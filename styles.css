@@ -1578,40 +1578,36 @@ textarea { resize: vertical; font-family: inherit; }
    Kalender Tabs
    ============================================ */
 .kalender-wrap {
-  max-width: 900px;
+  max-width: min(900px, 100%);
   margin: 0 auto;
+  padding: 0 8px;
 }
 
+/* WG-Kalender & WG-Intern: volle Breite, Umbrechen; Scroll nur bei echtem Überlauf */
 .kalender-tabs {
   display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  align-content: flex-start;
   gap: 4px;
+  row-gap: 6px;
   padding: 5px;
+  width: 100%;
+  max-width: 100%;
+  margin: 0 auto 28px;
   background: var(--card);
   backdrop-filter: blur(10px);
   border: 1px solid var(--card-border);
-  border-radius: 999px;
-  max-width: 560px;
-  margin: 0 auto 28px;
+  border-radius: var(--r-md);
   box-shadow: var(--card-shadow);
   overflow-x: auto;
+  overflow-y: hidden;
   -webkit-overflow-scrolling: touch;
   scrollbar-width: thin;
+  scrollbar-gutter: stable;
 }
 
-/* WG-Intern: viele Reiter – nicht zusammenquetschen, ggf. umbrechen + volle Breite */
-#intern .kalender-wrap {
-  max-width: min(900px, 100%);
-  padding: 0 8px;
-}
-#intern .kalender-tabs {
-  max-width: 100%;
-  width: 100%;
-  flex-wrap: wrap;
-  justify-content: center;
-  border-radius: var(--r-md);
-  row-gap: 6px;
-}
-#intern .kalender-tabs .tab {
+.kalender-tabs .tab {
   flex: 0 1 auto;
   min-width: max-content;
   padding: 8px 12px;
