@@ -3615,34 +3615,35 @@ function gartenTodoBadgesHtml(item) {
   return `<div class="gartentodo-badges">${parts.join("")}</div>`;
 }
 
-/** Kompakte Kachel-Anzeige: Status + Termin (ohne KW/Intervall-Flut). */
+/** Terminzeile auf der Kachel: KW-Ende + Garten-Slot. */
+function formatGartenTodoCardWhenLine(next) {
+  return `${formatKwLabel(next)} · ${formatGartenWorkSlot(next)}`;
+}
+
+/** Kompakte Kachel-Anzeige: Status + Termin (KW «bis spätestens» für alle offenen Runden). */
 function formatGartenTodoCardSummary(item) {
   const status = getGartenTodoStatus(item);
   const next = gartenTodoNextDueDate(item);
-  const slot = formatGartenWorkSlot(next);
+  const whenLine = formatGartenTodoCardWhenLine(next);
   if (status === "done-today") {
     return { chip: "Erledigt", chipCls: "done", when: "Heute erledigt – gespeichert", assigneeHint: "" };
   }
   if (status === "scheduled") {
-    const prev = getGartenTodoLastCompleter(item);
-    const prevLabel = prev ? mLabel(prev) : "Letzte Runde";
-    const kw = formatKwLabel(next);
-    return {
-      chip: "Offen",
-      chipCls: "scheduled",
-      when: `${prevLabel} erledigt · ${item.who ? mLabel(item.who) : "—"} bis ${slot} (${kw})`,
-      assigneeHint: "Noch zu erledigen",
-    };
+    return { chip: "Offen", chipCls: "scheduled", when: whenLine, assigneeHint: "Noch zu erledigen" };
   }
   if (status === "overdue") {
     const days = Math.ceil((today0() - next) / 86400000);
-    return { chip: "Überfällig", chipCls: "overdue", when: `${slot} (${days} Tag${days > 1 ? "e" : ""})`, assigneeHint: "" };
+    return {
+      chip: "Überfällig",
+      chipCls: "overdue",
+      when: `${whenLine} · ${days} Tag${days > 1 ? "e" : ""} überfällig`,
+      assigneeHint: "",
+    };
   }
   if (status === "due-today") {
-    return { chip: "Heute", chipCls: "due-today", when: slot, assigneeHint: "" };
+    return { chip: "Heute", chipCls: "due-today", when: whenLine, assigneeHint: "" };
   }
-  const days = Math.ceil((next - today0()) / 86400000);
-  return { chip: "Demnächst", chipCls: "upcoming", when: `${slot} (in ${days} T.)`, assigneeHint: "" };
+  return { chip: "Demnächst", chipCls: "upcoming", when: whenLine, assigneeHint: "" };
 }
 
 function renderGartenTodos() {
@@ -3719,7 +3720,7 @@ function renderGartenTodos() {
             <summary>📅 Wochen-Reihenfolge &amp; Tausch</summary>
             ${gartenTodoRotationHtml(item, true)}
           </details>
-          ${activeRound
+          ${showDoneBtn
             ? `<div class="gartentodo-done-actions">
             <button type="button" class="mini-btn gartentodo-done-btn" data-id="${item.id}" data-action="done">✅ Erledigt speichern</button>
             <label class="gartentodo-rotate-row">
@@ -3983,16 +3984,9 @@ async function markGartenTodoDone(id, rotateNext = true, triggerBtn = null) {
   if (!requireMember("Garten To-Do")) return;
   const item = gartenTodoCache.find((t) => t.id === id);
   if (!item) return;
-  if (gartenTodoRoundComplete(item)) {
-    const next = formatGartenWorkSlot(gartenTodoNextDueDate(item));
-    const whoNext = item.who ? mLabel(item.who) : "—";
-    showToast(`Diese Runde ist erledigt. ${whoNext} ist dran ab ${next}.`, "info");
-    return;
-  }
-
   const now = new Date().toISOString();
   const interval = item.intervalDays || 14;
-  const completedBy = item.who || auth.member || "WG";
+  const completedBy = auth.member || item.who || "WG";
   const nextWho = rotateNext ? pickFairAssignee(id) : item.who;
   const nextDue = toISODateLocal(nextGartenDueAfterDone(today0(), interval));
   const fair = gartenTodoFairnessAfter(nextWho, id);
