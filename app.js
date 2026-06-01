@@ -3142,23 +3142,37 @@ function upsertGartenTodoRotationOverride(list, due, who, swapMeta = null) {
 }
 
 const GARTEN_TODO_ICON_SVG = {
-  clock: `<svg class="gartentodo-icon-svg" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
-    <circle cx="12" cy="12" r="10" fill="currentColor" opacity="0.12"/>
-    <circle cx="12" cy="12" r="8.5" fill="none" stroke="currentColor" stroke-width="1.6"/>
-    <path d="M12 7v5.2l3.2 2" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"/>
-    <circle cx="12" cy="12" r="1.35" fill="currentColor"/>
-  </svg>`,
+  /** Zwei Halbkreis-Pfeile im Kreis (Tausch / Rotation) */
   swap: `<svg class="gartentodo-icon-svg" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
-    <path d="M7 7h10l-2.5-2.5M17 17H7l2.5 2.5" fill="none" stroke="currentColor" stroke-width="1.85" stroke-linecap="round" stroke-linejoin="round"/>
-    <path d="M17 7v3H7v10h10v-3" fill="none" stroke="currentColor" stroke-width="1.85" stroke-linecap="round" stroke-linejoin="round" opacity="0.35"/>
+    <circle cx="12" cy="12" r="9" fill="none" stroke="currentColor" stroke-width="1.35" opacity="0.22"/>
+    <path d="M16.2 8.1c-1.1-2.3-3.4-3.8-6-3.8-2.2 0-4.1 1.1-5.2 2.8" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round"/>
+    <path d="M6.2 6.4l1.6-2.3 2.3-1.1" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"/>
+    <path d="M7.8 15.9c1.1 2.3 3.4 3.8 6 3.8 2.2 0 4.1-1.1 5.2-2.8" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round"/>
+    <path d="M17.8 17.6l-1.6 2.3-2.3 1.1" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"/>
   </svg>`,
+  /** Analoge Uhr (Ziffernblatt) */
+  clock: `<svg class="gartentodo-icon-svg" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+    <circle cx="12" cy="12" r="9.25" fill="currentColor" opacity="0.1"/>
+    <circle cx="12" cy="12" r="8.25" fill="none" stroke="currentColor" stroke-width="1.55"/>
+    <path d="M12 5v1.5M12 17.5V19M5 12h1.5M17.5 12H19M7.05 7.05l1.06 1.06M15.89 15.89l1.06 1.06M16.95 7.05l-1.06 1.06M8.11 15.89l-1.06 1.06" stroke="currentColor" stroke-width="1.15" stroke-linecap="round" opacity="0.45"/>
+    <circle cx="12" cy="12" r="1.2" fill="currentColor"/>
+    <path d="M12 12V8.2" stroke="currentColor" stroke-width="1.65" stroke-linecap="round"/>
+    <path d="M12 12h3.6" stroke="currentColor" stroke-width="1.45" stroke-linecap="round"/>
+  </svg>`,
+  /** Kalender mit Ringen und Raster */
   calendar: `<svg class="gartentodo-icon-svg" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
-    <rect x="3" y="5" width="18" height="16" rx="3" fill="currentColor" opacity="0.12"/>
-    <rect x="3" y="5" width="18" height="16" rx="3" fill="none" stroke="currentColor" stroke-width="1.6"/>
-    <path d="M8 3v4M16 3v4M3 11h18" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/>
-    <circle cx="8.5" cy="15" r="1.1" fill="currentColor"/>
-    <circle cx="12" cy="15" r="1.1" fill="currentColor"/>
-    <circle cx="15.5" cy="15" r="1.1" fill="currentColor"/>
+    <rect x="3" y="4.5" width="18" height="17" rx="2.5" fill="currentColor" opacity="0.1"/>
+    <rect x="3" y="4.5" width="18" height="17" rx="2.5" fill="none" stroke="currentColor" stroke-width="1.5"/>
+    <path d="M3 9.5h18" stroke="currentColor" stroke-width="1.5"/>
+    <path d="M8 3v3.5M16 3v3.5" stroke="currentColor" stroke-width="1.65" stroke-linecap="round"/>
+    <rect x="7" y="2" width="2" height="3" rx="0.6" fill="currentColor" opacity="0.85"/>
+    <rect x="15" y="2" width="2" height="3" rx="0.6" fill="currentColor" opacity="0.85"/>
+    <circle cx="8" cy="13" r="1" fill="currentColor" opacity="0.55"/>
+    <circle cx="12" cy="13" r="1" fill="currentColor" opacity="0.55"/>
+    <circle cx="16" cy="13" r="1" fill="currentColor" opacity="0.55"/>
+    <circle cx="8" cy="17" r="1" fill="currentColor" opacity="0.85"/>
+    <circle cx="12" cy="17" r="1" fill="currentColor"/>
+    <circle cx="16" cy="17" r="1" fill="currentColor" opacity="0.55"/>
   </svg>`,
 };
 
