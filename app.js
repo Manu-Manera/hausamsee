@@ -3142,10 +3142,19 @@ function upsertGartenTodoRotationOverride(list, due, who, swapMeta = null) {
 }
 
 const GARTEN_TODO_ICON_SVG = {
-  clock: `<svg class="gartentodo-icon-svg" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><circle cx="12" cy="12" r="9" fill="none" stroke="currentColor" stroke-width="2"/><path d="M12 7v5l3.5 2.5" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>`,
-  swap: `<svg class="gartentodo-icon-svg" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M7 8h11M7 8l3-3M7 8l3 3M17 16H6M17 16l-3-3M17 16l-3 3" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>`,
-  calendar: `<svg class="gartentodo-icon-svg" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><rect x="4" y="5" width="16" height="15" rx="2" fill="none" stroke="currentColor" stroke-width="2"/><path d="M8 3v4M16 3v4M4 10h16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>`,
-  scroll: `<svg class="gartentodo-icon-svg" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M8 6h12M8 12h12M8 18h8" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/><path d="M4 6v12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>`,
+  clock: `<svg class="gartentodo-icon-svg" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+    <circle cx="12" cy="12" r="9.25" fill="none" stroke="currentColor" stroke-width="1.75"/>
+    <circle cx="12" cy="12" r="1.25" fill="currentColor"/>
+    <path d="M12 7.25V12l3.75 2.1" fill="none" stroke="currentColor" stroke-width="1.85" stroke-linecap="round" stroke-linejoin="round"/>
+  </svg>`,
+  swap: `<svg class="gartentodo-icon-svg" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+    <path d="M16 4l3 3-3 3M8 20l-3-3 3-3M19 7H9M5 17h10" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+  </svg>`,
+  calendar: `<svg class="gartentodo-icon-svg" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+    <rect x="3.5" y="5.5" width="17" height="15" rx="2.5" fill="none" stroke="currentColor" stroke-width="1.85"/>
+    <path d="M8 3.5v3.5M16 3.5v3.5M3.5 10.5h17" fill="none" stroke="currentColor" stroke-width="1.85" stroke-linecap="round"/>
+    <rect x="7.5" y="13" width="3" height="3" rx="0.6" fill="currentColor" opacity="0.85"/>
+  </svg>`,
 };
 
 function gartenTodoIconBtn(className, title, innerSvg, extraAttrs = "") {
@@ -3153,21 +3162,12 @@ function gartenTodoIconBtn(className, title, innerSvg, extraAttrs = "") {
   return `<button type="button" class="gartentodo-icon-btn ${className}" title="${t}" aria-label="${t}" ${extraAttrs}>${innerSvg}</button>`;
 }
 
-function formatGartenTodoSwapHint(swapInfo) {
-  if (!swapInfo?.at) return "";
-  const when = new Date(swapInfo.at).toLocaleDateString("de-CH", {
-    day: "2-digit",
-    month: "2-digit",
-    year: "numeric",
-    timeZone: "Europe/Zurich",
-  });
-  const by = swapInfo.by ? mLabel(swapInfo.by) : "WG";
-  const title = `Getauscht von ${by} · ${when}`;
-  return `<span class="gartentodo-icon-btn gartentodo-swap-hint" title="${escapeAttr(title)}" aria-label="${escapeAttr(title)}">${GARTEN_TODO_ICON_SVG.swap}</span>`;
-}
-
 function gartenTodoHistoryId(itemId, dueIso) {
   return `gartentodo-history-${itemId}-${dueIso}`;
+}
+
+function gartenTodoHistoryPanelId(itemId, dueIso) {
+  return `${gartenTodoHistoryId(itemId, dueIso)}-panel`;
 }
 
 function gartenTodoHistoryEntriesForDue(item, dueIso, swapInfo = null, rowWho = "") {
@@ -3199,30 +3199,60 @@ function gartenTodoRowHistoryHtml(item, dueIso, swapInfo, rowWho = "") {
   return `<ul class="gartentodo-history-list">${entries.map(formatGartenTodoHistoryLine).join("")}</ul>`;
 }
 
-function gartenTodoVerlaufIconBtn(itemId, dueIso) {
-  return gartenTodoIconBtn(
-    "gartentodo-verlauf-icon-btn",
-    "Verlauf zu diesem Termin",
-    GARTEN_TODO_ICON_SVG.clock,
-    `data-history-for="${escapeHtml(itemId)}" data-history-due="${escapeHtml(dueIso)}"`
-  );
+function gartenTodoSwapTooltip(swapInfo) {
+  if (!swapInfo?.at) return "Verlauf zu diesem Termin";
+  const when = new Date(swapInfo.at).toLocaleDateString("de-CH", {
+    day: "2-digit",
+    month: "2-digit",
+    year: "numeric",
+    timeZone: "Europe/Zurich",
+  });
+  const by = swapInfo.by ? mLabel(swapInfo.by) : "WG";
+  return `Getauscht von ${by} · ${when} – Verlauf anzeigen`;
+}
+
+function gartenTodoHistoryDropdownHtml(item, r) {
+  const panelId = gartenTodoHistoryPanelId(item.id, r.dueIso);
+  const title = gartenTodoSwapTooltip(r.swapInfo);
+  return `<div class="gartentodo-history-drop">
+    ${gartenTodoIconBtn(
+      "gartentodo-verlauf-icon-btn",
+      title,
+      GARTEN_TODO_ICON_SVG.clock,
+      `data-history-for="${escapeHtml(item.id)}" data-history-due="${escapeHtml(r.dueIso)}" aria-expanded="false" aria-controls="${escapeHtml(panelId)}"`
+    )}
+    <div class="gartentodo-history-panel" id="${escapeHtml(panelId)}" role="region" aria-label="Verlauf" hidden>
+      ${gartenTodoRowHistoryHtml(item, r.dueIso, r.swapInfo, r.who)}
+    </div>
+  </div>`;
+}
+
+function closeGartenTodoHistoryPanels(root, exceptPanel = null) {
+  root.querySelectorAll(".gartentodo-history-panel").forEach((panel) => {
+    if (panel === exceptPanel) return;
+    panel.hidden = true;
+    panel.classList.remove("gartentodo-history-flash");
+    const btn = panel.closest(".gartentodo-history-drop")?.querySelector(".gartentodo-verlauf-icon-btn");
+    if (btn) btn.setAttribute("aria-expanded", "false");
+  });
 }
 
 function toggleGartenTodoRowHistory(itemId, dueIso, root = document) {
-  const id = gartenTodoHistoryId(itemId, dueIso);
-  const details = root.getElementById(id);
-  if (!details) return;
-  const card = details.closest(".gartentodo-card");
-  const parentRotation = details.closest(".gartentodo-subdetails");
+  const panel = root.getElementById(gartenTodoHistoryPanelId(itemId, dueIso));
+  const btn = root.querySelector(
+    `.gartentodo-verlauf-icon-btn[data-history-for="${itemId}"][data-history-due="${dueIso}"]`
+  );
+  if (!panel || !btn) return;
+  const parentRotation = panel.closest(".gartentodo-subdetails");
   if (parentRotation && !parentRotation.open) parentRotation.open = true;
-  card?.querySelectorAll(".gartentodo-row-history").forEach((el) => {
-    if (el !== details) el.open = false;
-  });
-  details.open = !details.open;
-  if (details.open) {
-    details.scrollIntoView({ behavior: "smooth", block: "nearest" });
-    details.classList.add("gartentodo-history-flash");
-    window.setTimeout(() => details.classList.remove("gartentodo-history-flash"), 2200);
+  const willOpen = panel.hidden;
+  closeGartenTodoHistoryPanels(root, willOpen ? panel : null);
+  panel.hidden = !willOpen;
+  btn.setAttribute("aria-expanded", willOpen ? "true" : "false");
+  if (willOpen) {
+    panel.scrollIntoView({ behavior: "smooth", block: "nearest" });
+    panel.classList.add("gartentodo-history-flash");
+    window.setTimeout(() => panel.classList.remove("gartentodo-history-flash"), 2200);
   }
 }
 
@@ -3278,7 +3308,6 @@ function gartenTodoRotationHtml(item, canEdit = false) {
       ]
         .filter(Boolean)
         .join(" ");
-      const swapHint = formatGartenTodoSwapHint(r.swapInfo);
       const saveBtn = canEdit
         ? gartenTodoIconBtn(
             "gartentodo-rotation-save",
@@ -3293,6 +3322,7 @@ function gartenTodoRotationHtml(item, canEdit = false) {
         GARTEN_TODO_ICON_SVG.calendar,
         `data-id="${escapeHtml(item.id)}" data-due="${escapeHtml(r.dueIso)}" data-who="${escapeHtml(r.who)}" data-round="${r.roundIndex}"`
       );
+      const historyDrop = r.swapInfo ? gartenTodoHistoryDropdownHtml(item, r) : "";
       const whoControls = canEdit
         ? `<select class="gartentodo-rotation-who" data-rotation-who="${escapeHtml(item.id)}" data-due="${escapeHtml(r.dueIso)}" data-round="${r.roundIndex}" aria-label="Person für ${escapeHtml(r.slot)}">${gartenTodoWhoOptionsHtml(r.who, false, true)}</select>`
         : `<span class="gartentodo-rotation-person-name">${escapeHtml(mLabel(r.who))}</span>`;
@@ -3305,25 +3335,20 @@ function gartenTodoRotationHtml(item, canEdit = false) {
             <span class="gartentodo-rotation-when">${escapeHtml(r.slot)}</span>
           </p>
           <p class="gartentodo-rotation-kw">${r.kw}</p>
-          <div class="gartentodo-rotation-person">
+          <div class="gartentodo-rotation-toolbar">
             ${whoControls}
-            ${saveBtn}
-            ${calBtn}
-            ${swapHint}
-            ${r.swapInfo ? gartenTodoVerlaufIconBtn(item.id, r.dueIso) : ""}
+            <div class="gartentodo-icon-group" role="group" aria-label="Aktionen">
+              ${saveBtn}
+              ${calBtn}
+              ${historyDrop}
+            </div>
           </div>
-          ${r.swapInfo
-            ? `<details class="gartentodo-row-history" id="${escapeHtml(gartenTodoHistoryId(item.id, r.dueIso))}">
-            <summary class="gartentodo-row-history-summary" hidden>Verlauf</summary>
-            <div class="gartentodo-row-history-body">${gartenTodoRowHistoryHtml(item, r.dueIso, r.swapInfo)}</div>
-          </details>`
-            : ""}
         </div>
       </li>`;
     })
     .join("");
   const hint = canEdit
-    ? `↔ tauschen · Uhr = Verlauf zu diesem Termin · Kalender = Export. Zeile 1 = nächste Runde.`
+    ? `Icons: tauschen · Kalender · Uhr (Verlauf). Zeile 1 = nächste Runde.`
     : `Samstag ${pad2(GARTEN_TODO_WORK_HOUR)}:${pad2(GARTEN_TODO_WORK_MINUTE)}, alle ${item.intervalDays || 14} Tage.`;
   return `<ol class="gartentodo-rotation-list" start="1">${lis}</ol><p class="form-note">${hint}</p>`;
 }
@@ -3676,6 +3701,13 @@ function renderGartenTodos() {
       toggleGartenTodoRowHistory(btn.dataset.historyFor, btn.dataset.historyDue, grid);
     });
   });
+  if (!grid.dataset.historyAwayBound) {
+    grid.dataset.historyAwayBound = "1";
+    document.addEventListener("click", (e) => {
+      if (e.target.closest(".gartentodo-history-drop")) return;
+      closeGartenTodoHistoryPanels(grid);
+    });
+  }
   grid.querySelectorAll(".gartentodo-reminder-cb").forEach((cb) => {
     cb.addEventListener("change", () => void toggleGartenTodoReminder(cb.dataset.id, cb.checked));
   });
