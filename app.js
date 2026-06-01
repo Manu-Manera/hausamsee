@@ -3103,6 +3103,9 @@ function formatGartenTodoHistoryLine(h) {
     detail = `Planung → ${escapeHtml(h.who || "—")}, fällig ${escapeHtml(h.nextDue || "—")}${prev}`;
   } else if (h.action === "done") {
     detail = `Erledigt → nächste Runde ${escapeHtml(h.who || "—")}, fällig ${escapeHtml(h.nextDue || "—")}`;
+  } else if (h.action === "rotation") {
+    const prev = h.prevWho && h.prevWho !== h.who ? ` (vorher ${escapeHtml(h.prevWho)})` : "";
+    detail = `Reihenfolge → ${escapeHtml(h.who || "—")}, ${escapeHtml(h.nextDue || "—")}${prev}`;
   } else if (h.action === "reminder") {
     detail = h.fairNote || "WhatsApp-Erinnerung geändert";
   }
@@ -3110,20 +3113,49 @@ function formatGartenTodoHistoryLine(h) {
   return `<li><time>${when}</time> · ${escapeHtml(h.by || "—")} · ${detail}${fair}</li>`;
 }
 
+function normalizeGartenTodoRotationOverrides(item) {
+  if (!Array.isArray(item.rotationOverrides)) return [];
+  return item.rotationOverrides.filter((o) => o && o.due && o.who);
+}
+
+function gartenTodoRotationOverridesMap(item) {
+  const map = {};
+  normalizeGartenTodoRotationOverrides(item).forEach((o) => { map[o.due] = o.who; });
+  return map;
+}
+
+function upsertGartenTodoRotationOverride(list, due, who) {
+  const next = [...list];
+  const idx = next.findIndex((o) => o.due === due);
+  if (idx >= 0) next[idx] = { due, who };
+  else next.push({ due, who });
+  return next;
+}
+
+function removeGartenTodoRotationOverride(list, due) {
+  return list.filter((o) => o.due !== due);
+}
+
 function buildGartenTodoRotation(item, rounds = 12) {
   const interval = item.intervalDays || 14;
   const adults = [...getActiveAdultNames()].sort((a, b) => a.localeCompare(b, "de"));
   if (!adults.length) return [];
+  const overrides = gartenTodoRotationOverridesMap(item);
   let who = item.who && adults.includes(item.who) ? item.who : adults[0];
   let date = gartenTodoNextDueDate(item);
   const rows = [];
   for (let i = 0; i < rounds; i++) {
+    const dueIso = toISODateLocal(date);
+    if (overrides[dueIso] && adults.includes(overrides[dueIso])) who = overrides[dueIso];
     rows.push({
       who,
       date: new Date(date),
+      dueIso,
       kw: formatKwLabel(date),
       slot: formatGartenWorkSlot(date),
       current: i === 0,
+      manual: !!overrides[dueIso] || (i === 0 && !!item.whoManual),
+      roundIndex: i,
     });
     const idx = adults.indexOf(who);
     who = adults[(idx + 1) % adults.length];
@@ -3132,20 +3164,38 @@ function buildGartenTodoRotation(item, rounds = 12) {
   return rows;
 }
 
-function gartenTodoRotationHtml(item) {
+function gartenTodoRotationHtml(item, canEdit = false) {
   const rows = buildGartenTodoRotation(item);
   if (!rows.length) return "<p class=\"form-note\">Keine aktiven Erwachsenen.</p>";
   const lis = rows
-    .map((r, i) => {
+    .map((r) => {
       const cls = r.current ? " class=\"current\"" : "";
-      const dueIso = toISODateLocal(r.date);
+      const manualBadge = r.manual ? '<span class="gartentodo-badge manual">👤 Manuell</span>' : "";
+      const whoControls = canEdit
+        ? `<select class="gartentodo-rotation-who" data-rotation-who="${escapeHtml(item.id)}" data-due="${escapeHtml(r.dueIso)}" data-round="${r.roundIndex}" aria-label="Person für ${escapeHtml(r.slot)}">${gartenTodoWhoOptionsHtml(r.who, false)}</select>
+        <button type="button" class="mini-btn gartentodo-rotation-save" data-id="${escapeHtml(item.id)}" data-due="${escapeHtml(r.dueIso)}" data-round="${r.roundIndex}" title="Person für diesen Termin speichern (z.B. Urlaub)">↔ Tauschen</button>`
+        : `<span>${mEmoji(r.who)} ${escapeHtml(mLabel(r.who))}</span>`;
       return `<li${cls}>
-        <span class="gartentodo-rotation-text"><strong>${r.kw}</strong> · ${escapeHtml(r.slot)} · ${mEmoji(r.who)} ${escapeHtml(mLabel(r.who))}</span>
-        <button type="button" class="event-share-btn gartentodo-rotation-ical" data-id="${escapeHtml(item.id)}" data-due="${escapeHtml(dueIso)}" data-who="${escapeHtml(r.who)}" data-round="${i}" title="Diesen Termin in den Kalender (${escapeHtml(r.slot)})">📅 Kalender</button>
+        <div class="gartentodo-rotation-row">
+          <div class="gartentodo-rotation-text">
+            <strong>${r.kw}</strong> · ${escapeHtml(r.slot)} ${manualBadge}
+          </div>
+          <div class="gartentodo-rotation-actions">
+            ${whoControls}
+            <button type="button" class="event-share-btn gartentodo-rotation-ical" data-id="${escapeHtml(item.id)}" data-due="${escapeHtml(r.dueIso)}" data-who="${escapeHtml(r.who)}" data-round="${r.roundIndex}" title="Diesen Termin in den Kalender">📅</button>
+          </div>
+        </div>
       </li>`;
     })
     .join("");
-  return `<ol class="gartentodo-rotation-list">${lis}</ol><p class="form-note">Voraussichtlich Samstag ${pad2(GARTEN_TODO_WORK_HOUR)}:${pad2(GARTEN_TODO_WORK_MINUTE)}, Rotation alle ${item.intervalDays || 14} Tage – pro Zeile 📅 für den jeweiligen Termin.</p>`;
+  const historyBlock = `<div class="gartentodo-rotation-history">
+    <p class="gartentodo-rotation-history-title">📜 Verlauf</p>
+    ${gartenTodoHistoryHtml(item)}
+  </div>`;
+  const hint = canEdit
+    ? `Person pro Termin wählen und «Tauschen» – z.B. bei Urlaub. Erste Zeile = aktuell/nächste Runde.`
+    : `Voraussichtlich Samstag ${pad2(GARTEN_TODO_WORK_HOUR)}:${pad2(GARTEN_TODO_WORK_MINUTE)}, alle ${item.intervalDays || 14} Tage.`;
+  return `<ol class="gartentodo-rotation-list">${lis}</ol><p class="form-note">${hint}</p>${historyBlock}`;
 }
 
 function gartenTodoHistoryHtml(item) {
@@ -3411,12 +3461,8 @@ function renderGartenTodos() {
             </div>
           </details>
           <details class="gartentodo-subdetails">
-            <summary>📅 Wochen-Reihenfolge</summary>
-            ${gartenTodoRotationHtml(item)}
-          </details>
-          <details class="gartentodo-subdetails">
-            <summary>📜 Verlauf</summary>
-            ${gartenTodoHistoryHtml(item)}
+            <summary>📅 Wochen-Reihenfolge &amp; Tausch</summary>
+            ${gartenTodoRotationHtml(item, true)}
           </details>
           ${roundComplete
             ? `<p class="gartentodo-done-badge">${escapeHtml(nextInfo.text)}</p>`
@@ -3470,7 +3516,27 @@ function renderGartenTodos() {
       e.stopPropagation();
       const item = gartenTodoCache.find((t) => t.id === btn.dataset.id);
       if (!item) return;
-      downloadGartenTodoRotationIcs(item, btn.dataset.due, btn.dataset.who, parseInt(btn.dataset.round, 10));
+      const sel = grid.querySelector(
+        `.gartentodo-rotation-who[data-rotation-who="${btn.dataset.id}"][data-due="${btn.dataset.due}"]`
+      );
+      const who = sel?.value || btn.dataset.who;
+      downloadGartenTodoRotationIcs(item, btn.dataset.due, who, parseInt(btn.dataset.round, 10));
+    });
+  });
+  grid.querySelectorAll(".gartentodo-rotation-save").forEach((btn) => {
+    btn.addEventListener("click", (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      const sel = grid.querySelector(
+        `.gartentodo-rotation-who[data-rotation-who="${btn.dataset.id}"][data-due="${btn.dataset.due}"]`
+      );
+      void saveGartenTodoRotationSlot(
+        btn.dataset.id,
+        btn.dataset.due,
+        parseInt(btn.dataset.round, 10),
+        sel?.value,
+        btn
+      );
     });
   });
   grid.querySelectorAll(".gartentodo-reminder-cb").forEach((cb) => {
@@ -3506,6 +3572,33 @@ async function toggleGartenTodoReminder(id, enabled) {
   }
 }
 
+async function persistGartenTodoUpdates(id, updates, toastMsg, toastType = "success") {
+  const item = gartenTodoCache.find((t) => t.id === id);
+  if (!item) return false;
+  const snapshot = {};
+  Object.keys(updates).forEach((k) => {
+    const v = item[k];
+    snapshot[k] = Array.isArray(v) ? [...v] : v;
+  });
+  Object.assign(item, updates);
+  try {
+    if (firebaseReady) {
+      await updateDoc(doc(db, "gartentodos", id), updates);
+    } else {
+      localStore.gartentodos = gartenTodoCache;
+      saveLocal("gartentodos", localStore.gartentodos);
+    }
+    renderGartenTodos();
+    showToast(toastMsg, toastType);
+    return true;
+  } catch (err) {
+    Object.assign(item, snapshot);
+    console.error("persistGartenTodoUpdates", err);
+    showToast(`Speichern fehlgeschlagen: ${err.message || err}`, "error");
+    return false;
+  }
+}
+
 async function saveGartenTodoPlan(id) {
   if (!requireMember("Garten To-Do")) return;
   const item = gartenTodoCache.find((t) => t.id === id);
@@ -3529,26 +3622,79 @@ async function saveGartenTodoPlan(id) {
       fairNote: fair.text,
     })
   );
-  const updates = {
-    who,
-    nextDue: due,
-    whoManual: true,
-    nextDueManual: true,
-    history,
-  };
-  try {
-    if (firebaseReady) {
-      await updateDoc(doc(db, "gartentodos", id), updates);
-    } else {
-      localStore.gartentodos = gartenTodoCache;
-      saveLocal("gartentodos", localStore.gartentodos);
-    }
-    renderGartenTodos();
-    showToast(fair.ok ? `Gespeichert. ${fair.text}` : `Gespeichert (Abweichung). ${fair.text}`, fair.ok ? "success" : "info");
-  } catch (err) {
-    console.error("saveGartenTodoPlan", err);
-    showToast(`Speichern fehlgeschlagen: ${err.message || err}`, "error");
+  const rotationOverrides = removeGartenTodoRotationOverride(normalizeGartenTodoRotationOverrides(item), due);
+  await persistGartenTodoUpdates(
+    id,
+    {
+      who,
+      nextDue: due,
+      whoManual: true,
+      nextDueManual: true,
+      rotationOverrides,
+      history,
+    },
+    fair.ok ? `Gespeichert. ${fair.text}` : `Gespeichert (Abweichung). ${fair.text}`,
+    fair.ok ? "success" : "info"
+  );
+}
+
+async function saveGartenTodoRotationSlot(id, dueIso, roundIndex, who, triggerBtn = null) {
+  if (!requireMember("Garten To-Do")) return;
+  const item = gartenTodoCache.find((t) => t.id === id);
+  if (!item || !who || !dueIso) {
+    showToast("Bitte Person wählen.", "error");
+    return;
   }
+  const rows = buildGartenTodoRotation(item);
+  const row = rows[roundIndex];
+  const prevWho = row?.who || item.who;
+  if (prevWho === who) {
+    showToast("Keine Änderung – gleiche Person.", "info");
+    return;
+  }
+  const fair = gartenTodoFairnessAfter(who, id);
+  if (triggerBtn) {
+    triggerBtn.disabled = true;
+    triggerBtn.textContent = "…";
+  }
+  const history = appendGartenTodoHistory(
+    item,
+    gartenTodoHistoryEntry(roundIndex === 0 ? "plan" : "rotation", {
+      who,
+      nextDue: dueIso,
+      prevWho,
+      prevDue: roundIndex === 0 ? (item.nextDue || dueIso) : dueIso,
+      fairNote: fair.text,
+    })
+  );
+  let updates;
+  if (roundIndex === 0) {
+    updates = {
+      who,
+      nextDue: dueIso,
+      whoManual: true,
+      nextDueManual: true,
+      rotationOverrides: removeGartenTodoRotationOverride(normalizeGartenTodoRotationOverrides(item), dueIso),
+      history,
+    };
+  } else {
+    updates = {
+      rotationOverrides: upsertGartenTodoRotationOverride(normalizeGartenTodoRotationOverrides(item), dueIso, who),
+      whoManual: true,
+      history,
+    };
+  }
+  const ok = await persistGartenTodoUpdates(
+    id,
+    updates,
+    fair.ok ? `Tausch gespeichert. ${fair.text}` : `Tausch gespeichert (Abweichung). ${fair.text}`,
+    fair.ok ? "success" : "info"
+  );
+  if (triggerBtn) {
+    triggerBtn.disabled = false;
+    triggerBtn.textContent = "↔ Tauschen";
+  }
+  if (!ok) renderGartenTodos();
 }
 
 async function markGartenTodoDone(id, rotateNext = true, triggerBtn = null) {

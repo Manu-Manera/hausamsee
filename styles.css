@@ -1966,26 +1966,54 @@ textarea { resize: vertical; font-family: inherit; }
   color: #444;
 }
 .gartentodo-rotation-list li {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  justify-content: space-between;
-  gap: 8px;
-  margin-bottom: 6px;
+  margin-bottom: 10px;
   list-style-position: outside;
 }
 .gartentodo-rotation-list li.current {
   font-weight: 600;
   color: var(--moss-dark, #2d5016);
 }
+.gartentodo-rotation-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 8px;
+}
 .gartentodo-rotation-text {
   flex: 1 1 12rem;
   min-width: 0;
+}
+.gartentodo-rotation-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
+.gartentodo-rotation-who {
+  max-width: 10rem;
+  font-size: 0.85rem;
+  padding: 4px 6px;
+}
+.gartentodo-rotation-save {
+  font-size: 0.78rem;
+  padding: 4px 8px;
 }
 .gartentodo-rotation-ical {
   flex-shrink: 0;
   font-size: 0.78rem;
   padding: 4px 8px;
+}
+.gartentodo-rotation-history {
+  margin-top: 14px;
+  padding-top: 12px;
+  border-top: 1px solid rgba(45, 80, 22, 0.12);
+}
+.gartentodo-rotation-history-title {
+  margin: 0 0 8px;
+  font-weight: 600;
+  font-size: 0.9rem;
+  color: var(--moss-dark, #2d5016);
 }
 .gartentodo-history-list li {
   margin-bottom: 6px;
