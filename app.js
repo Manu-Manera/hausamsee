@@ -3725,7 +3725,8 @@ function renderGartenTodos() {
               <input type="checkbox" class="gartentodo-rotate-next" data-id="${item.id}" checked />
               <span>Nächste Person nach Fairness-Einsätzen (empfohlen)</span>
             </label>
-          </div>`}
+          </div>`
+            : ""}
           <div class="gartentodo-tools">
             <button type="button" class="event-share-btn gartentodo-share-btn" data-id="${item.id}" data-action="ical" title="In Kalender speichern (iPhone/Android)">📅 Kalender</button>
             <label class="gartentodo-reminder-toggle" title="WhatsApp-Erinnerung täglich bis erledigt">
