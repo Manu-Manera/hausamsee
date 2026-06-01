@@ -2977,7 +2977,7 @@ function gartenTodoOpenCounts(excludeId = null) {
   adults.forEach((n) => { counts[n] = 0; });
   gartenTodoCache.forEach((t) => {
     if (excludeId && t.id === excludeId) return;
-    if (getGartenTodoStatus(t) === "done-today") return;
+    if (gartenTodoRoundComplete(t)) return;
     if (t.who && counts[t.who] !== undefined) counts[t.who]++;
   });
   return counts;
@@ -3226,7 +3226,7 @@ function renderGartenTodoBalance() {
   const counts = {};
   adults.forEach((n) => { counts[n] = 0; });
   gartenTodoCache.forEach((t) => {
-    if (getGartenTodoStatus(t) === "done-today") return;
+    if (gartenTodoRoundComplete(t)) return;
     if (t.who && counts[t.who] !== undefined) counts[t.who]++;
   });
   const line = adults.map((n) => `${mEmoji(n)} ${counts[n]}`).join(" · ");
@@ -3239,15 +3239,25 @@ function gartenTodoTodayYmd() {
 
 function getGartenTodoStatus(item) {
   const todayYmd = gartenTodoTodayYmd();
+  const today = today0();
+  const next = gartenTodoNextDueDate(item);
+  const nextYmd = toISODateLocal(next);
+
   if (item.lastDone) {
     const lastYmd = zurichYmd(new Date(item.lastDone));
     if (lastYmd === todayYmd) return "done-today";
+    // Runde erledigt, nächster Termin liegt in der Zukunft
+    if (next > today) return "scheduled";
   }
-  const today = today0();
-  const next = gartenTodoNextDueDate(item);
+
   if (next < today) return "overdue";
-  if (toISODateLocal(next) === todayYmd) return "due-today";
+  if (nextYmd === todayYmd) return "due-today";
   return "upcoming";
+}
+
+function gartenTodoRoundComplete(item) {
+  const s = getGartenTodoStatus(item);
+  return s === "done-today" || s === "scheduled";
 }
 
 function formatGartenTodoNext(item) {
@@ -3256,7 +3266,20 @@ function formatGartenTodoNext(item) {
   const kw = formatKwLabel(next);
   const slot = formatGartenWorkSlot(next);
   const planNote = item.nextDueManual ? " · Datum festgelegt" : "";
-  if (status === "done-today") return { text: "✅ Heute erledigt – nächste Runde später", kw, cls: "" };
+  if (status === "done-today") return { text: "✅ Heute erledigt – gespeichert", kw, cls: "" };
+  if (status === "scheduled") {
+    const lastStr = new Date(item.lastDone).toLocaleDateString("de-CH", {
+      day: "2-digit",
+      month: "short",
+      year: "numeric",
+      timeZone: "Europe/Zurich",
+    });
+    return {
+      text: `✅ Erledigt am ${lastStr} – nächste Runde: ${slot}`,
+      kw,
+      cls: "",
+    };
+  }
   if (status === "overdue") {
     const days = Math.ceil((today0() - next) / 86400000);
     return { text: `⚠️ ${days} Tag${days > 1 ? "e" : ""} überfällig · ${slot}${planNote}`, kw, cls: "overdue" };
@@ -3281,7 +3304,7 @@ function renderGartenTodos() {
   renderGartenTodoBalance();
 
   const sorted = [...gartenTodoCache].sort((a, b) => {
-    const order = { overdue: 0, "due-today": 1, upcoming: 2, "done-today": 3 };
+    const order = { overdue: 0, "due-today": 1, upcoming: 2, scheduled: 3, "done-today": 4 };
     return (order[getGartenTodoStatus(a)] ?? 2) - (order[getGartenTodoStatus(b)] ?? 2);
   });
 
@@ -3295,8 +3318,8 @@ function renderGartenTodos() {
     const nextInfo = formatGartenTodoNext(item);
     const intervalText = GARTEN_TODO_INTERVAL_LABELS[item.intervalDays] || `Alle ${item.intervalDays} Tage`;
     const whoLabel = item.who ? `${mEmoji(item.who)} ${escapeHtml(mLabel(item.who))}` : "—";
-    const canEdit = auth.isAuthed;
-    const doneToday = status === "done-today";
+    const canEdit = auth.isMember;
+    const roundComplete = gartenTodoRoundComplete(item);
     const dueVal = item.nextDue || toISODateLocal(gartenTodoNextDueDate(item));
 
     return `
@@ -3333,8 +3356,8 @@ function renderGartenTodos() {
             <summary>📜 Verlauf</summary>
             ${gartenTodoHistoryHtml(item)}
           </details>
-          ${doneToday
-            ? `<p class="gartentodo-done-badge">✅ Heute erledigt – gespeichert</p>`
+          ${roundComplete
+            ? `<p class="gartentodo-done-badge">${escapeHtml(nextInfo.text)}</p>`
             : `<div class="gartentodo-done-actions">
             <button type="button" class="mini-btn gartentodo-done-btn" data-id="${item.id}" data-action="done">✅ Erledigt speichern</button>
             <label class="gartentodo-rotate-row">
@@ -3461,8 +3484,9 @@ async function markGartenTodoDone(id, rotateNext = true, triggerBtn = null) {
   if (!requireMember("Garten To-Do")) return;
   const item = gartenTodoCache.find((t) => t.id === id);
   if (!item) return;
-  if (getGartenTodoStatus(item) === "done-today") {
-    showToast("Heute schon als erledigt gespeichert.", "info");
+  if (gartenTodoRoundComplete(item)) {
+    const next = formatGartenWorkSlot(gartenTodoNextDueDate(item));
+    showToast(`Diese Runde ist erledigt. Nächste Runde: ${next}`, "info");
     return;
   }
 
