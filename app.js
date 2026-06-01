@@ -2906,6 +2906,14 @@ function getKwWeekStartDate(date) {
   return monday;
 }
 
+/** Sonntag = letzter Tag der ISO-Kalenderwoche */
+function getKwWeekEndDate(date) {
+  const end = getKwWeekStartDate(date);
+  end.setDate(end.getDate() + 6);
+  end.setHours(0, 0, 0, 0);
+  return end;
+}
+
 function getNextGartenWorkSaturday(from = new Date()) {
   const base = ymdToLocalDate(zurichYmd(from));
   let daysUntilSat = (6 - base.getDay() + 7) % 7;
@@ -2973,15 +2981,15 @@ function getKwInfo(date) {
 
 function formatKwLabel(date) {
   const { kw, year } = getKwInfo(date);
-  const weekStart = getKwWeekStartDate(date);
-  const startStr = weekStart.toLocaleDateString("de-CH", {
+  const weekEnd = getKwWeekEndDate(date);
+  const endStr = weekEnd.toLocaleDateString("de-CH", {
     weekday: "short",
     day: "2-digit",
     month: "short",
     year: "numeric",
     timeZone: "Europe/Zurich",
   });
-  return `KW ${kw} · ${year} (ab ${startStr})`;
+  return `KW ${kw} · ${year} (bis spätestens ${endStr})`;
 }
 
 function updateGartenTodoKwHead() {
