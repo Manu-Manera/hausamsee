@@ -2711,6 +2711,30 @@ $("putzForm")?.addEventListener("submit", async (e) => {
    Giessplan (Zimmerpflanzen)
    ========================================================================== */
 
+/** Gemeinsame Begriffe für Giessplan- und Garten-To-Do-Kacheln */
+const TODO_CARD_LABELS = {
+  task: "Aufgabe",
+  plant: "Pflanze",
+  assignee: "Zuständig",
+  nextPerson: "Nächste Person",
+  pendingHint: "Noch zu erledigen",
+  doneToday: "Heute erledigt – gespeichert",
+  overdueDays: (n) => `${n} Tag${n > 1 ? "e" : ""} überfällig`,
+  chipDone: "Erledigt",
+  chipOpen: "Offen",
+  chipOverdue: "Überfällig",
+  chipToday: "Heute",
+  chipSoon: "Demnächst",
+  saveDoneGarten: "Erledigt speichern",
+  saveDoneGiess: "Gegossen speichern",
+  whatsapp: "WhatsApp",
+  whatsappReminderTitle: "WhatsApp-Erinnerung täglich bis erledigt",
+  history: "Verlauf",
+  historyCount: (n) => `Verlauf (${n})`,
+  historyEmpty: "Noch keine Einträge.",
+  historySwapped: (by, when) => `Verlauf · getauscht von ${by} · ${when}`,
+};
+
 let giessplanCache = [];
 
 function getNextGiessDate(lastWatered, intervalDays) {
@@ -2737,19 +2761,38 @@ function getGiessStatus(item) {
   return "upcoming";
 }
 
-function formatGiessNext(item) {
+function formatGiessCardSummary(item) {
   const status = getGiessStatus(item);
   const nextDate = getNextGiessDate(item.lastWatered, item.intervalDays || 3);
-  
-  if (status === "done-today") return "✅ Heute gegossen";
-  if (status === "overdue") {
-    const daysOverdue = Math.ceil((new Date() - nextDate) / (1000 * 60 * 60 * 24));
-    return `⚠️ ${daysOverdue} Tag${daysOverdue > 1 ? 'e' : ''} überfällig!`;
+  const nextDay = startOfDayLocal(nextDate);
+  const dateStr = nextDate.toLocaleDateString("de-CH", {
+    weekday: "short",
+    day: "2-digit",
+    month: "short",
+    year: "numeric",
+    timeZone: "Europe/Zurich",
+  });
+
+  if (status === "done-today") {
+    return { chip: TODO_CARD_LABELS.chipDone, chipCls: "done", when: TODO_CARD_LABELS.doneToday };
   }
-  if (status === "due-today") return "💧 Heute giessen!";
-  
-  const days = Math.ceil((nextDate - new Date()) / (1000 * 60 * 60 * 24));
-  return `Nächstes Giessen: ${nextDate.toLocaleDateString("de-CH", { weekday: "short", day: "2-digit", month: "short" })} (in ${days} Tag${days > 1 ? 'en' : ''})`;
+  if (status === "overdue") {
+    const days = Math.ceil((today0() - nextDay) / 86400000);
+    return {
+      chip: TODO_CARD_LABELS.chipOverdue,
+      chipCls: "overdue",
+      when: `${dateStr} · ${TODO_CARD_LABELS.overdueDays(days)}`,
+    };
+  }
+  if (status === "due-today") {
+    return { chip: TODO_CARD_LABELS.chipToday, chipCls: "due-today", when: dateStr };
+  }
+  const days = Math.ceil((nextDay - today0()) / 86400000);
+  return {
+    chip: TODO_CARD_LABELS.chipSoon,
+    chipCls: "upcoming",
+    when: `${dateStr} (in ${days} Tag${days > 1 ? "en" : ""})`,
+  };
 }
 
 function renderGiessplan() {
@@ -2766,25 +2809,37 @@ function renderGiessplan() {
     return;
   }
   
-  const intervalLabels = { 1: "Täglich", 2: "Alle 2 Tage", 3: "Alle 3 Tage", 7: "Wöchentlich", 14: "Alle 2 Wochen" };
-  
-  grid.innerHTML = sorted.map(item => {
+  grid.innerHTML = sorted.map((item) => {
     const status = getGiessStatus(item);
-    const nextText = formatGiessNext(item);
-    const intervalText = intervalLabels[item.intervalDays] || `Alle ${item.intervalDays} Tage`;
-    
+    const summary = formatGiessCardSummary(item);
+    const whoName = item.who ? mLabel(item.who) : "Noch offen";
+    const whoEmoji = item.who ? mEmoji(item.who) : "👤";
+
     return `
-      <div class="giess-card ${status}">
-        ${item.reminder ? '<span class="giess-reminder-badge">📱 Erinnerung</span>' : ''}
-        <div class="giess-plant">${escapeHtml(item.plant)}</div>
-        <div class="giess-meta">
-          <span>${escapeHtml(item.who)} · ${intervalText}</span>
-          <span class="giess-next">${nextText}</span>
-        </div>
-        ${auth.isAuthed ? `<div class="giess-actions">
-          ${status !== "done-today" ? `<button class="mini-btn" data-id="${item.id}" data-action="water">💧 Gegossen</button>` : ''}
-          <button class="mini-btn danger" data-id="${item.id}" data-action="delete">Löschen</button>
-        </div>` : ""}
+      <div class="giess-card gartentodo-card ${status}">
+        ${item.reminder ? `<span class="giess-reminder-badge" title="${escapeAttr(TODO_CARD_LABELS.whatsappReminderTitle)}">📱</span>` : ""}
+        <header class="gartentodo-card-head">
+          <div class="gartentodo-hero">
+            <p class="gartentodo-hero-label">${TODO_CARD_LABELS.plant}</p>
+            <h3 class="gartentodo-task-title giess-plant-title">${escapeHtml(item.plant)}</h3>
+            <div class="gartentodo-assignee${item.who ? "" : " is-empty"}">
+              <span class="gartentodo-assignee-label">${TODO_CARD_LABELS.assignee}</span>
+              <span class="gartentodo-assignee-value"><span class="gartentodo-assignee-emoji" aria-hidden="true">${whoEmoji}</span> ${escapeHtml(whoName)}</span>
+            </div>
+          </div>
+          <span class="gartentodo-status-chip ${summary.chipCls}">${escapeHtml(summary.chip)}</span>
+        </header>
+        <p class="gartentodo-when-line">${escapeHtml(summary.when)}</p>
+        ${auth.isAuthed ? `
+          ${status !== "done-today"
+            ? `<div class="gartentodo-done-actions">
+            <button type="button" class="mini-btn gartentodo-done-btn" data-id="${item.id}" data-action="water">✅ ${TODO_CARD_LABELS.saveDoneGiess}</button>
+          </div>`
+            : ""}
+          <div class="gartentodo-actions">
+            <button type="button" class="mini-btn danger" data-id="${item.id}" data-action="delete">Löschen</button>
+          </div>
+        ` : ""}
       </div>
     `;
   }).join("");
@@ -2812,7 +2867,7 @@ async function markAsWatered(id) {
       renderGiessplan();
     }
   }
-  showToast("💧 Als gegossen markiert!", "success");
+  showToast(`✅ ${TODO_CARD_LABELS.saveDoneGiess.replace(" speichern", "")} gespeichert!`, "success");
 }
 
 async function deleteGiessItem(id) {
@@ -3224,12 +3279,12 @@ function gartenTodoHistoryEntriesForDue(item, dueIso, swapInfo = null, rowWho = 
 
 function gartenTodoRowHistoryHtml(item, dueIso, swapInfo, rowWho = "") {
   const entries = gartenTodoHistoryEntriesForDue(item, dueIso, swapInfo, rowWho);
-  if (!entries.length) return "<p class=\"form-note\">Kein Verlauf für diesen Termin.</p>";
+  if (!entries.length) return `<p class="form-note">${TODO_CARD_LABELS.historyEmpty}</p>`;
   return `<ul class="gartentodo-history-list">${entries.map(formatGartenTodoHistoryLine).join("")}</ul>`;
 }
 
 function gartenTodoSwapTooltip(swapInfo) {
-  if (!swapInfo?.at) return "Verlauf zu diesem Termin";
+  if (!swapInfo?.at) return TODO_CARD_LABELS.history;
   const when = new Date(swapInfo.at).toLocaleDateString("de-CH", {
     day: "2-digit",
     month: "2-digit",
@@ -3237,7 +3292,7 @@ function gartenTodoSwapTooltip(swapInfo) {
     timeZone: "Europe/Zurich",
   });
   const by = swapInfo.by ? mLabel(swapInfo.by) : "WG";
-  return `Getauscht von ${by} · ${when} – Verlauf anzeigen`;
+  return TODO_CARD_LABELS.historySwapped(by, when);
 }
 
 function gartenTodoHistoryDropdownHtml(item, r) {
@@ -3250,7 +3305,7 @@ function gartenTodoHistoryDropdownHtml(item, r) {
       GARTEN_TODO_ICON_SVG.clock,
       `data-history-for="${escapeHtml(item.id)}" data-history-due="${escapeHtml(r.dueIso)}" aria-expanded="false" aria-controls="${escapeHtml(panelId)}"`
     )}
-    <div class="gartentodo-history-panel" id="${escapeHtml(panelId)}" role="region" aria-label="Verlauf">
+    <div class="gartentodo-history-panel" id="${escapeHtml(panelId)}" role="region" aria-label="${escapeAttr(TODO_CARD_LABELS.history)}">
       ${gartenTodoRowHistoryHtml(item, r.dueIso, r.swapInfo, r.who)}
     </div>
   </div>`;
@@ -3259,7 +3314,7 @@ function gartenTodoHistoryDropdownHtml(item, r) {
 function gartenTodoCardHistoryDropdownHtml(item) {
   const panelId = gartenTodoHistoryPanelId(item.id, GARTEN_TODO_CARD_HISTORY_DUE);
   const count = Array.isArray(item.history) ? item.history.length : 0;
-  const title = count ? `Gesamter Verlauf (${count})` : "Gesamter Verlauf";
+  const title = count ? TODO_CARD_LABELS.historyCount(count) : TODO_CARD_LABELS.history;
   return `<div class="gartentodo-history-drop gartentodo-card-history-drop">
     ${gartenTodoIconBtn(
       "gartentodo-verlauf-icon-btn",
@@ -3267,7 +3322,7 @@ function gartenTodoCardHistoryDropdownHtml(item) {
       GARTEN_TODO_ICON_SVG.clock,
       `data-history-for="${escapeHtml(item.id)}" data-history-due="${escapeHtml(GARTEN_TODO_CARD_HISTORY_DUE)}" aria-expanded="false" aria-controls="${escapeHtml(panelId)}"`
     )}
-    <div class="gartentodo-history-panel gartentodo-card-history-panel" id="${escapeHtml(panelId)}" role="region" aria-label="Gesamter Verlauf">
+    <div class="gartentodo-history-panel gartentodo-card-history-panel" id="${escapeHtml(panelId)}" role="region" aria-label="${escapeAttr(TODO_CARD_LABELS.history)}">
       ${gartenTodoHistoryHtml(item)}
     </div>
   </div>`;
@@ -3293,45 +3348,83 @@ function clearGartenTodoHistoryPanelPosition(panel) {
   panel.style.maxHeight = "";
   panel.style.overflowY = "";
   panel.style.visibility = "";
+  panel.style.width = "";
+  panel.style.minWidth = "";
+  panel.style.maxWidth = "";
 }
 
-/** Dropdown im Viewport positionieren (fixed), damit nichts abgeschnitten wird. */
+function gartenTodoHistoryPanelMount(panel, open) {
+  if (!panel._gartentodoPortalHome) {
+    panel._gartentodoPortalHome = { parent: panel.parentElement, next: panel.nextSibling };
+  }
+  const home = panel._gartentodoPortalHome;
+  if (!home?.parent) return;
+  if (open) {
+    if (panel.parentElement !== document.body) document.body.appendChild(panel);
+  } else if (panel.parentElement === document.body) {
+    if (home.next && home.next.parentNode === home.parent) home.parent.insertBefore(panel, home.next);
+    else home.parent.appendChild(panel);
+  }
+}
+
+/** Dropdown direkt am Uhr-Button (fixed), nur bei Bedarf im Viewport korrigieren. */
 function positionGartenTodoHistoryPanel(panel, btn) {
   if (!panel || !btn) return;
   const margin = 12;
   const gap = 8;
   const vw = window.innerWidth;
   const vh = window.innerHeight;
+  const btnRect = btn.getBoundingClientRect();
+  const alignRight = !panel.classList.contains("gartentodo-card-history-panel");
 
   panel.classList.add("is-fixed");
+  panel.style.position = "fixed";
+  panel.style.display = "block";
   panel.style.visibility = "hidden";
-  panel.style.left = "0";
+  panel.style.right = "auto";
+  panel.style.bottom = "auto";
+  panel.style.left = "-10000px";
   panel.style.top = "0";
-  panel.style.maxHeight = `${Math.max(120, vh - margin * 2)}px`;
+  panel.style.maxHeight = `${Math.floor(vh * 0.65)}px`;
   panel.style.overflowY = "auto";
 
-  const btnRect = btn.getBoundingClientRect();
-  const panelRect = panel.getBoundingClientRect();
-  const w = Math.min(panelRect.width, vw - margin * 2);
-  const h = Math.min(panelRect.height, vh - margin * 2);
+  const pr = panel.getBoundingClientRect();
+  const w = pr.width;
+  const naturalH = pr.height;
 
-  let left = btnRect.right - w;
-  if (left < margin) left = margin;
-  if (left + w > vw - margin) left = Math.max(margin, vw - margin - w);
-
+  let left = alignRight ? btnRect.right - w : btnRect.left;
   let top = btnRect.bottom + gap;
-  if (top + h > vh - margin) top = btnRect.top - gap - h;
-  if (top < margin) top = margin;
-  if (top + h > vh - margin) top = Math.max(margin, vh - margin - h);
+
+  if (left < margin) left = margin;
+  if (left + w > vw - margin) left = vw - margin - w;
+
+  let maxH = Math.min(naturalH, Math.floor(vh * 0.65));
+  const spaceBelow = vh - margin - top;
+  if (naturalH > spaceBelow) {
+    const spaceAbove = btnRect.top - gap - margin;
+    if (spaceAbove >= spaceBelow) {
+      maxH = Math.min(naturalH, spaceAbove, Math.floor(vh * 0.65));
+      top = btnRect.top - gap - maxH;
+    } else {
+      maxH = Math.max(120, spaceBelow);
+    }
+  }
+  if (top < margin) {
+    top = margin;
+    maxH = Math.min(maxH, vh - margin - top);
+  }
 
   panel.style.left = `${Math.round(left)}px`;
   panel.style.top = `${Math.round(top)}px`;
-  panel.style.visibility = "";
+  panel.style.maxHeight = `${Math.round(maxH)}px`;
+  panel.style.visibility = "visible";
 }
 
 function refreshOpenGartenTodoHistoryPanels() {
   document.querySelectorAll(".gartentodo-history-panel.is-open").forEach((panel) => {
-    const btn = panel.closest(".gartentodo-history-drop")?.querySelector(".gartentodo-verlauf-icon-btn");
+    const btn =
+      panel._gartentodoAnchorBtn
+      || panel.closest(".gartentodo-history-drop")?.querySelector(".gartentodo-verlauf-icon-btn");
     if (btn) positionGartenTodoHistoryPanel(panel, btn);
   });
 }
@@ -3350,10 +3443,16 @@ function setGartenTodoHistoryPanelOpen(panel, btn, open) {
   panel.setAttribute("aria-hidden", open ? "false" : "true");
   if (btn) btn.setAttribute("aria-expanded", open ? "true" : "false");
   if (open) {
+    panel._gartentodoAnchorBtn = btn;
     bindGartenTodoHistoryReposition();
-    positionGartenTodoHistoryPanel(panel, btn);
+    gartenTodoHistoryPanelMount(panel, true);
+    requestAnimationFrame(() => {
+      requestAnimationFrame(() => positionGartenTodoHistoryPanel(panel, btn));
+    });
   } else {
+    panel._gartentodoAnchorBtn = null;
     clearGartenTodoHistoryPanelPosition(panel);
+    gartenTodoHistoryPanelMount(panel, false);
     panel.classList.remove("gartentodo-history-flash");
   }
 }
@@ -3378,7 +3477,6 @@ function toggleGartenTodoRowHistory(itemId, dueIso, root = document) {
   closeGartenTodoHistoryPanels(root, willOpen ? panel : null);
   setGartenTodoHistoryPanelOpen(panel, btn, willOpen);
   if (willOpen) {
-    requestAnimationFrame(() => positionGartenTodoHistoryPanel(panel, btn));
     panel.classList.add("gartentodo-history-flash");
     window.setTimeout(() => panel.classList.remove("gartentodo-history-flash"), 2200);
   }
@@ -3483,7 +3581,7 @@ function gartenTodoRotationHtml(item, canEdit = false) {
 
 function gartenTodoHistoryHtml(item) {
   const hist = Array.isArray(item.history) ? item.history : [];
-  if (!hist.length) return "<p class=\"form-note\">Noch keine Einträge.</p>";
+  if (!hist.length) return `<p class="form-note">${TODO_CARD_LABELS.historyEmpty}</p>`;
   return `<ul class="gartentodo-history-list">${hist.map(formatGartenTodoHistoryLine).join("")}</ul>`;
 }
 
@@ -3684,24 +3782,29 @@ function formatGartenTodoCardSummary(item) {
   const next = gartenTodoNextDueDate(item);
   const whenLine = formatGartenTodoCardWhenLine(next);
   if (status === "done-today") {
-    return { chip: "Erledigt", chipCls: "done", when: "Heute erledigt – gespeichert", assigneeHint: "" };
+    return { chip: TODO_CARD_LABELS.chipDone, chipCls: "done", when: TODO_CARD_LABELS.doneToday, assigneeHint: "" };
   }
   if (status === "scheduled") {
-    return { chip: "Offen", chipCls: "scheduled", when: whenLine, assigneeHint: "Noch zu erledigen" };
+    return {
+      chip: TODO_CARD_LABELS.chipOpen,
+      chipCls: "scheduled",
+      when: whenLine,
+      assigneeHint: TODO_CARD_LABELS.pendingHint,
+    };
   }
   if (status === "overdue") {
     const days = Math.ceil((today0() - next) / 86400000);
     return {
-      chip: "Überfällig",
+      chip: TODO_CARD_LABELS.chipOverdue,
       chipCls: "overdue",
-      when: `${whenLine} · ${days} Tag${days > 1 ? "e" : ""} überfällig`,
+      when: `${whenLine} · ${TODO_CARD_LABELS.overdueDays(days)}`,
       assigneeHint: "",
     };
   }
   if (status === "due-today") {
-    return { chip: "Heute", chipCls: "due-today", when: whenLine, assigneeHint: "" };
+    return { chip: TODO_CARD_LABELS.chipToday, chipCls: "due-today", when: whenLine, assigneeHint: "" };
   }
-  return { chip: "Demnächst", chipCls: "upcoming", when: whenLine, assigneeHint: "" };
+  return { chip: TODO_CARD_LABELS.chipSoon, chipCls: "upcoming", when: whenLine, assigneeHint: "" };
 }
 
 function renderGartenTodos() {
@@ -3734,13 +3837,13 @@ function renderGartenTodos() {
 
     return `
       <div class="gartentodo-card ${status}">
-        ${item.reminder ? '<span class="giess-reminder-badge" title="WhatsApp-Erinnerung">📱</span>' : ""}
+        ${item.reminder ? `<span class="giess-reminder-badge" title="${escapeAttr(TODO_CARD_LABELS.whatsappReminderTitle)}">📱</span>` : ""}
         <header class="gartentodo-card-head">
           <div class="gartentodo-hero">
-            <p class="gartentodo-hero-label">Aufgabe</p>
+            <p class="gartentodo-hero-label">${TODO_CARD_LABELS.task}</p>
             <h3 class="gartentodo-task-title">${escapeHtml(item.task)}</h3>
             <div class="gartentodo-assignee${item.who ? "" : " is-empty"}${status === "scheduled" ? " is-pending" : ""}">
-              <span class="gartentodo-assignee-label">${status === "scheduled" ? "Nächste Person" : "Zuständig"}</span>
+              <span class="gartentodo-assignee-label">${status === "scheduled" ? TODO_CARD_LABELS.nextPerson : TODO_CARD_LABELS.assignee}</span>
               <span class="gartentodo-assignee-value"><span class="gartentodo-assignee-emoji" aria-hidden="true">${whoEmoji}</span> ${escapeHtml(whoName)}</span>
               ${assigneeHint}
             </div>
@@ -3755,7 +3858,7 @@ function renderGartenTodos() {
           </details>
           ${showDoneBtn
             ? `<div class="gartentodo-done-actions">
-            <button type="button" class="mini-btn gartentodo-done-btn" data-id="${item.id}" data-action="done">✅ Erledigt speichern</button>
+            <button type="button" class="mini-btn gartentodo-done-btn" data-id="${item.id}" data-action="done">✅ ${TODO_CARD_LABELS.saveDoneGarten}</button>
             <label class="gartentodo-rotate-row">
               <input type="checkbox" class="gartentodo-rotate-next" data-id="${item.id}" checked />
               <span>Nächste Person nach Fairness-Einsätzen (empfohlen)</span>
@@ -3764,9 +3867,9 @@ function renderGartenTodos() {
             : ""}
           <div class="gartentodo-tools">
             <button type="button" class="event-share-btn gartentodo-share-btn" data-id="${item.id}" data-action="ical" title="In Kalender speichern (iPhone/Android)">📅 Kalender</button>
-            <label class="gartentodo-reminder-toggle" title="WhatsApp-Erinnerung täglich bis erledigt">
+            <label class="gartentodo-reminder-toggle" title="${escapeAttr(TODO_CARD_LABELS.whatsappReminderTitle)}">
               <input type="checkbox" class="gartentodo-reminder-cb" data-id="${item.id}" ${item.reminder ? "checked" : ""} />
-              <span>📱 WhatsApp</span>
+              <span>📱 ${TODO_CARD_LABELS.whatsapp}</span>
             </label>
             ${cardHistoryDrop}
           </div>
@@ -3838,7 +3941,7 @@ function renderGartenTodos() {
     window._gartenTodoHistoryAwayBound = true;
     document.addEventListener("click", (e) => {
       window.setTimeout(() => {
-        if (e.target.closest(".gartentodo-history-drop")) return;
+        if (e.target.closest(".gartentodo-history-drop, .gartentodo-history-panel, .gartentodo-verlauf-icon-btn")) return;
         const g = $("gartenTodoGrid");
         if (g) closeGartenTodoHistoryPanels(g);
       }, 0);
@@ -4024,7 +4127,7 @@ async function markGartenTodoDone(id, rotateNext = true, triggerBtn = null) {
       saveLocal("gartentodos", localStore.gartentodos);
     }
     const rotHint = rotateNext ? `Nächste Person: ${nextWho || "—"}` : "Gleiche Person bleibt dran";
-    showToast(`✅ Erledigt gespeichert! ${rotHint}`, "success");
+    showToast(`✅ ${TODO_CARD_LABELS.saveDoneGarten.replace(" speichern", "")} gespeichert! ${rotHint}`, "success");
   } catch (err) {
     console.error("markGartenTodoDone", err);
     Object.assign(item, snapshot);

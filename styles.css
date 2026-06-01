@@ -1748,9 +1748,13 @@ textarea { resize: vertical; font-family: inherit; }
   background: rgba(205, 133, 63, 0.08);
 }
 
-.giess-card.done-today {
-  opacity: 0.6;
-  border-color: var(--moss);
+.giess-card.gartentodo-card.done-today {
+  opacity: 1;
+  border-color: #81c784;
+  background: #f6fbf6;
+}
+.giess-plant-title::before {
+  content: "🌱 ";
 }
 
 .giess-plant {
