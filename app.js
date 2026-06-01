@@ -1935,6 +1935,71 @@ function downloadEventIcs(ev, hash = "events") {
   showToast("Termin-Datei heruntergeladen.", "success");
 }
 
+function toIcsDateOnly(date) {
+  const d = date instanceof Date ? date : new Date(date);
+  return d.getFullYear() + pad2(d.getMonth() + 1) + pad2(d.getDate());
+}
+
+function gartenTodoPermalink() {
+  return `${location.href.split("#")[0]}#kalender`;
+}
+
+function buildGartenTodoIcs(item) {
+  const start = gartenTodoNextDueDate(item);
+  if (isNaN(start.getTime())) return null;
+  const end = addDaysLocal(start, 1);
+  const now = new Date();
+  const uid = `gartentodo-${item.id || start.getTime()}@hausamsee`;
+  const interval = item.intervalDays || 14;
+  const lines = [
+    "BEGIN:VCALENDAR",
+    "VERSION:2.0",
+    "PRODID:-//Haus am See//Garten To-Do//DE",
+    "CALSCALE:GREGORIAN",
+    "METHOD:PUBLISH",
+    "BEGIN:VEVENT",
+    `UID:${uid}`,
+    `DTSTAMP:${toIcsDate(now)}`,
+    `DTSTART;VALUE=DATE:${toIcsDateOnly(start)}`,
+    `DTEND;VALUE=DATE:${toIcsDateOnly(end)}`,
+    foldIcsLine(`SUMMARY:${icsEscape(`🌿 ${item.task} – ${mLabel(item.who || "")}`)}`),
+    foldIcsLine(`LOCATION:${icsEscape("Haus am See, Pilatusstrasse 40, Pfäffikon ZH")}`),
+  ];
+  const description = [
+    `Garten To-Do · Zuständig: ${item.who || "—"}`,
+    `Intervall: alle ${interval} Tage`,
+    item.reminder ? "WhatsApp-Erinnerung: ein" : "WhatsApp-Erinnerung: aus",
+    gartenTodoPermalink(),
+  ].join("\n");
+  lines.push(foldIcsLine(`DESCRIPTION:${icsEscape(description)}`));
+  lines.push(foldIcsLine(`URL:${gartenTodoPermalink()}`));
+  lines.push("END:VEVENT", "END:VCALENDAR");
+  return lines.join("\r\n");
+}
+
+function downloadGartenTodoIcs(item) {
+  const ics = buildGartenTodoIcs(item);
+  if (!ics) {
+    showToast("Fälligkeitsdatum ungültig.", "error");
+    return;
+  }
+  const blob = new Blob([ics], { type: "text/calendar;charset=utf-8" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  const slug = (item.task || "garten")
+    .replace(/[^a-z0-9äöüß -]/gi, "")
+    .trim()
+    .replace(/\s+/g, "-")
+    .toLowerCase() || "garten";
+  a.download = `haus-am-see-garten-${slug}.ics`;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+  showToast("Kalender-Datei heruntergeladen – auf dem Handy öffnen.", "success");
+}
+
 function dataUrlToFile(dataUrl, filename) {
   try {
     const [header, base64] = dataUrl.split(",");
@@ -2877,6 +2942,8 @@ function formatGartenTodoHistoryLine(h) {
     detail = `Planung → ${escapeHtml(h.who || "—")}, fällig ${escapeHtml(h.nextDue || "—")}${prev}`;
   } else if (h.action === "done") {
     detail = `Erledigt → nächste Runde ${escapeHtml(h.who || "—")}, fällig ${escapeHtml(h.nextDue || "—")}`;
+  } else if (h.action === "reminder") {
+    detail = h.fairNote || "WhatsApp-Erinnerung geändert";
   }
   const fair = h.fairNote ? `<br><span class="gartentodo-fair-inline">${escapeHtml(h.fairNote)}</span>` : "";
   return `<li><time>${when}</time> · ${escapeHtml(h.by || "—")} · ${detail}${fair}</li>`;
@@ -3172,10 +3239,21 @@ function renderGartenTodos() {
             <span>Nächste Runde fair an nächste Person (empfohlen)</span>
           </label>
           ` : ""}
+          <div class="gartentodo-tools">
+            <button type="button" class="event-share-btn gartentodo-share-btn" data-id="${item.id}" data-action="ical" title="In Kalender speichern (iPhone/Android)">📅 Kalender</button>
+            <label class="gartentodo-reminder-toggle" title="WhatsApp-Erinnerung täglich bis erledigt">
+              <input type="checkbox" class="gartentodo-reminder-cb" data-id="${item.id}" ${item.reminder ? "checked" : ""} />
+              <span>📱 WhatsApp</span>
+            </label>
+          </div>
           <div class="gartentodo-actions">
             <button type="button" class="mini-btn danger" data-id="${item.id}" data-action="delete">Löschen</button>
           </div>
-        ` : ""}
+        ` : `
+          <div class="gartentodo-tools">
+            <button type="button" class="event-share-btn gartentodo-share-btn" data-id="${item.id}" data-action="ical" title="In Kalender speichern">📅 Kalender</button>
+          </div>
+        `}
       </div>
     `;
   }).join("");
@@ -3193,7 +3271,38 @@ function renderGartenTodos() {
   grid.querySelectorAll("[data-action='delete']").forEach((btn) => {
     btn.addEventListener("click", () => void deleteGartenTodo(btn.dataset.id));
   });
+  grid.querySelectorAll(".gartentodo-share-btn[data-action='ical']").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      const item = gartenTodoCache.find((t) => t.id === btn.dataset.id);
+      if (item) downloadGartenTodoIcs(item);
+    });
+  });
+  grid.querySelectorAll(".gartentodo-reminder-cb").forEach((cb) => {
+    cb.addEventListener("change", () => void toggleGartenTodoReminder(cb.dataset.id, cb.checked));
+  });
   wireGartenTodoEditPanels(grid);
+}
+
+async function toggleGartenTodoReminder(id, enabled) {
+  if (!requireAuth("Garten To-Do")) return;
+  const item = gartenTodoCache.find((t) => t.id === id);
+  if (!item) return;
+  const history = appendGartenTodoHistory(
+    item,
+    gartenTodoHistoryEntry("reminder", {
+      fairNote: enabled ? "WhatsApp-Erinnerung eingeschaltet" : "WhatsApp-Erinnerung ausgeschaltet",
+    })
+  );
+  const updates = { reminder: !!enabled, history };
+  if (firebaseReady) {
+    await updateDoc(doc(db, "gartentodos", id), updates);
+  } else {
+    Object.assign(item, updates);
+    localStore.gartentodos = gartenTodoCache;
+    saveLocal("gartentodos", localStore.gartentodos);
+    renderGartenTodos();
+  }
+  showToast(enabled ? "📱 WhatsApp-Erinnerung an." : "WhatsApp-Erinnerung aus.", "success");
 }
 
 async function saveGartenTodoPlan(id) {

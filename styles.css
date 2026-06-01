@@ -1912,6 +1912,27 @@ textarea { resize: vertical; font-family: inherit; }
   margin: 0;
   cursor: pointer;
 }
+.gartentodo-tools {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+  margin-top: 10px;
+}
+.gartentodo-reminder-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 0.85rem;
+  cursor: pointer;
+  color: #444;
+}
+.gartentodo-reminder-toggle input {
+  width: 16px;
+  height: 16px;
+  margin: 0;
+  cursor: pointer;
+}
 .gartentodo-actions { margin-top: 8px; }
 .gartentodo-fair-preview {
   font-size: 0.82rem;
