@@ -1848,6 +1848,14 @@ textarea { resize: vertical; font-family: inherit; }
   background: #fff3e0;
   color: #8d5524;
 }
+.gartentodo-badge.swapped {
+  display: inline-block;
+  margin-top: 4px;
+  background: #e8f4fc;
+  color: #1a5276;
+  font-weight: 500;
+  line-height: 1.35;
+}
 .gartentodo-edit {
   margin-top: 10px;
   font-size: 0.88rem;

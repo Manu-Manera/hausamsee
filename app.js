@@ -3118,18 +3118,41 @@ function normalizeGartenTodoRotationOverrides(item) {
   return item.rotationOverrides.filter((o) => o && o.due && o.who);
 }
 
-function gartenTodoRotationOverridesMap(item) {
+function gartenTodoRotationOverridesByDue(item) {
   const map = {};
-  normalizeGartenTodoRotationOverrides(item).forEach((o) => { map[o.due] = o.who; });
+  normalizeGartenTodoRotationOverrides(item).forEach((o) => { map[o.due] = o; });
   return map;
 }
 
-function upsertGartenTodoRotationOverride(list, due, who) {
+function gartenTodoNewSwapMeta() {
+  return {
+    swappedBy: auth.member || "WG",
+    swappedAt: new Date().toISOString(),
+  };
+}
+
+function upsertGartenTodoRotationOverride(list, due, who, swapMeta = null) {
   const next = [...list];
   const idx = next.findIndex((o) => o.due === due);
-  if (idx >= 0) next[idx] = { due, who };
-  else next.push({ due, who });
+  const meta = swapMeta || gartenTodoNewSwapMeta();
+  const entry = { due, who, swappedBy: meta.swappedBy, swappedAt: meta.swappedAt };
+  if (idx >= 0) next[idx] = entry;
+  else next.push(entry);
   return next;
+}
+
+function formatGartenTodoSwapBadge(swapInfo) {
+  if (!swapInfo?.at) return "";
+  const when = new Date(swapInfo.at).toLocaleString("de-CH", {
+    day: "2-digit",
+    month: "2-digit",
+    year: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+    timeZone: "Europe/Zurich",
+  });
+  const by = swapInfo.by ? mLabel(swapInfo.by) : "WG";
+  return `<span class="gartentodo-badge swapped">↔ Getauscht von ${escapeHtml(by)}, ${escapeHtml(when)}</span>`;
 }
 
 function removeGartenTodoRotationOverride(list, due) {
@@ -3140,13 +3163,20 @@ function buildGartenTodoRotation(item, rounds = 12) {
   const interval = item.intervalDays || 14;
   const adults = [...getActiveAdultNames()].sort((a, b) => a.localeCompare(b, "de"));
   if (!adults.length) return [];
-  const overrides = gartenTodoRotationOverridesMap(item);
+  const overridesByDue = gartenTodoRotationOverridesByDue(item);
   let who = item.who && adults.includes(item.who) ? item.who : adults[0];
   let date = gartenTodoNextDueDate(item);
   const rows = [];
   for (let i = 0; i < rounds; i++) {
     const dueIso = toISODateLocal(date);
-    if (overrides[dueIso] && adults.includes(overrides[dueIso])) who = overrides[dueIso];
+    let swapInfo = null;
+    const ov = overridesByDue[dueIso];
+    if (ov?.who && adults.includes(ov.who)) {
+      who = ov.who;
+      if (ov.swappedAt) swapInfo = { by: ov.swappedBy, at: ov.swappedAt };
+    } else if (i === 0 && item.whoSwappedAt) {
+      swapInfo = { by: item.whoSwappedBy, at: item.whoSwappedAt };
+    }
     rows.push({
       who,
       date: new Date(date),
@@ -3154,7 +3184,7 @@ function buildGartenTodoRotation(item, rounds = 12) {
       kw: formatKwLabel(date),
       slot: formatGartenWorkSlot(date),
       current: i === 0,
-      manual: !!overrides[dueIso] || (i === 0 && !!item.whoManual),
+      swapInfo,
       roundIndex: i,
     });
     const idx = adults.indexOf(who);
@@ -3170,7 +3200,7 @@ function gartenTodoRotationHtml(item, canEdit = false) {
   const lis = rows
     .map((r) => {
       const cls = r.current ? " class=\"current\"" : "";
-      const manualBadge = r.manual ? '<span class="gartentodo-badge manual">👤 Manuell</span>' : "";
+      const swapBadge = formatGartenTodoSwapBadge(r.swapInfo);
       const whoControls = canEdit
         ? `<select class="gartentodo-rotation-who" data-rotation-who="${escapeHtml(item.id)}" data-due="${escapeHtml(r.dueIso)}" data-round="${r.roundIndex}" aria-label="Person für ${escapeHtml(r.slot)}">${gartenTodoWhoOptionsHtml(r.who, false)}</select>
         <button type="button" class="mini-btn gartentodo-rotation-save" data-id="${escapeHtml(item.id)}" data-due="${escapeHtml(r.dueIso)}" data-round="${r.roundIndex}" title="Person für diesen Termin speichern (z.B. Urlaub)">↔ Tauschen</button>`
@@ -3178,7 +3208,7 @@ function gartenTodoRotationHtml(item, canEdit = false) {
       return `<li${cls}>
         <div class="gartentodo-rotation-row">
           <div class="gartentodo-rotation-text">
-            <strong>${r.kw}</strong> · ${escapeHtml(r.slot)} ${manualBadge}
+            <strong>${r.kw}</strong> · ${escapeHtml(r.slot)} ${swapBadge}
           </div>
           <div class="gartentodo-rotation-actions">
             ${whoControls}
@@ -3623,6 +3653,7 @@ async function saveGartenTodoPlan(id) {
     })
   );
   const rotationOverrides = removeGartenTodoRotationOverride(normalizeGartenTodoRotationOverrides(item), due);
+  const swapMeta = prevWho !== who ? gartenTodoNewSwapMeta() : null;
   await persistGartenTodoUpdates(
     id,
     {
@@ -3631,6 +3662,7 @@ async function saveGartenTodoPlan(id) {
       whoManual: true,
       nextDueManual: true,
       rotationOverrides,
+      ...(swapMeta ? { whoSwappedBy: swapMeta.swappedBy, whoSwappedAt: swapMeta.swappedAt } : {}),
       history,
     },
     fair.ok ? `Gespeichert. ${fair.text}` : `Gespeichert (Abweichung). ${fair.text}`,
@@ -3667,6 +3699,7 @@ async function saveGartenTodoRotationSlot(id, dueIso, roundIndex, who, triggerBt
       fairNote: fair.text,
     })
   );
+  const swapMeta = gartenTodoNewSwapMeta();
   let updates;
   if (roundIndex === 0) {
     updates = {
@@ -3674,12 +3707,19 @@ async function saveGartenTodoRotationSlot(id, dueIso, roundIndex, who, triggerBt
       nextDue: dueIso,
       whoManual: true,
       nextDueManual: true,
+      whoSwappedBy: swapMeta.swappedBy,
+      whoSwappedAt: swapMeta.swappedAt,
       rotationOverrides: removeGartenTodoRotationOverride(normalizeGartenTodoRotationOverrides(item), dueIso),
       history,
     };
   } else {
     updates = {
-      rotationOverrides: upsertGartenTodoRotationOverride(normalizeGartenTodoRotationOverrides(item), dueIso, who),
+      rotationOverrides: upsertGartenTodoRotationOverride(
+        normalizeGartenTodoRotationOverrides(item),
+        dueIso,
+        who,
+        swapMeta
+      ),
       whoManual: true,
       history,
     };
