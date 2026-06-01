@@ -2970,11 +2970,36 @@ function updateGartenTodoKwHead() {
   el.textContent = `Aktuelle ${formatKwLabel(now)} – heute ${now.toLocaleDateString("de-CH", { weekday: "long", day: "2-digit", month: "long", timeZone: "Europe/Zurich" })} · Standard Gartenarbeit: Samstag ${pad2(GARTEN_TODO_WORK_HOUR)}:${pad2(GARTEN_TODO_WORK_MINUTE)}`;
 }
 
-/** Offene Garten-Aufgaben pro Person (heute erledigte ausgenommen). */
-function gartenTodoOpenCounts(excludeId = null) {
-  const adults = getActiveAdultNames();
+function gartenTodoCountMap() {
   const counts = {};
-  adults.forEach((n) => { counts[n] = 0; });
+  getActiveAdultNames().forEach((n) => { counts[n] = 0; });
+  return counts;
+}
+
+function mergeGartenTodoCountMaps(...maps) {
+  const out = gartenTodoCountMap();
+  maps.forEach((m) => {
+    Object.keys(m).forEach((k) => { out[k] = (out[k] || 0) + (m[k] || 0); });
+  });
+  return out;
+}
+
+/** Erledigte Garten-Runden (Wer war für die Runde eingeteilt). */
+function gartenTodoCompletedCounts() {
+  const counts = gartenTodoCountMap();
+  gartenTodoCache.forEach((t) => {
+    (t.history || []).forEach((h) => {
+      if (h.action !== "done") return;
+      const name = h.completedBy || h.by;
+      if (name && counts[name] !== undefined) counts[name]++;
+    });
+  });
+  return counts;
+}
+
+/** Aktuell dran: fällig/überfällig, nicht «erledigt bis nächster Termin». */
+function gartenTodoActiveAssignmentCounts(excludeId = null) {
+  const counts = gartenTodoCountMap();
   gartenTodoCache.forEach((t) => {
     if (excludeId && t.id === excludeId) return;
     if (gartenTodoRoundComplete(t)) return;
@@ -2983,19 +3008,27 @@ function gartenTodoOpenCounts(excludeId = null) {
   return counts;
 }
 
+/** Einsätze = erledigt + aktuell dran (Basis für Fairness). */
+function gartenTodoDutyCounts(excludeId = null) {
+  return mergeGartenTodoCountMaps(
+    gartenTodoCompletedCounts(),
+    gartenTodoActiveAssignmentCounts(excludeId)
+  );
+}
+
 function pickFairAssignee(excludeId = null) {
   const adults = [...getActiveAdultNames()];
   if (!adults.length) return "";
-  const counts = gartenTodoOpenCounts(excludeId);
+  const counts = gartenTodoDutyCounts(excludeId);
   adults.sort((a, b) => (counts[a] - counts[b]) || a.localeCompare(b, "de"));
   return adults[0];
 }
 
-/** Kurze Fairness-Rechnung nach einer Zuweisung (ohne diese Karte). */
+/** Kurze Fairness-Rechnung: +1 Einsatz für «who» auf dieser Karte (ohne diese Karte in der Basis). */
 function gartenTodoFairnessAfter(who, excludeId) {
   const adults = [...getActiveAdultNames()].sort((a, b) => a.localeCompare(b, "de"));
   if (!who || !adults.length) return { ok: false, text: "Keine Bewohner für die Berechnung." };
-  const before = gartenTodoOpenCounts(excludeId);
+  const before = gartenTodoDutyCounts(excludeId);
   const after = { ...before };
   after[who] = (after[who] || 0) + 1;
   const nums = adults.map((n) => after[n] || 0);
@@ -3005,14 +3038,14 @@ function gartenTodoFairnessAfter(who, excludeId) {
   const fair = pickFairAssignee(excludeId);
   const tally = adults.map((n) => `${mLabel(n)} ${after[n] || 0}`).join(", ");
   if (who === fair && diff <= 1) {
-    return { ok: true, text: `Fair: ${mLabel(who)} hat die wenigste Last. Danach ${tally} (Differenz ${diff}).` };
+    return { ok: true, text: `Fair: ${mLabel(who)} hat die wenigsten Einsätze. Danach ${tally} (Differenz ${diff}).` };
   }
   if (diff <= 1) {
     return { ok: true, text: `Danach ausgeglichen: ${tally} (Differenz ${diff}).` };
   }
   return {
     ok: false,
-    text: `Danach ${tally} (Differenz ${diff}). Fairer wäre ${mLabel(fair)} (${before[fair] || 0} offen, statt ${who} mit ${after[who]}).`,
+    text: `Danach ${tally} (Differenz ${diff}). Fairer wäre ${mLabel(fair)} (${before[fair] || 0} Einsätze, statt ${who} mit ${after[who]}).`,
   };
 }
 
@@ -3215,6 +3248,14 @@ function updateGartenTodoFormFairPreview() {
 
 $("gartenTodoWho")?.addEventListener("change", updateGartenTodoFormFairPreview);
 
+function formatGartenTodoDutyPart(name, completed, active) {
+  const total = (completed || 0) + (active || 0);
+  if (!total) return `${mEmoji(name)} 0`;
+  if (completed && active) return `${mEmoji(name)} ${total} (${completed}+${active})`;
+  if (completed) return `${mEmoji(name)} ${total} (${completed} erledigt)`;
+  return `${mEmoji(name)} ${total} (dran)`;
+}
+
 function renderGartenTodoBalance() {
   const el = $("gartenTodoBalance");
   if (!el) return;
@@ -3223,14 +3264,10 @@ function renderGartenTodoBalance() {
     el.textContent = "";
     return;
   }
-  const counts = {};
-  adults.forEach((n) => { counts[n] = 0; });
-  gartenTodoCache.forEach((t) => {
-    if (gartenTodoRoundComplete(t)) return;
-    if (t.who && counts[t.who] !== undefined) counts[t.who]++;
-  });
-  const line = adults.map((n) => `${mEmoji(n)} ${counts[n]}`).join(" · ");
-  el.textContent = `Offene Aufgaben: ${line}`;
+  const completed = gartenTodoCompletedCounts();
+  const active = gartenTodoActiveAssignmentCounts();
+  const line = adults.map((n) => formatGartenTodoDutyPart(n, completed[n], active[n])).join(" · ");
+  el.textContent = `Einsätze (erledigt + aktuell dran): ${line}`;
 }
 
 function gartenTodoTodayYmd() {
@@ -3362,7 +3399,7 @@ function renderGartenTodos() {
             <button type="button" class="mini-btn gartentodo-done-btn" data-id="${item.id}" data-action="done">✅ Erledigt speichern</button>
             <label class="gartentodo-rotate-row">
               <input type="checkbox" class="gartentodo-rotate-next" data-id="${item.id}" checked />
-              <span>Nächste Runde fair an nächste Person (empfohlen)</span>
+              <span>Nächste Person nach Fairness-Einsätzen (empfohlen)</span>
             </label>
           </div>`}
           <div class="gartentodo-tools">
@@ -3492,15 +3529,17 @@ async function markGartenTodoDone(id, rotateNext = true, triggerBtn = null) {
 
   const now = new Date().toISOString();
   const interval = item.intervalDays || 14;
-  const nextWho = rotateNext ? pickNextAssignee(item.who) : item.who;
+  const completedBy = item.who || auth.member || "WG";
+  const nextWho = rotateNext ? pickFairAssignee(id) : item.who;
   const nextDue = toISODateLocal(nextGartenDueAfterDone(today0(), interval));
   const fair = gartenTodoFairnessAfter(nextWho, id);
   const history = appendGartenTodoHistory(
     item,
     gartenTodoHistoryEntry("done", {
+      completedBy,
       who: nextWho,
       nextDue,
-      fairNote: rotateNext ? `Rotation: ${fair.text}` : "Gleiche Person bleibt dran.",
+      fairNote: rotateNext ? `Fairness: ${fair.text}` : "Gleiche Person bleibt dran.",
     })
   );
   const updates = {
