@@ -3572,9 +3572,10 @@ function gartenTodoRoundComplete(item) {
   return getGartenTodoStatus(item) === "scheduled";
 }
 
-function gartenTodoActiveRound(item) {
+/** «Erledigt speichern» anzeigen (auch nächste Runde nach Tausch/Rotation). */
+function gartenTodoShowDoneButton(item) {
   const s = getGartenTodoStatus(item);
-  return s === "overdue" || s === "due-today" || s === "upcoming" || s === "done-today";
+  return s === "overdue" || s === "due-today" || s === "upcoming" || s === "scheduled";
 }
 
 function formatGartenTodoNext(item) {
@@ -3670,7 +3671,7 @@ function renderGartenTodos() {
     const roundComplete = gartenTodoRoundComplete(item);
     const dueVal = item.nextDue || toISODateLocal(gartenTodoNextDueDate(item));
     const planHint = item.whoManual || item.nextDueManual ? " · angepasst" : "";
-    const activeRound = gartenTodoActiveRound(item);
+    const showDoneBtn = gartenTodoShowDoneButton(item);
     const assigneeHint = summary.assigneeHint
       ? `<span class="gartentodo-assignee-hint">${escapeHtml(summary.assigneeHint)}</span>`
       : "";
