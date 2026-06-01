@@ -3143,17 +3143,22 @@ function upsertGartenTodoRotationOverride(list, due, who, swapMeta = null) {
 
 const GARTEN_TODO_ICON_SVG = {
   clock: `<svg class="gartentodo-icon-svg" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
-    <circle cx="12" cy="12" r="9.25" fill="none" stroke="currentColor" stroke-width="1.75"/>
-    <circle cx="12" cy="12" r="1.25" fill="currentColor"/>
-    <path d="M12 7.25V12l3.75 2.1" fill="none" stroke="currentColor" stroke-width="1.85" stroke-linecap="round" stroke-linejoin="round"/>
+    <circle cx="12" cy="12" r="10" fill="currentColor" opacity="0.12"/>
+    <circle cx="12" cy="12" r="8.5" fill="none" stroke="currentColor" stroke-width="1.6"/>
+    <path d="M12 7v5.2l3.2 2" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"/>
+    <circle cx="12" cy="12" r="1.35" fill="currentColor"/>
   </svg>`,
   swap: `<svg class="gartentodo-icon-svg" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
-    <path d="M16 4l3 3-3 3M8 20l-3-3 3-3M19 7H9M5 17h10" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+    <path d="M7 7h10l-2.5-2.5M17 17H7l2.5 2.5" fill="none" stroke="currentColor" stroke-width="1.85" stroke-linecap="round" stroke-linejoin="round"/>
+    <path d="M17 7v3H7v10h10v-3" fill="none" stroke="currentColor" stroke-width="1.85" stroke-linecap="round" stroke-linejoin="round" opacity="0.35"/>
   </svg>`,
   calendar: `<svg class="gartentodo-icon-svg" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
-    <rect x="3.5" y="5.5" width="17" height="15" rx="2.5" fill="none" stroke="currentColor" stroke-width="1.85"/>
-    <path d="M8 3.5v3.5M16 3.5v3.5M3.5 10.5h17" fill="none" stroke="currentColor" stroke-width="1.85" stroke-linecap="round"/>
-    <rect x="7.5" y="13" width="3" height="3" rx="0.6" fill="currentColor" opacity="0.85"/>
+    <rect x="3" y="5" width="18" height="16" rx="3" fill="currentColor" opacity="0.12"/>
+    <rect x="3" y="5" width="18" height="16" rx="3" fill="none" stroke="currentColor" stroke-width="1.6"/>
+    <path d="M8 3v4M16 3v4M3 11h18" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/>
+    <circle cx="8.5" cy="15" r="1.1" fill="currentColor"/>
+    <circle cx="12" cy="15" r="1.1" fill="currentColor"/>
+    <circle cx="15.5" cy="15" r="1.1" fill="currentColor"/>
   </svg>`,
 };
 
@@ -3221,34 +3226,47 @@ function gartenTodoHistoryDropdownHtml(item, r) {
       GARTEN_TODO_ICON_SVG.clock,
       `data-history-for="${escapeHtml(item.id)}" data-history-due="${escapeHtml(r.dueIso)}" aria-expanded="false" aria-controls="${escapeHtml(panelId)}"`
     )}
-    <div class="gartentodo-history-panel" id="${escapeHtml(panelId)}" role="region" aria-label="Verlauf" hidden>
+    <div class="gartentodo-history-panel" id="${escapeHtml(panelId)}" role="region" aria-label="Verlauf">
       ${gartenTodoRowHistoryHtml(item, r.dueIso, r.swapInfo, r.who)}
     </div>
   </div>`;
 }
 
+function findGartenTodoHistoryPanel(itemId, dueIso) {
+  return document.getElementById(gartenTodoHistoryPanelId(itemId, dueIso));
+}
+
+function findGartenTodoHistoryBtn(root, itemId, dueIso) {
+  return root.querySelector(
+    `.gartentodo-verlauf-icon-btn[data-history-for="${CSS.escape(itemId)}"][data-history-due="${CSS.escape(dueIso)}"]`
+  );
+}
+
+function setGartenTodoHistoryPanelOpen(panel, btn, open) {
+  if (!panel) return;
+  panel.classList.toggle("is-open", open);
+  panel.setAttribute("aria-hidden", open ? "false" : "true");
+  if (btn) btn.setAttribute("aria-expanded", open ? "true" : "false");
+  if (!open) panel.classList.remove("gartentodo-history-flash");
+}
+
 function closeGartenTodoHistoryPanels(root, exceptPanel = null) {
   root.querySelectorAll(".gartentodo-history-panel").forEach((panel) => {
     if (panel === exceptPanel) return;
-    panel.hidden = true;
-    panel.classList.remove("gartentodo-history-flash");
     const btn = panel.closest(".gartentodo-history-drop")?.querySelector(".gartentodo-verlauf-icon-btn");
-    if (btn) btn.setAttribute("aria-expanded", "false");
+    setGartenTodoHistoryPanelOpen(panel, btn, false);
   });
 }
 
 function toggleGartenTodoRowHistory(itemId, dueIso, root = document) {
-  const panel = root.getElementById(gartenTodoHistoryPanelId(itemId, dueIso));
-  const btn = root.querySelector(
-    `.gartentodo-verlauf-icon-btn[data-history-for="${itemId}"][data-history-due="${dueIso}"]`
-  );
+  const panel = findGartenTodoHistoryPanel(itemId, dueIso);
+  const btn = findGartenTodoHistoryBtn(root, itemId, dueIso);
   if (!panel || !btn) return;
   const parentRotation = panel.closest(".gartentodo-subdetails");
   if (parentRotation && !parentRotation.open) parentRotation.open = true;
-  const willOpen = panel.hidden;
+  const willOpen = !panel.classList.contains("is-open");
   closeGartenTodoHistoryPanels(root, willOpen ? panel : null);
-  panel.hidden = !willOpen;
-  btn.setAttribute("aria-expanded", willOpen ? "true" : "false");
+  setGartenTodoHistoryPanelOpen(panel, btn, willOpen);
   if (willOpen) {
     panel.scrollIntoView({ behavior: "smooth", block: "nearest" });
     panel.classList.add("gartentodo-history-flash");
@@ -3701,11 +3719,14 @@ function renderGartenTodos() {
       toggleGartenTodoRowHistory(btn.dataset.historyFor, btn.dataset.historyDue, grid);
     });
   });
-  if (!grid.dataset.historyAwayBound) {
-    grid.dataset.historyAwayBound = "1";
+  if (!window._gartenTodoHistoryAwayBound) {
+    window._gartenTodoHistoryAwayBound = true;
     document.addEventListener("click", (e) => {
-      if (e.target.closest(".gartentodo-history-drop")) return;
-      closeGartenTodoHistoryPanels(grid);
+      window.setTimeout(() => {
+        if (e.target.closest(".gartentodo-history-drop")) return;
+        const g = $("gartenTodoGrid");
+        if (g) closeGartenTodoHistoryPanels(g);
+      }, 0);
     });
   }
   grid.querySelectorAll(".gartentodo-reminder-cb").forEach((cb) => {
