@@ -2047,6 +2047,10 @@ textarea { resize: vertical; font-family: inherit; }
   color: #666;
 }
 .gartentodo-rotation-person {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
   margin-bottom: 6px;
 }
 .gartentodo-rotation-person-name {
@@ -2062,16 +2066,6 @@ textarea { resize: vertical; font-family: inherit; }
   align-items: center;
   gap: 8px;
   margin-top: 4px;
-}
-.gartentodo-rotation-person .gartentodo-rotation-actions {
-  display: inline-flex;
-  margin-top: 0;
-}
-.gartentodo-rotation-person {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 8px;
 }
 .gartentodo-rotation-who {
   flex: 1 1 10rem;
