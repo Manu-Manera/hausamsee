@@ -365,9 +365,9 @@
               </div>
             </div>
             <div class="field">
-              <label for="gartenTodoDue">Nächstes Fälligkeitsdatum (optional)</label>
+              <label for="gartenTodoDue">Nächster Garten-Tag (Standard: Samstag 10:00)</label>
               <input type="date" id="gartenTodoDue" />
-              <p class="form-note">Leer = heute fällig. Datum später setzen z. B. bei Ferien oder Regen.</p>
+              <p class="form-note">Vorauswahl: nächster Samstag. Uhrzeit im Kalender-Export und Anzeige: 10:00 Uhr.</p>
             </div>
             <div id="gartenTodoFormFair" class="gartentodo-fair-preview" hidden aria-live="polite"></div>
             <label class="checkbox-row">
@@ -375,7 +375,7 @@
               <span>WhatsApp-Erinnerung (täglich bis erledigt)</span>
             </label>
             <button type="submit" class="btn btn-primary">Speichern</button>
-            <p class="form-note">Ohne Auswahl: wenigste Aufgaben + heute fällig. Anpassungen sind auf der Karte für alle sichtbar.</p>
+            <p class="form-note">Ohne «Wer»: wenigste Aufgaben. Fälligkeit standardmässig Samstag 10:00. Anpassungen sind für alle sichtbar.</p>
           </form>
         </details>
       </div>
@@ -1218,6 +1218,6 @@
   <!-- Toast -->
   <div id="toast" class="toast hidden"></div>
 
-  <script type="module" src="app.js?v=20260602a"></script>
+  <script type="module" src="app.js?v=20260602b"></script>
 </body>
 </html>

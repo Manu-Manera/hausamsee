@@ -1350,7 +1350,14 @@ function giessplanPlantMatchesHint(plant, hint) {
   return p.includes(h) || h.includes(p);
 }
 
-/** Nächster Soll-Termin Garten To-Do (wie Frontend / Scheduler). */
+function snapToGartenSaturdayDate(d) {
+  const x = startOfDay(d instanceof Date ? d : new Date(d));
+  const daysUntil = (6 - x.getDay() + 7) % 7;
+  if (daysUntil > 0) x.setDate(x.getDate() + daysUntil);
+  return x;
+}
+
+/** Nächster Soll-Termin Garten To-Do (wie Frontend / Scheduler, Samstag). */
 function gartenTodoNextDueDatePlain(data) {
   if (data.nextDue) {
     const parts = String(data.nextDue).match(/^(\d{4})-(\d{2})-(\d{2})/);
@@ -1358,22 +1365,21 @@ function gartenTodoNextDueDatePlain(data) {
   }
   const intervalDays = data.intervalDays || 14;
   const lastDone = data.lastDone ? new Date(data.lastDone) : null;
-  let nextDate;
   if (lastDone) {
-    nextDate = startOfDay(new Date(lastDone));
-    nextDate.setDate(nextDate.getDate() + intervalDays);
-  } else {
-    nextDate = startOfDay(new Date());
+    const next = startOfDay(new Date(lastDone));
+    next.setDate(next.getDate() + intervalDays);
+    return snapToGartenSaturdayDate(next);
   }
-  return nextDate;
+  return snapToGartenSaturdayDate(startOfDay(new Date()));
 }
 
-function gartenTodoIsoDateAfterDays(days) {
+function gartenTodoIsoDateAfterInterval(intervalDays) {
   const d = startOfDay(new Date());
-  d.setDate(d.getDate() + days);
-  const y = d.getFullYear();
-  const m = String(d.getMonth() + 1).padStart(2, "0");
-  const day = String(d.getDate()).padStart(2, "0");
+  d.setDate(d.getDate() + (intervalDays || 14));
+  const sat = snapToGartenSaturdayDate(d);
+  const y = sat.getFullYear();
+  const m = String(sat.getMonth() + 1).padStart(2, "0");
+  const day = String(sat.getDate()).padStart(2, "0");
   return `${y}-${m}-${day}`;
 }
 
@@ -2421,7 +2427,7 @@ async function dispatch(ctx) {
       await db.collection("gartentodos").doc(one.id).update({
         lastDone: new Date().toISOString(),
         who: nextWho,
-        nextDue: gartenTodoIsoDateAfterDays(interval),
+        nextDue: gartenTodoIsoDateAfterInterval(interval),
         whoManual: false,
         nextDueManual: false,
       });

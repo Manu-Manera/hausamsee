@@ -1968,8 +1968,8 @@ function buildGartenTodoIcs(item) {
   const y = due.getFullYear();
   const mo = due.getMonth() + 1;
   const da = due.getDate();
-  const dtStart = zurichWallToUtcDate(y, mo, da, 8, 0);
-  const dtEnd = zurichWallToUtcDate(y, mo, da, 8, 30);
+  const dtStart = zurichWallToUtcDate(y, mo, da, 10, 0);
+  const dtEnd = zurichWallToUtcDate(y, mo, da, 10, 30);
   const now = new Date();
   const uid = `gartentodo-${item.id || due.getTime()}@hausamsee`;
   const interval = item.intervalDays || 14;
@@ -2862,6 +2862,78 @@ const GARTEN_TODO_INTERVAL_LABELS = {
   30: "Monatlich",
 };
 
+/** Standard-Gartenarbeit: Samstag 10:00 (Europe/Zurich) */
+const GARTEN_TODO_WORK_HOUR = 10;
+const GARTEN_TODO_WORK_MINUTE = 0;
+
+function zurichYmd(date = new Date()) {
+  return date.toLocaleDateString("en-CA", { timeZone: "Europe/Zurich" });
+}
+
+function ymdToLocalDate(ymd) {
+  const [y, m, d] = String(ymd).split("-").map(Number);
+  return new Date(y, m - 1, d);
+}
+
+/** Montag (ISO) als KW-Beginn, Europe/Zurich */
+function getKwWeekStartDate(date) {
+  const base = ymdToLocalDate(zurichYmd(date));
+  const isoDow = base.getDay() === 0 ? 7 : base.getDay();
+  const monday = new Date(base);
+  monday.setDate(monday.getDate() - (isoDow - 1));
+  monday.setHours(0, 0, 0, 0);
+  return monday;
+}
+
+function getNextGartenWorkSaturday(from = new Date()) {
+  const base = ymdToLocalDate(zurichYmd(from));
+  let daysUntilSat = (6 - base.getDay() + 7) % 7;
+  if (daysUntilSat === 0) {
+    const hour = parseInt(
+      new Intl.DateTimeFormat("en-US", { timeZone: "Europe/Zurich", hour: "numeric", hour12: false })
+        .formatToParts(from)
+        .find((p) => p.type === "hour")?.value || "0",
+      10
+    );
+    if (hour >= GARTEN_TODO_WORK_HOUR) daysUntilSat = 7;
+  }
+  const sat = new Date(base);
+  sat.setDate(sat.getDate() + daysUntilSat);
+  sat.setHours(0, 0, 0, 0);
+  return sat;
+}
+
+function snapToGartenSaturday(date) {
+  const d = startOfDayLocal(date);
+  const daysUntil = (6 - d.getDay() + 7) % 7;
+  const sat = new Date(d);
+  if (daysUntil > 0) sat.setDate(sat.getDate() + daysUntil);
+  return sat;
+}
+
+function nextGartenDueAfterDone(fromDate, intervalDays) {
+  return snapToGartenSaturday(addDaysLocal(startOfDayLocal(fromDate), intervalDays));
+}
+
+function defaultGartenTodoDueISO() {
+  return toISODateLocal(getNextGartenWorkSaturday());
+}
+
+function formatGartenWorkSlot(date) {
+  const dateStr = date.toLocaleDateString("de-CH", {
+    weekday: "short",
+    day: "2-digit",
+    month: "short",
+    timeZone: "Europe/Zurich",
+  });
+  return `${dateStr}, ${pad2(GARTEN_TODO_WORK_HOUR)}:${pad2(GARTEN_TODO_WORK_MINUTE)}`;
+}
+
+function setGartenTodoFormDefaults() {
+  const due = $("gartenTodoDue");
+  if (due) due.value = defaultGartenTodoDueISO();
+}
+
 function getActiveAdultNames() {
   return getActiveBewohner().filter((b) => !b.kid).map((b) => b.name);
 }
@@ -2880,14 +2952,22 @@ function getKwInfo(date) {
 
 function formatKwLabel(date) {
   const { kw, year } = getKwInfo(date);
-  return `KW ${kw} · ${year}`;
+  const weekStart = getKwWeekStartDate(date);
+  const startStr = weekStart.toLocaleDateString("de-CH", {
+    weekday: "short",
+    day: "2-digit",
+    month: "short",
+    year: "numeric",
+    timeZone: "Europe/Zurich",
+  });
+  return `KW ${kw} · ${year} (ab ${startStr})`;
 }
 
 function updateGartenTodoKwHead() {
   const el = $("gartenTodoKwHead");
   if (!el) return;
   const now = new Date();
-  el.textContent = `Aktuelle Kalenderwoche: ${formatKwLabel(now)} (${now.toLocaleDateString("de-CH", { weekday: "long", day: "2-digit", month: "long", timeZone: "Europe/Zurich" })})`;
+  el.textContent = `Aktuelle ${formatKwLabel(now)} – heute ${now.toLocaleDateString("de-CH", { weekday: "long", day: "2-digit", month: "long", timeZone: "Europe/Zurich" })} · Standard Gartenarbeit: Samstag ${pad2(GARTEN_TODO_WORK_HOUR)}:${pad2(GARTEN_TODO_WORK_MINUTE)}`;
 }
 
 /** Offene Garten-Aufgaben pro Person (heute erledigte ausgenommen). */
@@ -2963,7 +3043,7 @@ function formatGartenTodoHistoryLine(h) {
   });
   let detail = "";
   if (h.action === "created") {
-    detail = `Angelegt → ${escapeHtml(h.who || "—")}${h.nextDue ? `, fällig ${escapeHtml(h.nextDue)}` : ", heute fällig"}`;
+    detail = `Angelegt → ${escapeHtml(h.who || "—")}${h.nextDue ? `, fällig ${escapeHtml(h.nextDue)}` : ", nächster Samstag"}`;
   } else if (h.action === "plan") {
     const prev = h.prevWho && h.prevWho !== h.who ? ` (vorher ${escapeHtml(h.prevWho)})` : "";
     detail = `Planung → ${escapeHtml(h.who || "—")}, fällig ${escapeHtml(h.nextDue || "—")}${prev}`;
@@ -2988,6 +3068,7 @@ function buildGartenTodoRotation(item, rounds = 12) {
       who,
       date: new Date(date),
       kw: formatKwLabel(date),
+      slot: formatGartenWorkSlot(date),
       current: i === 0,
     });
     const idx = adults.indexOf(who);
@@ -3002,17 +3083,11 @@ function gartenTodoRotationHtml(item) {
   if (!rows.length) return "<p class=\"form-note\">Keine aktiven Erwachsenen.</p>";
   const lis = rows
     .map((r) => {
-      const dateStr = r.date.toLocaleDateString("de-CH", {
-        weekday: "short",
-        day: "2-digit",
-        month: "short",
-        timeZone: "Europe/Zurich",
-      });
       const cls = r.current ? " class=\"current\"" : "";
-      return `<li${cls}><strong>${r.kw}</strong> · ${dateStr} · ${mEmoji(r.who)} ${escapeHtml(mLabel(r.who))}</li>`;
+      return `<li${cls}><strong>${r.kw}</strong> · ${escapeHtml(r.slot)} · ${mEmoji(r.who)} ${escapeHtml(mLabel(r.who))}</li>`;
     })
     .join("");
-  return `<ol class="gartentodo-rotation-list">${lis}</ol><p class="form-note">Voraussichtlich bei planmässigem Erledigen und Rotation alle ${item.intervalDays || 14} Tage.</p>`;
+  return `<ol class="gartentodo-rotation-list">${lis}</ol><p class="form-note">Voraussichtlich Samstag ${pad2(GARTEN_TODO_WORK_HOUR)}:${pad2(GARTEN_TODO_WORK_MINUTE)}, Rotation alle ${item.intervalDays || 14} Tage.</p>`;
 }
 
 function gartenTodoHistoryHtml(item) {
@@ -3081,17 +3156,15 @@ function parseGartenTodoDueISO(iso) {
   return d;
 }
 
-/** Nächstes Fälligkeitsdatum: festgelegtes nextDue, sonst lastDone+Intervall, sonst heute. */
+/** Nächstes Fälligkeitsdatum: nextDue, sonst Samstag nach lastDone+Intervall, sonst nächster Samstag. */
 function gartenTodoNextDueDate(item) {
   const manual = parseGartenTodoDueISO(item.nextDue);
   if (manual) return manual;
   const interval = item.intervalDays || 14;
   if (item.lastDone) {
-    const next = startOfDayLocal(new Date(item.lastDone));
-    next.setDate(next.getDate() + interval);
-    return next;
+    return nextGartenDueAfterDone(new Date(item.lastDone), interval);
   }
-  return today0();
+  return getNextGartenWorkSaturday();
 }
 
 function startOfDayLocal(d) {
@@ -3121,6 +3194,7 @@ function populateGartenTodoWhoSelect() {
   const sel = $("gartenTodoWho");
   if (!sel) return;
   sel.innerHTML = gartenTodoWhoOptionsHtml("", true);
+  setGartenTodoFormDefaults();
   updateGartenTodoFormFairPreview();
 }
 
@@ -3177,16 +3251,16 @@ function formatGartenTodoNext(item) {
   const status = getGartenTodoStatus(item);
   const next = gartenTodoNextDueDate(item);
   const kw = formatKwLabel(next);
-  const dateStr = next.toLocaleDateString("de-CH", { weekday: "short", day: "2-digit", month: "short", timeZone: "Europe/Zurich" });
+  const slot = formatGartenWorkSlot(next);
   const planNote = item.nextDueManual ? " · Datum festgelegt" : "";
   if (status === "done-today") return { text: "✅ Heute erledigt – nächste Runde später", kw, cls: "" };
   if (status === "overdue") {
     const days = Math.ceil((today0() - next) / 86400000);
-    return { text: `⚠️ ${days} Tag${days > 1 ? "e" : ""} überfällig · ${dateStr}${planNote}`, kw, cls: "overdue" };
+    return { text: `⚠️ ${days} Tag${days > 1 ? "e" : ""} überfällig · ${slot}${planNote}`, kw, cls: "overdue" };
   }
-  if (status === "due-today") return { text: `📋 Heute fällig · ${dateStr}${planNote}`, kw, cls: "due-today" };
+  if (status === "due-today") return { text: `📋 Heute fällig · ${slot}${planNote}`, kw, cls: "due-today" };
   const days = Math.ceil((next - today0()) / 86400000);
-  return { text: `Fällig ${dateStr} (in ${days} Tag${days > 1 ? "en" : ""})${planNote}`, kw, cls: "" };
+  return { text: `Fällig ${slot} (in ${days} Tag${days > 1 ? "en" : ""})${planNote}`, kw, cls: "" };
 }
 
 function gartenTodoBadgesHtml(item) {
@@ -3380,7 +3454,7 @@ async function markGartenTodoDone(id, rotateNext = true) {
   const now = new Date().toISOString();
   const interval = item.intervalDays || 14;
   const nextWho = rotateNext ? pickNextAssignee(item.who) : item.who;
-  const nextDue = toISODateLocal(addDaysLocal(today0(), interval));
+  const nextDue = toISODateLocal(nextGartenDueAfterDone(today0(), interval));
   const fair = gartenTodoFairnessAfter(nextWho, id);
   const history = appendGartenTodoHistory(
     item,
@@ -3454,13 +3528,13 @@ $("gartenTodoForm")?.addEventListener("submit", async (e) => {
     reminder: $("gartenTodoReminder").checked,
     who,
     whoManual,
-    nextDue: duePick || null,
-    nextDueManual: !!duePick,
+    nextDue: duePick || defaultGartenTodoDueISO(),
+    nextDueManual: !!(duePick && duePick !== defaultGartenTodoDueISO()),
     lastDone: null,
     history: [
       gartenTodoHistoryEntry("created", {
         who,
-        nextDue: duePick || null,
+        nextDue: duePick || defaultGartenTodoDueISO(),
         fairNote: fair.text,
       }),
     ],
@@ -3478,7 +3552,7 @@ $("gartenTodoForm")?.addEventListener("submit", async (e) => {
   e.target.reset();
   $("gartenTodoReminder").checked = true;
   populateGartenTodoWhoSelect();
-  const dueHint = duePick ? `fällig ${duePick}` : "heute fällig";
+  const dueHint = `fällig ${formatGartenWorkSlot(parseGartenTodoDueISO(duePick || defaultGartenTodoDueISO()))}`;
   showToast(`🌿 Gespeichert – ${who}, ${dueHint}.`, "success");
 });
 
