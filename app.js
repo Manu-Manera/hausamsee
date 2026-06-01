@@ -3166,24 +3166,64 @@ function formatGartenTodoSwapHint(swapInfo) {
   return `<span class="gartentodo-icon-btn gartentodo-swap-hint" title="${escapeAttr(title)}" aria-label="${escapeAttr(title)}">${GARTEN_TODO_ICON_SVG.swap}</span>`;
 }
 
-function gartenTodoVerlaufIconBtn(itemId) {
+function gartenTodoHistoryId(itemId, dueIso) {
+  return `gartentodo-history-${itemId}-${dueIso}`;
+}
+
+function gartenTodoHistoryEntriesForDue(item, dueIso, swapInfo = null, rowWho = "") {
+  const hist = Array.isArray(item.history) ? item.history : [];
+  const matched = hist.filter((h) => {
+    if (h.action === "plan" || h.action === "rotation") return h.nextDue === dueIso;
+    if (h.action === "created" && h.nextDue) return h.nextDue === dueIso;
+    return false;
+  });
+  if (matched.length) return matched;
+  if (swapInfo?.at) {
+    return [
+      {
+        at: swapInfo.at,
+        by: swapInfo.by || "WG",
+        action: "rotation",
+        who: rowWho || normalizeGartenTodoRotationOverrides(item).find((o) => o.due === dueIso)?.who || "",
+        nextDue: dueIso,
+        fairNote: null,
+      },
+    ];
+  }
+  return [];
+}
+
+function gartenTodoRowHistoryHtml(item, dueIso, swapInfo, rowWho = "") {
+  const entries = gartenTodoHistoryEntriesForDue(item, dueIso, swapInfo, rowWho);
+  if (!entries.length) return "<p class=\"form-note\">Kein Verlauf für diesen Termin.</p>";
+  return `<ul class="gartentodo-history-list">${entries.map(formatGartenTodoHistoryLine).join("")}</ul>`;
+}
+
+function gartenTodoVerlaufIconBtn(itemId, dueIso) {
   return gartenTodoIconBtn(
     "gartentodo-verlauf-icon-btn",
-    "Verlauf anzeigen",
+    "Verlauf zu diesem Termin",
     GARTEN_TODO_ICON_SVG.clock,
-    `data-history-for="${escapeHtml(itemId)}"`
+    `data-history-for="${escapeHtml(itemId)}" data-history-due="${escapeHtml(dueIso)}"`
   );
 }
 
-function openGartenTodoHistory(itemId, root = document) {
-  const details = root.querySelector(`#gartentodo-history-${CSS.escape(itemId)}`);
+function toggleGartenTodoRowHistory(itemId, dueIso, root = document) {
+  const id = gartenTodoHistoryId(itemId, dueIso);
+  const details = root.getElementById(id);
   if (!details) return;
+  const card = details.closest(".gartentodo-card");
   const parentRotation = details.closest(".gartentodo-subdetails");
   if (parentRotation && !parentRotation.open) parentRotation.open = true;
-  details.open = true;
-  details.scrollIntoView({ behavior: "smooth", block: "nearest" });
-  details.classList.add("gartentodo-history-flash");
-  window.setTimeout(() => details.classList.remove("gartentodo-history-flash"), 2200);
+  card?.querySelectorAll(".gartentodo-row-history").forEach((el) => {
+    if (el !== details) el.open = false;
+  });
+  details.open = !details.open;
+  if (details.open) {
+    details.scrollIntoView({ behavior: "smooth", block: "nearest" });
+    details.classList.add("gartentodo-history-flash");
+    window.setTimeout(() => details.classList.remove("gartentodo-history-flash"), 2200);
+  }
 }
 
 function removeGartenTodoRotationOverride(list, due) {
@@ -3270,20 +3310,22 @@ function gartenTodoRotationHtml(item, canEdit = false) {
             ${saveBtn}
             ${calBtn}
             ${swapHint}
-            ${r.swapInfo ? gartenTodoVerlaufIconBtn(item.id) : ""}
+            ${r.swapInfo ? gartenTodoVerlaufIconBtn(item.id, r.dueIso) : ""}
           </div>
+          ${r.swapInfo
+            ? `<details class="gartentodo-row-history" id="${escapeHtml(gartenTodoHistoryId(item.id, r.dueIso))}">
+            <summary class="gartentodo-row-history-summary" hidden>Verlauf</summary>
+            <div class="gartentodo-row-history-body">${gartenTodoRowHistoryHtml(item, r.dueIso, r.swapInfo)}</div>
+          </details>`
+            : ""}
         </div>
       </li>`;
     })
     .join("");
-  const historyBlock = `<details class="gartentodo-rotation-history-details" id="gartentodo-history-${escapeHtml(item.id)}">
-    <summary class="gartentodo-rotation-history-summary" title="Verlauf" aria-label="Verlauf">${GARTEN_TODO_ICON_SVG.scroll}</summary>
-    <div class="gartentodo-rotation-history-body">${gartenTodoHistoryHtml(item)}</div>
-  </details>`;
   const hint = canEdit
-    ? `↔ tauschen · Uhr = Verlauf · Kalender-Icon = Export. Zeile 1 = nächste Runde.`
+    ? `↔ tauschen · Uhr = Verlauf zu diesem Termin · Kalender = Export. Zeile 1 = nächste Runde.`
     : `Samstag ${pad2(GARTEN_TODO_WORK_HOUR)}:${pad2(GARTEN_TODO_WORK_MINUTE)}, alle ${item.intervalDays || 14} Tage.`;
-  return `<ol class="gartentodo-rotation-list" start="1">${lis}</ol><p class="form-note">${hint}</p>${historyBlock}`;
+  return `<ol class="gartentodo-rotation-list" start="1">${lis}</ol><p class="form-note">${hint}</p>`;
 }
 
 function gartenTodoHistoryHtml(item) {
@@ -3631,7 +3673,7 @@ function renderGartenTodos() {
     btn.addEventListener("click", (e) => {
       e.preventDefault();
       e.stopPropagation();
-      openGartenTodoHistory(btn.dataset.historyFor, grid);
+      toggleGartenTodoRowHistory(btn.dataset.historyFor, btn.dataset.historyDue, grid);
     });
   });
   grid.querySelectorAll(".gartentodo-reminder-cb").forEach((cb) => {
