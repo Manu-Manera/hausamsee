@@ -106,13 +106,13 @@ async function debugLog(kind, data) {
    ========================================================================== */
 
 /** phoneIdOpt: pro Webhook-Event von value.metadata.phone_number_id (eingehende Nummer). Ohne: WHATSAPP_PHONE_ID. */
-async function sendWhatsApp(to, text, phoneIdOpt) {
+async function sendWhatsAppDetailed(to, text, phoneIdOpt) {
   const { token, phoneId: defaultPid } = cfg();
   const phoneId = phoneIdOpt || defaultPid;
   if (!token || !phoneId) {
     logger.error("sendWhatsApp: fehlendes WHATSAPP_TOKEN oder WHATSAPP_PHONE_ID");
     await debugLog("send_skipped", { to, reason: "no_token_or_phone_id" });
-    return false;
+    return { ok: false, reason: "no_token_or_phone_id" };
   }
   const url = `https://graph.facebook.com/v20.0/${phoneId}/messages`;
   let res;
@@ -130,16 +130,38 @@ async function sendWhatsApp(to, text, phoneIdOpt) {
   } catch (e) {
     logger.error("sendWhatsApp: fetch fehlgeschlagen", e);
     await debugLog("send_crash", { to, error: String(e) });
-    return false;
+    return { ok: false, reason: "fetch_failed", error: String(e) };
   }
   const bodyText = await res.text().catch(() => "");
   if (!res.ok) {
+    let metaCode = null;
+    let metaMessage = null;
+    try {
+      const j = JSON.parse(bodyText);
+      metaCode = j?.error?.code ?? null;
+      metaMessage = j?.error?.message ?? null;
+    } catch (_) { /* ignore */ }
     logger.warn("sendWhatsApp: Graph API Fehler", { status: res.status, body: bodyText.slice(0, 500) });
-    await debugLog("send_failed", { to, status: res.status, response: bodyText.slice(0, 2000) });
-    return false;
+    await debugLog("send_failed", { to, status: res.status, response: bodyText.slice(0, 2000), metaCode });
+    return { ok: false, status: res.status, metaCode, metaMessage, error: bodyText };
   }
   await debugLog("send_ok", { to, status: res.status, phoneId });
-  return true;
+  return { ok: true };
+}
+
+async function sendWhatsApp(to, text, phoneIdOpt) {
+  const r = await sendWhatsAppDetailed(to, text, phoneIdOpt);
+  return r.ok;
+}
+
+function whatsAppProactiveErrorHint(sendResult) {
+  if (sendResult?.metaCode === 133010) {
+    return (
+      "Meta blockiert proaktive Nachrichten (#133010 – Empfänger nicht registriert oder kein 24h-Fenster). " +
+      "Schreib Gustav zuerst eine Nachricht im Chat, dann z.B. *testmsg gartentodo*."
+    );
+  }
+  return sendResult?.metaMessage || sendResult?.reason || "WhatsApp-Versand fehlgeschlagen";
 }
 
 async function broadcast(text) {
@@ -2757,10 +2779,14 @@ exports.whatsappWebhook = onRequest(
           const effectiveCaption = mediaId ? (mention.addressed ? mention.text : caption) : caption;
           
           // Test-Befehle VOR LLM abfangen (damit LLM sie nicht uminterpretiert)
-          const testMatch = (effectiveText || "").toLowerCase().match(/^(testmsg|test-msg|testnachricht)\s*(giessen|bewerbung|nachricht|polster)?$/i);
+          const testMatch = (effectiveText || "").toLowerCase().match(/^(testmsg|test-msg|testnachricht)\s*(giessen|gartentodo|garten|bewerbung|nachricht|polster)?$/i);
           if (testMatch) {
             const testType = (testMatch[2] || "giessen").toLowerCase();
-            if (testType === "polster") {
+            if (testType === "garten" || testType === "gartentodo") {
+              await answer(
+                `🌿 *Garten To-Do für ${senderName}*\n\nHeute bitte erledigen:\n🌿 Rasen mähen hinten (Test)\n\nAntwort z.B. *garten erledigt*\n\n🦆 _(Testnachricht im Chat)_`
+              );
+            } else if (testType === "polster") {
               const slot = { whenLabel: fmtTimeZurich(new Date(Date.now() + 30 * 60000)), slotUnix: Math.floor(Date.now() / 1000) + 1800 };
               const text = buildPolsterRainAlertText(slot.whenLabel, 30) + "\n\n_(Dies ist eine Testnachricht)_";
               await answer(text);
@@ -3570,14 +3596,12 @@ exports.testGiessReminder = onRequest(async (req, res) => {
   
   const msg = `🌱 *Giess-Erinnerung für ${name}*\n\nHeute bitte giessen:\n💧 ${plant}\n\n🦆 Deine Pflanzen danken dir!\n\n_(Dies ist eine Testnachricht)_`;
   
-  try {
-    await sendWhatsApp(phone, msg);
-    logger.info(`Test-Giessreminder an ${name} (${phone}) gesendet`);
-    return res.json({ ok: true, message: `Erinnerung an ${name} gesendet` });
-  } catch (err) {
-    logger.error("Test-Giessreminder Fehler:", err);
-    return res.status(500).json({ error: err.message });
+  const sent = await sendWhatsAppDetailed(phone, msg);
+  if (!sent.ok) {
+    return res.status(502).json({ ok: false, error: whatsAppProactiveErrorHint(sent), metaCode: sent.metaCode });
   }
+  logger.info(`Test-Giessreminder an ${name} (${phone}) gesendet`);
+  return res.json({ ok: true, message: `Erinnerung an ${name} gesendet` });
 });
 
 exports.testGartenTodoReminder = onRequest(async (req, res) => {
@@ -3605,14 +3629,17 @@ exports.testGartenTodoReminder = onRequest(async (req, res) => {
     `🌿 *Garten To-Do für ${name}*\n\nHeute bitte erledigen:\n🌿 ${task}\n\n` +
     `Antwort z.B. *garten erledigt*\n\n🦆 _(Testnachricht)_`;
 
-  try {
-    await sendWhatsApp(phone, msg);
-    logger.info(`Test-Garten-Todo-Reminder an ${name} (${phone}) gesendet`);
-    return res.json({ ok: true, message: `Garten-Erinnerung an ${name} gesendet` });
-  } catch (err) {
-    logger.error("Test-Garten-Todo Fehler:", err);
-    return res.status(500).json({ error: err.message });
+  const sent = await sendWhatsAppDetailed(phone, msg);
+  if (!sent.ok) {
+    logger.warn(`Test-Garten-Todo an ${name} fehlgeschlagen`, { metaCode: sent.metaCode });
+    return res.status(502).json({
+      ok: false,
+      error: whatsAppProactiveErrorHint(sent),
+      metaCode: sent.metaCode,
+    });
   }
+  logger.info(`Test-Garten-Todo-Reminder an ${name} (${phone}) gesendet`);
+  return res.json({ ok: true, message: `Garten-Erinnerung an ${name} gesendet` });
 });
 
 /* ==========================================================================
