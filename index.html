@@ -16,7 +16,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,400;0,9..144,600;0,9..144,700;1,9..144,400&family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet" />
-  <link rel="stylesheet" href="styles.css?v=20260601d" />
+  <link rel="stylesheet" href="styles.css?v=20260601e" />
   <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Ctext y='.9em' font-size='90'%3E🏡%3C/text%3E%3C/svg%3E" />
 </head>
 <body>
@@ -335,7 +335,7 @@
       <div class="kalender-panel hidden" id="tabGartentodo" data-wg-only>
         <p class="gartentodo-kw-head" id="gartenTodoKwHead">Kalenderwoche wird geladen…</p>
         <p class="gartentodo-balance" id="gartenTodoBalance" aria-live="polite"></p>
-        <p class="giess-hint">Intervall + faire Vorschläge – Person und Fälligkeit können manuell angepasst werden (sichtbar für alle). Nach «Erledigt» rotiert es standardmässig zur nächsten Person; WhatsApp-Erinnerung täglich bis erledigt.</p>
+        <p class="giess-hint">Intervall + faire Vorschläge – Anpassungen mit Fairness-Rechnung, Wochen-Reihenfolge und Verlauf pro Aufgabe. Nach «Erledigt» rotiert es standardmässig weiter; WhatsApp-Erinnerung täglich bis erledigt.</p>
         <div class="gartentodo-grid" id="gartenTodoGrid"></div>
         <details class="admin-toggle" data-wg-only>
           <summary>➕ Garten-Aufgabe hinzufügen</summary>
@@ -369,6 +369,7 @@
               <input type="date" id="gartenTodoDue" />
               <p class="form-note">Leer = heute fällig. Datum später setzen z. B. bei Ferien oder Regen.</p>
             </div>
+            <div id="gartenTodoFormFair" class="gartentodo-fair-preview" hidden aria-live="polite"></div>
             <label class="checkbox-row">
               <input type="checkbox" id="gartenTodoReminder" checked />
               <span>WhatsApp-Erinnerung (täglich bis erledigt)</span>
@@ -1217,6 +1218,6 @@
   <!-- Toast -->
   <div id="toast" class="toast hidden"></div>
 
-  <script type="module" src="app.js?v=20260601d"></script>
+  <script type="module" src="app.js?v=20260601e"></script>
 </body>
 </html>

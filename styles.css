@@ -1913,6 +1913,46 @@ textarea { resize: vertical; font-family: inherit; }
   cursor: pointer;
 }
 .gartentodo-actions { margin-top: 8px; }
+.gartentodo-fair-preview {
+  font-size: 0.82rem;
+  line-height: 1.35;
+  padding: 8px 10px;
+  border-radius: 8px;
+  background: #f5f8f2;
+  border: 1px solid #dde5d8;
+}
+.gartentodo-fair-preview.ok { background: #eef7ee; border-color: #a5d6a7; color: #2e5c2e; }
+.gartentodo-fair-preview.warn { background: #fff8e8; border-color: #ffcc80; color: #6d4c1a; }
+.gartentodo-subdetails {
+  margin-top: 10px;
+  font-size: 0.85rem;
+}
+.gartentodo-subdetails summary {
+  cursor: pointer;
+  color: var(--moss-dark, #2d5016);
+  font-weight: 500;
+}
+.gartentodo-rotation-list,
+.gartentodo-history-list {
+  margin: 8px 0 0;
+  padding-left: 1.2rem;
+  color: #444;
+}
+.gartentodo-rotation-list li.current {
+  font-weight: 600;
+  color: var(--moss-dark, #2d5016);
+}
+.gartentodo-history-list li {
+  margin-bottom: 6px;
+}
+.gartentodo-history-list time {
+  color: #666;
+  white-space: nowrap;
+}
+.gartentodo-fair-inline {
+  font-size: 0.8rem;
+  color: #555;
+}
 
 /* Termine mit WG-RSVP */
 .termin-card {

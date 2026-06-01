@@ -2798,16 +2798,156 @@ function updateGartenTodoKwHead() {
   el.textContent = `Aktuelle Kalenderwoche: ${formatKwLabel(now)} (${now.toLocaleDateString("de-CH", { weekday: "long", day: "2-digit", month: "long", timeZone: "Europe/Zurich" })})`;
 }
 
-function pickFairAssignee() {
+/** Offene Garten-Aufgaben pro Person (heute erledigte ausgenommen). */
+function gartenTodoOpenCounts(excludeId = null) {
   const adults = getActiveAdultNames();
-  if (!adults.length) return "";
   const counts = {};
   adults.forEach((n) => { counts[n] = 0; });
   gartenTodoCache.forEach((t) => {
+    if (excludeId && t.id === excludeId) return;
+    if (getGartenTodoStatus(t) === "done-today") return;
     if (t.who && counts[t.who] !== undefined) counts[t.who]++;
   });
-  adults.sort((a, b) => counts[a] - counts[b] || a.localeCompare(b, "de"));
+  return counts;
+}
+
+function pickFairAssignee(excludeId = null) {
+  const adults = [...getActiveAdultNames()];
+  if (!adults.length) return "";
+  const counts = gartenTodoOpenCounts(excludeId);
+  adults.sort((a, b) => (counts[a] - counts[b]) || a.localeCompare(b, "de"));
   return adults[0];
+}
+
+/** Kurze Fairness-Rechnung nach einer Zuweisung (ohne diese Karte). */
+function gartenTodoFairnessAfter(who, excludeId) {
+  const adults = [...getActiveAdultNames()].sort((a, b) => a.localeCompare(b, "de"));
+  if (!who || !adults.length) return { ok: false, text: "Keine Bewohner für die Berechnung." };
+  const before = gartenTodoOpenCounts(excludeId);
+  const after = { ...before };
+  after[who] = (after[who] || 0) + 1;
+  const nums = adults.map((n) => after[n] || 0);
+  const max = Math.max(...nums);
+  const min = Math.min(...nums);
+  const diff = max - min;
+  const fair = pickFairAssignee(excludeId);
+  const tally = adults.map((n) => `${mLabel(n)} ${after[n] || 0}`).join(", ");
+  if (who === fair && diff <= 1) {
+    return { ok: true, text: `Fair: ${mLabel(who)} hat die wenigste Last. Danach ${tally} (Differenz ${diff}).` };
+  }
+  if (diff <= 1) {
+    return { ok: true, text: `Danach ausgeglichen: ${tally} (Differenz ${diff}).` };
+  }
+  return {
+    ok: false,
+    text: `Danach ${tally} (Differenz ${diff}). Fairer wäre ${mLabel(fair)} (${before[fair] || 0} offen, statt ${who} mit ${after[who]}).`,
+  };
+}
+
+function gartenTodoHistoryEntry(action, fields = {}) {
+  return {
+    at: new Date().toISOString(),
+    by: auth.member || "WG",
+    action,
+    ...fields,
+  };
+}
+
+function appendGartenTodoHistory(item, entry) {
+  const hist = Array.isArray(item.history) ? [...item.history] : [];
+  hist.unshift(entry);
+  if (hist.length > 25) hist.length = 25;
+  return hist;
+}
+
+function formatGartenTodoHistoryLine(h) {
+  const when = new Date(h.at).toLocaleString("de-CH", {
+    day: "2-digit",
+    month: "2-digit",
+    year: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+    timeZone: "Europe/Zurich",
+  });
+  let detail = "";
+  if (h.action === "created") {
+    detail = `Angelegt → ${escapeHtml(h.who || "—")}${h.nextDue ? `, fällig ${escapeHtml(h.nextDue)}` : ", heute fällig"}`;
+  } else if (h.action === "plan") {
+    const prev = h.prevWho && h.prevWho !== h.who ? ` (vorher ${escapeHtml(h.prevWho)})` : "";
+    detail = `Planung → ${escapeHtml(h.who || "—")}, fällig ${escapeHtml(h.nextDue || "—")}${prev}`;
+  } else if (h.action === "done") {
+    detail = `Erledigt → nächste Runde ${escapeHtml(h.who || "—")}, fällig ${escapeHtml(h.nextDue || "—")}`;
+  }
+  const fair = h.fairNote ? `<br><span class="gartentodo-fair-inline">${escapeHtml(h.fairNote)}</span>` : "";
+  return `<li><time>${when}</time> · ${escapeHtml(h.by || "—")} · ${detail}${fair}</li>`;
+}
+
+function buildGartenTodoRotation(item, rounds = 12) {
+  const interval = item.intervalDays || 14;
+  const adults = [...getActiveAdultNames()].sort((a, b) => a.localeCompare(b, "de"));
+  if (!adults.length) return [];
+  let who = item.who && adults.includes(item.who) ? item.who : adults[0];
+  let date = gartenTodoNextDueDate(item);
+  const rows = [];
+  for (let i = 0; i < rounds; i++) {
+    rows.push({
+      who,
+      date: new Date(date),
+      kw: formatKwLabel(date),
+      current: i === 0,
+    });
+    const idx = adults.indexOf(who);
+    who = adults[(idx + 1) % adults.length];
+    date = addDaysLocal(date, interval);
+  }
+  return rows;
+}
+
+function gartenTodoRotationHtml(item) {
+  const rows = buildGartenTodoRotation(item);
+  if (!rows.length) return "<p class=\"form-note\">Keine aktiven Erwachsenen.</p>";
+  const lis = rows
+    .map((r) => {
+      const dateStr = r.date.toLocaleDateString("de-CH", {
+        weekday: "short",
+        day: "2-digit",
+        month: "short",
+        timeZone: "Europe/Zurich",
+      });
+      const cls = r.current ? " class=\"current\"" : "";
+      return `<li${cls}><strong>${r.kw}</strong> · ${dateStr} · ${mEmoji(r.who)} ${escapeHtml(mLabel(r.who))}</li>`;
+    })
+    .join("");
+  return `<ol class="gartentodo-rotation-list">${lis}</ol><p class="form-note">Voraussichtlich bei planmässigem Erledigen und Rotation alle ${item.intervalDays || 14} Tage.</p>`;
+}
+
+function gartenTodoHistoryHtml(item) {
+  const hist = Array.isArray(item.history) ? item.history : [];
+  if (!hist.length) return "<p class=\"form-note\">Noch keine Einträge.</p>";
+  return `<ul class="gartentodo-history-list">${hist.map(formatGartenTodoHistoryLine).join("")}</ul>`;
+}
+
+function updateGartenTodoFairPreview(id) {
+  const el = document.querySelector(`[data-fair-preview="${id}"]`);
+  const who = document.querySelector(`[data-garten-who="${id}"]`)?.value;
+  if (!el) return;
+  if (!who) {
+    el.textContent = "";
+    el.className = "gartentodo-fair-preview";
+    return;
+  }
+  const fair = gartenTodoFairnessAfter(who, id);
+  el.className = `gartentodo-fair-preview ${fair.ok ? "ok" : "warn"}`;
+  el.textContent = fair.text;
+}
+
+function wireGartenTodoEditPanels(grid) {
+  grid.querySelectorAll("[data-garten-who]").forEach((sel) => {
+    const id = sel.getAttribute("data-garten-who");
+    const run = () => updateGartenTodoFairPreview(id);
+    sel.addEventListener("change", run);
+    run();
+  });
 }
 
 function pickNextAssignee(currentWho) {
@@ -2887,7 +3027,25 @@ function populateGartenTodoWhoSelect() {
   const sel = $("gartenTodoWho");
   if (!sel) return;
   sel.innerHTML = gartenTodoWhoOptionsHtml("", true);
+  updateGartenTodoFormFairPreview();
 }
+
+function updateGartenTodoFormFairPreview() {
+  const el = $("gartenTodoFormFair");
+  if (!el) return;
+  const pick = $("gartenTodoWho")?.value;
+  const who = pick || pickFairAssignee();
+  if (!who) {
+    el.hidden = true;
+    return;
+  }
+  el.hidden = false;
+  const fair = gartenTodoFairnessAfter(who, null);
+  el.className = `gartentodo-fair-preview ${fair.ok ? "ok" : "warn"}`;
+  el.textContent = pick ? fair.text : `Vorschlag: ${fair.text}`;
+}
+
+$("gartenTodoWho")?.addEventListener("change", updateGartenTodoFormFairPreview);
 
 function renderGartenTodoBalance() {
   const el = $("gartenTodoBalance");
@@ -2992,8 +3150,17 @@ function renderGartenTodos() {
                 <label>Fällig am</label>
                 <input type="date" data-garten-due="${item.id}" value="${dueVal}" />
               </div>
+              <div class="gartentodo-fair-preview ok" data-fair-preview="${item.id}" aria-live="polite"></div>
               <button type="button" class="mini-btn" data-id="${item.id}" data-action="save-plan">Speichern</button>
             </div>
+          </details>
+          <details class="gartentodo-subdetails">
+            <summary>📅 Wochen-Reihenfolge</summary>
+            ${gartenTodoRotationHtml(item)}
+          </details>
+          <details class="gartentodo-subdetails">
+            <summary>📜 Verlauf</summary>
+            ${gartenTodoHistoryHtml(item)}
           </details>
           <label class="gartentodo-done-row">
             <input type="checkbox" class="gartentodo-done-cb" data-id="${item.id}" ${checked ? "checked disabled" : ""} />
@@ -3026,6 +3193,7 @@ function renderGartenTodos() {
   grid.querySelectorAll("[data-action='delete']").forEach((btn) => {
     btn.addEventListener("click", () => void deleteGartenTodo(btn.dataset.id));
   });
+  wireGartenTodoEditPanels(grid);
 }
 
 async function saveGartenTodoPlan(id) {
@@ -3038,11 +3206,25 @@ async function saveGartenTodoPlan(id) {
     showToast("Bitte Person und Datum wählen.", "error");
     return;
   }
+  const fair = gartenTodoFairnessAfter(who, id);
+  const prevWho = item.who;
+  const prevDue = item.nextDue || toISODateLocal(gartenTodoNextDueDate(item));
+  const history = appendGartenTodoHistory(
+    item,
+    gartenTodoHistoryEntry("plan", {
+      who,
+      nextDue: due,
+      prevWho,
+      prevDue,
+      fairNote: fair.text,
+    })
+  );
   const updates = {
     who,
     nextDue: due,
     whoManual: true,
     nextDueManual: true,
+    history,
   };
   if (firebaseReady) {
     await updateDoc(doc(db, "gartentodos", id), updates);
@@ -3052,7 +3234,7 @@ async function saveGartenTodoPlan(id) {
     saveLocal("gartentodos", localStore.gartentodos);
     renderGartenTodos();
   }
-  showToast("Planung gespeichert – für alle sichtbar.", "success");
+  showToast(fair.ok ? `Gespeichert. ${fair.text}` : `Gespeichert (Abweichung). ${fair.text}`, fair.ok ? "success" : "info");
 }
 
 async function markGartenTodoDone(id, rotateNext = true) {
@@ -3062,12 +3244,23 @@ async function markGartenTodoDone(id, rotateNext = true) {
   const now = new Date().toISOString();
   const interval = item.intervalDays || 14;
   const nextWho = rotateNext ? pickNextAssignee(item.who) : item.who;
+  const nextDue = toISODateLocal(addDaysLocal(today0(), interval));
+  const fair = gartenTodoFairnessAfter(nextWho, id);
+  const history = appendGartenTodoHistory(
+    item,
+    gartenTodoHistoryEntry("done", {
+      who: nextWho,
+      nextDue,
+      fairNote: rotateNext ? `Rotation: ${fair.text}` : "Gleiche Person bleibt dran.",
+    })
+  );
   const updates = {
     lastDone: now,
     who: nextWho,
-    nextDue: toISODateLocal(addDaysLocal(today0(), interval)),
+    nextDue,
     whoManual: false,
     nextDueManual: false,
+    history,
   };
 
   if (firebaseReady) {
@@ -3118,6 +3311,7 @@ $("gartenTodoForm")?.addEventListener("submit", async (e) => {
   } else {
     whoManual = true;
   }
+  const fair = gartenTodoFairnessAfter(who, null);
   const entry = {
     task,
     intervalDays,
@@ -3127,6 +3321,13 @@ $("gartenTodoForm")?.addEventListener("submit", async (e) => {
     nextDue: duePick || null,
     nextDueManual: !!duePick,
     lastDone: null,
+    history: [
+      gartenTodoHistoryEntry("created", {
+        who,
+        nextDue: duePick || null,
+        fairNote: fair.text,
+      }),
+    ],
   };
   if (firebaseReady) {
     await addDoc(collection(db, "gartentodos"), { ...entry, createdAt: serverTimestamp() });
