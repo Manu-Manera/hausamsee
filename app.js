@@ -3142,13 +3142,12 @@ function upsertGartenTodoRotationOverride(list, due, who, swapMeta = null) {
 }
 
 const GARTEN_TODO_ICON_SVG = {
-  /** Zwei Halbkreis-Pfeile im Kreis (Tausch / Rotation) */
+  /** Sync-Pfeile im Kreis (Referenz: zwei dicke Halbkreis-Pfeile) */
   swap: `<svg class="gartentodo-icon-svg" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
-    <circle cx="12" cy="12" r="9" fill="none" stroke="currentColor" stroke-width="1.35" opacity="0.22"/>
-    <path d="M16.2 8.1c-1.1-2.3-3.4-3.8-6-3.8-2.2 0-4.1 1.1-5.2 2.8" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round"/>
-    <path d="M6.2 6.4l1.6-2.3 2.3-1.1" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"/>
-    <path d="M7.8 15.9c1.1 2.3 3.4 3.8 6 3.8 2.2 0 4.1-1.1 5.2-2.8" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round"/>
-    <path d="M17.8 17.6l-1.6 2.3-2.3 1.1" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"/>
+    <path d="M6.6 10.2a6.4 6.4 0 0 1 10.6-2.4" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"/>
+    <path d="M16.8 6.2l3.4 1.2-2.2 2.8" fill="currentColor" stroke="none"/>
+    <path d="M17.4 13.8a6.4 6.4 0 0 1-10.6 2.4" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"/>
+    <path d="M7.2 17.8l-3.4-1.2 2.2-2.8" fill="currentColor" stroke="none"/>
   </svg>`,
   /** Analoge Uhr (Ziffernblatt) */
   clock: `<svg class="gartentodo-icon-svg" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
