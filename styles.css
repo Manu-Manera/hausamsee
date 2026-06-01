@@ -1901,6 +1901,22 @@ textarea { resize: vertical; font-family: inherit; }
   justify-content: space-between;
   gap: 10px;
 }
+.gartentodo-head-end {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 6px;
+  flex-shrink: 0;
+}
+.gartentodo-reminder-badge {
+  font-size: 0.7rem;
+  background: rgba(76, 175, 80, 0.15);
+  color: var(--moss-dark, #2e7d32);
+  padding: 2px 8px;
+  border-radius: 999px;
+  line-height: 1.2;
+  white-space: nowrap;
+}
 .gartentodo-hero {
   flex: 1;
   min-width: 0;
@@ -1927,7 +1943,10 @@ textarea { resize: vertical; font-family: inherit; }
   display: inline-flex;
   flex-direction: column;
   align-items: flex-start;
+  justify-content: center;
   gap: 2px;
+  min-height: 3.25rem;
+  box-sizing: border-box;
   padding: 8px 14px 10px;
   border-radius: 12px;
   background: linear-gradient(135deg, #eef6e8 0%, #dcebd4 100%);
@@ -1937,19 +1956,6 @@ textarea { resize: vertical; font-family: inherit; }
 .gartentodo-assignee.is-empty {
   background: #f3f3f3;
   border-color: #ddd;
-}
-.gartentodo-assignee.is-pending {
-  background: linear-gradient(135deg, #f0f7fc 0%, #dceaf8 100%);
-  border-color: rgba(58, 122, 181, 0.28);
-}
-.gartentodo-assignee-hint {
-  display: block;
-  margin-top: 4px;
-  font-size: 0.72rem;
-  font-weight: 700;
-  color: #356da3;
-  text-transform: uppercase;
-  letter-spacing: 0.04em;
 }
 .gartentodo-assignee-value {
   font-size: 1.12rem;
@@ -1975,6 +1981,7 @@ textarea { resize: vertical; font-family: inherit; }
 .gartentodo-status-chip.due-today { background: #fff3e0; color: #bf360c; }
 .gartentodo-status-chip.upcoming { background: #f1f5ee; color: #4a5f42; }
 .gartentodo-status-chip.scheduled,
+.gartentodo-status-chip.upcoming,
 .gartentodo-status-chip.done { background: #e8f5e9; color: #2e7d32; }
 .gartentodo-when-line {
   margin: 0;

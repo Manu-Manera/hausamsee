@@ -2716,15 +2716,10 @@ const TODO_CARD_LABELS = {
   task: "Aufgabe",
   plant: "Pflanze",
   assignee: "Zuständig",
-  nextPerson: "Nächste Person",
-  pendingHint: "Noch zu erledigen",
   doneToday: "Heute erledigt – gespeichert",
   overdueDays: (n) => `${n} Tag${n > 1 ? "e" : ""} überfällig`,
   chipDone: "Erledigt",
-  chipOpen: "Offen",
-  chipOverdue: "Überfällig",
-  chipToday: "Heute",
-  chipSoon: "Demnächst",
+  chipActive: "Dran",
   saveDoneGarten: "Erledigt speichern",
   saveDoneGiess: "Gegossen speichern",
   whatsapp: "WhatsApp",
@@ -2779,17 +2774,17 @@ function formatGiessCardSummary(item) {
   if (status === "overdue") {
     const days = Math.ceil((today0() - nextDay) / 86400000);
     return {
-      chip: TODO_CARD_LABELS.chipOverdue,
+      chip: TODO_CARD_LABELS.chipActive,
       chipCls: "overdue",
       when: `${dateStr} · ${TODO_CARD_LABELS.overdueDays(days)}`,
     };
   }
   if (status === "due-today") {
-    return { chip: TODO_CARD_LABELS.chipToday, chipCls: "due-today", when: dateStr };
+    return { chip: TODO_CARD_LABELS.chipActive, chipCls: "due-today", when: dateStr };
   }
   const days = Math.ceil((nextDay - today0()) / 86400000);
   return {
-    chip: TODO_CARD_LABELS.chipSoon,
+    chip: TODO_CARD_LABELS.chipActive,
     chipCls: "upcoming",
     when: `${dateStr} (in ${days} Tag${days > 1 ? "en" : ""})`,
   };
@@ -2817,7 +2812,6 @@ function renderGiessplan() {
 
     return `
       <div class="giess-card gartentodo-card ${status}">
-        ${item.reminder ? `<span class="giess-reminder-badge" title="${escapeAttr(TODO_CARD_LABELS.whatsappReminderTitle)}">📱</span>` : ""}
         <header class="gartentodo-card-head">
           <div class="gartentodo-hero">
             <p class="gartentodo-hero-label">${TODO_CARD_LABELS.plant}</p>
@@ -2827,7 +2821,10 @@ function renderGiessplan() {
               <span class="gartentodo-assignee-value"><span class="gartentodo-assignee-emoji" aria-hidden="true">${whoEmoji}</span> ${escapeHtml(whoName)}</span>
             </div>
           </div>
-          <span class="gartentodo-status-chip ${summary.chipCls}">${escapeHtml(summary.chip)}</span>
+          <div class="gartentodo-head-end">
+            ${item.reminder ? `<span class="gartentodo-reminder-badge" title="${escapeAttr(TODO_CARD_LABELS.whatsappReminderTitle)}">📱</span>` : ""}
+            <span class="gartentodo-status-chip ${summary.chipCls}">${escapeHtml(summary.chip)}</span>
+          </div>
         </header>
         <p class="gartentodo-when-line">${escapeHtml(summary.when)}</p>
         ${auth.isAuthed ? `
@@ -3782,29 +3779,21 @@ function formatGartenTodoCardSummary(item) {
   const next = gartenTodoNextDueDate(item);
   const whenLine = formatGartenTodoCardWhenLine(next);
   if (status === "done-today") {
-    return { chip: TODO_CARD_LABELS.chipDone, chipCls: "done", when: TODO_CARD_LABELS.doneToday, assigneeHint: "" };
-  }
-  if (status === "scheduled") {
-    return {
-      chip: TODO_CARD_LABELS.chipOpen,
-      chipCls: "scheduled",
-      when: whenLine,
-      assigneeHint: TODO_CARD_LABELS.pendingHint,
-    };
+    return { chip: TODO_CARD_LABELS.chipDone, chipCls: "done", when: TODO_CARD_LABELS.doneToday };
   }
   if (status === "overdue") {
     const days = Math.ceil((today0() - next) / 86400000);
     return {
-      chip: TODO_CARD_LABELS.chipOverdue,
+      chip: TODO_CARD_LABELS.chipActive,
       chipCls: "overdue",
       when: `${whenLine} · ${TODO_CARD_LABELS.overdueDays(days)}`,
-      assigneeHint: "",
     };
   }
   if (status === "due-today") {
-    return { chip: TODO_CARD_LABELS.chipToday, chipCls: "due-today", when: whenLine, assigneeHint: "" };
+    return { chip: TODO_CARD_LABELS.chipActive, chipCls: "due-today", when: whenLine };
   }
-  return { chip: TODO_CARD_LABELS.chipSoon, chipCls: "upcoming", when: whenLine, assigneeHint: "" };
+  const chipCls = status === "scheduled" ? "scheduled" : "upcoming";
+  return { chip: TODO_CARD_LABELS.chipActive, chipCls, when: whenLine };
 }
 
 function renderGartenTodos() {
@@ -3831,24 +3820,25 @@ function renderGartenTodos() {
     const canEdit = auth.isMember;
     const showDoneBtn = gartenTodoShowDoneButton(item);
     const cardHistoryDrop = gartenTodoCardHistoryDropdownHtml(item);
-    const assigneeHint = summary.assigneeHint
-      ? `<span class="gartentodo-assignee-hint">${escapeHtml(summary.assigneeHint)}</span>`
+    const reminderBadge = item.reminder
+      ? `<span class="gartentodo-reminder-badge" title="${escapeAttr(TODO_CARD_LABELS.whatsappReminderTitle)}">📱</span>`
       : "";
 
     return `
       <div class="gartentodo-card ${status}">
-        ${item.reminder ? `<span class="giess-reminder-badge" title="${escapeAttr(TODO_CARD_LABELS.whatsappReminderTitle)}">📱</span>` : ""}
         <header class="gartentodo-card-head">
           <div class="gartentodo-hero">
             <p class="gartentodo-hero-label">${TODO_CARD_LABELS.task}</p>
             <h3 class="gartentodo-task-title">${escapeHtml(item.task)}</h3>
-            <div class="gartentodo-assignee${item.who ? "" : " is-empty"}${status === "scheduled" ? " is-pending" : ""}">
-              <span class="gartentodo-assignee-label">${status === "scheduled" ? TODO_CARD_LABELS.nextPerson : TODO_CARD_LABELS.assignee}</span>
+            <div class="gartentodo-assignee${item.who ? "" : " is-empty"}">
+              <span class="gartentodo-assignee-label">${TODO_CARD_LABELS.assignee}</span>
               <span class="gartentodo-assignee-value"><span class="gartentodo-assignee-emoji" aria-hidden="true">${whoEmoji}</span> ${escapeHtml(whoName)}</span>
-              ${assigneeHint}
             </div>
           </div>
-          <span class="gartentodo-status-chip ${summary.chipCls}">${escapeHtml(summary.chip)}</span>
+          <div class="gartentodo-head-end">
+            ${reminderBadge}
+            <span class="gartentodo-status-chip ${summary.chipCls}">${escapeHtml(summary.chip)}</span>
+          </div>
         </header>
         <p class="gartentodo-when-line">${escapeHtml(summary.when)}</p>
         ${canEdit ? `
