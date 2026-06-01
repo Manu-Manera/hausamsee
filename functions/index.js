@@ -194,6 +194,21 @@ function resolveResident(input, onlyAdults = false) {
   return contains || null;
 }
 
+/** Speichert WhatsApp-Nummer eines Bewohners für spätere proaktive Nachrichten */
+async function saveWhatsAppNumber(name, whatsappNumber) {
+  if (!name || !whatsappNumber || !ADULTS.includes(name)) return;
+  const num = String(whatsappNumber).replace(/\D/g, "");
+  if (!num) return;
+  try {
+    await db.collection("config").doc("whatsappNumbers").set(
+      { [name]: num, updatedAt: FieldValue.serverTimestamp() },
+      { merge: true }
+    );
+  } catch (e) {
+    logger.warn("saveWhatsAppNumber failed", e);
+  }
+}
+
 /** WhatsApp-Absender einer Bewohner-Person zuordnen (Profilname, dann Telefon aus memberPrefs / Fallback). */
 async function resolveResidentFromWhatsApp(from, senderName) {
   const byName = resolveResident(senderName, true);
@@ -402,6 +417,25 @@ async function gartenDayShouldSkipDueToRain(slots, ymd) {
 function gartenSlotSkipKey(ymd, dayKey, idx) {
   return `${ymd}|${dayKey}|${idx}`;
 }
+
+/** ±6h um jetzt (Europe/Zurich): Regen in Vergangenheit oder Vorschau? */
+async function gartenRainAroundNow() {
+  let data;
+  try {
+    data = await getOpenMeteoGartenForRain();
+  } catch (e) {
+    logger.warn("gartenRainAroundNow: open-meteo", e?.message || e);
+    return { rainy: false, error: true };
+  }
+  const hourly = data?.hourly;
+  if (!hourly) return { rainy: false, error: false };
+  const now = Date.now();
+  const ws = now - 6 * 60 * 60 * 1000;
+  const we = now + 6 * 60 * 60 * 1000;
+  return { rainy: gartenHourlyRainOverlapsWindow(hourly, ws, we), error: false };
+}
+
+const GARTEN_MANUAL_MINUTES = 30;
 
 /** Wand-Uhrzeit in Europe/Zurich (y,m,d,h,min) → UTC als Date (Cloud Functions laufen in UTC) */
 function zurichWallToUtcDate(y, m, d, h, min) {
@@ -890,18 +924,20 @@ async function startGartenSequenz(minutes, requestedBy, config = {}) {
   const devicePumpe = config.devicePumpe || GARTEN_DEVICE_PUMPE;
   const nachlaufSec = config.nachlaufSec ?? GARTEN_SEQUENZ_NACHLAUF_SEC;
   
-  // Regen-Check
-  try {
-    const raining = await isCurrentlyRaining();
-    if (raining) {
-      return {
-        success: false,
-        message: `🌧️ Es regnet gerade – Bewässerung übersprungen!\n\nDer Himmel übernimmt das Giessen für euch. 🦆💧`,
-        skippedRain: true,
-      };
+  // Regen-Check (WhatsApp/Siri: aktuelles Regen; Website «Jetzt bewässern» kann skipRainCheck setzen)
+  if (!config.skipRainCheck) {
+    try {
+      const raining = await isCurrentlyRaining();
+      if (raining) {
+        return {
+          success: false,
+          message: `🌧️ Es regnet gerade – Bewässerung übersprungen!\n\nDer Himmel übernimmt das Giessen für euch. 🦆💧`,
+          skippedRain: true,
+        };
+      }
+    } catch (e) {
+      logger.warn("startGartenSequenz: Wetter-Check fehlgeschlagen, fahre fort", e?.message);
     }
-  } catch (e) {
-    logger.warn("startGartenSequenz: Wetter-Check fehlgeschlagen, fahre fort", e?.message);
   }
   
   // Prüfe ob Tuya konfiguriert ist
@@ -2449,6 +2485,12 @@ exports.whatsappWebhook = onRequest(
             isPrivate,
             hasGroupId: messages.some((m) => Boolean(m?.group_id || m?.context?.group_id)),
           });
+          
+          // WhatsApp-Nummer des Bewohners speichern (für proaktive Nachrichten wie Giessplan-Reminders)
+          const resolvedResident = resolveResident(senderName, true);
+          if (resolvedResident && from) {
+            saveWhatsAppNumber(resolvedResident, from).catch(() => {});
+          }
 
           // Zusätzliche Heuristik: WhatsApp Cloud API liefert derzeit für Gruppen wenig Metadaten.
           // Wenn der Text mit einem Trigger-Wort beginnt ("Neues Event", "Schaden", "Putz", …), akzeptieren wir trotzdem.
@@ -2465,6 +2507,21 @@ exports.whatsappWebhook = onRequest(
           // Nachricht reinigen: Wenn angesprochen wurde, den Bot-Präfix entfernen
           const effectiveText = mention.addressed ? mention.text : (text || caption);
           const effectiveCaption = mediaId ? (mention.addressed ? mention.text : caption) : caption;
+          
+          // Test-Befehle VOR LLM abfangen (damit LLM sie nicht uminterpretiert)
+          const testMatch = (effectiveText || "").toLowerCase().match(/^(testmsg|test-msg|testnachricht)\s*(giessen|bewerbung|nachricht)?$/i);
+          if (testMatch) {
+            const testType = (testMatch[2] || "giessen").toLowerCase();
+            if (testType === "giessen") {
+              await answer(`🌱 *Giess-Erinnerung für ${senderName}*\n\nHeute bitte giessen:\n💧 Monstera im Wohnzimmer\n⚠️ Ficus (überfällig!)\n\n🦆 Deine Pflanzen danken dir!\n\n_(Dies ist eine Testnachricht)_`);
+            } else if (testType === "bewerbung") {
+              await answer(`🚪 *Neue Bewerbung!*\n\n*Von:* Lisa Müller\n*Mail:* lisa@example.com\n*Alter:* 26\n*Einzug ab:* per sofort\n\nHallo! Ich bin sehr interessiert an eurem WG-Zimmer am See. Ich arbeite als Grafikerin und liebe Pflanzen! 🌿\n\n→ ${WEBSITE_URL}/#kandidaten\n\n_(Dies ist eine Testnachricht)_`);
+            } else {
+              await answer(`✉️ *Nachricht über Kontaktformular:*\n\n*Von:* Max Muster\n*Mail:* max@example.com\n\nHey! Coole WG, wollte fragen ob ihr noch Plätze für den nächsten Grillabend habt?\n\n→ ${WEBSITE_URL}/#wg-intern\n\n_(Dies ist eine Testnachricht)_`);
+            }
+            continue;
+          }
+          
           // LLM: nur Text; in Gruppen nur @gustav / @bot o. Standard: LLM **zuerst** (Kontext), dann regelbasiert.
           // Optional: GUSTAV_LLM_RULES_FIRST=1 → alte Reihenfolge.
           const allowLlm = !mediaId && (isPrivate || mention.addressed);
@@ -2816,6 +2873,95 @@ exports.siriWebhook = onRequest(async (req, res) => {
 });
 
 /* ==========================================================================
+   Website: «Jetzt bewässern» / Stopp (Firestore garten_commands)
+   ========================================================================== */
+
+exports.onGartenCommand = onDocumentCreated("garten_commands/{id}", async (event) => {
+  const ref = event.data?.ref;
+  const data = event.data?.data();
+  if (!ref || !data) return;
+  if (data.status && data.status !== "pending") return;
+
+  const action = String(data.action || "").toLowerCase();
+  const member = String(data.member || "Website").trim();
+
+  try {
+    await ref.update({ status: "running", startedAt: FieldValue.serverTimestamp() });
+
+    if (action === "stop") {
+      const result = await stopGartenSequenz(null);
+      await ref.update({
+        status: result.success ? "done" : "failed",
+        message: result.message || (result.success ? "Bewässerung gestoppt." : "Stoppen fehlgeschlagen."),
+        finishedAt: FieldValue.serverTimestamp(),
+      });
+      return;
+    }
+
+    if (action !== "start") {
+      await ref.update({
+        status: "failed",
+        message: "Unbekannte Aktion.",
+        finishedAt: FieldValue.serverTimestamp(),
+      });
+      return;
+    }
+
+    const minutes = Math.max(1, Math.min(120, parseInt(data.minutes, 10) || GARTEN_MANUAL_MINUTES));
+    const forceRain = !!data.forceRain;
+
+    if (!forceRain) {
+      const rain = await gartenRainAroundNow();
+      if (rain.rainy) {
+        await ref.update({
+          status: "failed",
+          message: "Regen im ±6h-Fenster – bitte in der Warnung «Trotzdem bewässern» wählen.",
+          skippedRain: true,
+          finishedAt: FieldValue.serverTimestamp(),
+        });
+        return;
+      }
+    }
+
+    const deviceComputer = String(data.deviceComputer || GARTEN_DEVICE_COMPUTER).trim();
+    const devicePumpe = String(data.devicePumpe || GARTEN_DEVICE_PUMPE).trim();
+    const nachlaufSec = typeof data.nachlaufSec === "number"
+      ? Math.max(0, Math.min(300, data.nachlaufSec))
+      : GARTEN_SEQUENZ_NACHLAUF_SEC;
+
+    const result = await startGartenSequenz(minutes, null, {
+      deviceComputer,
+      devicePumpe,
+      nachlaufSec,
+      skipRainCheck: forceRain,
+    });
+
+    await ref.update({
+      status: result.success ? "done" : "failed",
+      message: result.message || (result.success ? `Bewässerung gestartet (${minutes} Min).` : "Start fehlgeschlagen."),
+      sequenzId: result.sequenzId || null,
+      skippedRain: !!result.skippedRain,
+      finishedAt: FieldValue.serverTimestamp(),
+    });
+
+    if (result.success) {
+      logger.info(`Garten manuell gestartet von ${member}, ${minutes} Min`);
+    } else {
+      logger.warn(`Garten manuell fehlgeschlagen (${member}):`, result.message);
+    }
+  } catch (e) {
+    logger.error("onGartenCommand", e);
+    try {
+      await ref.update({
+        status: "failed",
+        message: String(e?.message || e),
+        finishedAt: FieldValue.serverTimestamp(),
+      });
+    } catch (_) { /* */ }
+  }
+});
+
+/* ==========================================================================
    Kontaktformular → WhatsApp
    ========================================================================== */
 
@@ -2905,9 +3051,19 @@ exports.checkReminders = onSchedule(
    Scheduler: Giessplan-Erinnerungen – täglich 8:00 Uhr
    ========================================================================== */
 
-// Mapping von Bewohner-Namen zu WhatsApp-Nummern (aus memberPrefs oder hardcoded)
+// Mapping von Bewohner-Namen zu WhatsApp-Nummern (aus gespeicherten WhatsApp-Nummern, memberPrefs oder hardcoded)
 async function getBewohnerPhone(name) {
-  // Versuche zuerst memberPrefs zu laden
+  // 1. Priorität: Gespeicherte WhatsApp-Nummer (von eingehenden Nachrichten)
+  try {
+    const waSnap = await db.collection("config").doc("whatsappNumbers").get();
+    if (waSnap.exists && waSnap.data()[name]) {
+      return String(waSnap.data()[name]).replace(/\D/g, "");
+    }
+  } catch (e) {
+    logger.warn("getBewohnerPhone: whatsappNumbers", e);
+  }
+  
+  // 2. Priorität: memberPrefs.phone
   const prefsSnap = await db.collection("config").doc("memberPrefs").get();
   const prefs = prefsSnap.exists ? prefsSnap.data() : {};
   if (prefs[name]?.phone) return prefs[name].phone.replace(/\D/g, "");
@@ -3001,6 +3157,105 @@ exports.checkGiessplanReminders = onSchedule(
     logger.info(`Giessplan: ${promises.length} Erinnerungen gesendet an ${Object.keys(byPerson).length} Personen`);
   }
 );
+
+// Test-Endpoint für Nachrichten/Bewerbungen
+exports.testNachrichtAlert = onRequest(async (req, res) => {
+  res.set("Access-Control-Allow-Origin", "*");
+  if (req.method === "OPTIONS") {
+    res.set("Access-Control-Allow-Methods", "GET, POST");
+    res.set("Access-Control-Allow-Headers", "Content-Type");
+    return res.status(204).send("");
+  }
+  
+  const secret = req.query.secret || req.body?.secret;
+  if (secret !== process.env.SIRI_SECRET) {
+    return res.status(401).json({ error: "Unauthorized" });
+  }
+  
+  const to = req.query.to || req.body?.to;
+  const type = req.query.type || req.body?.type || "bewerbung";
+  const isBewerbung = type === "bewerbung";
+  
+  const testData = isBewerbung ? {
+    name: "Test Bewerber:in",
+    email: "test@example.com",
+    alter: "28",
+    einzug: "per sofort",
+    message: "Hallo! Ich bin sehr interessiert an eurem WG-Zimmer. Ich bin 28, arbeite als Designer und liebe Pflanzen. 🌿"
+  } : {
+    name: "Test Person",
+    email: "kontakt@example.com",
+    message: "Hey! Ist eure Website echt toll, wollte nur fragen ob ihr noch Plätze für den Grillabend habt?"
+  };
+  
+  const header = isBewerbung ? "🚪 *Neue Bewerbung!*" : "✉️ *Nachricht über Kontaktformular:*";
+  const lines = [
+    header, "",
+    `*Von:* ${testData.name}`,
+    testData.email ? `*Mail:* ${testData.email}` : "",
+    isBewerbung && testData.alter ? `*Alter:* ${testData.alter}` : "",
+    isBewerbung && testData.einzug ? `*Einzug ab:* ${testData.einzug}` : "",
+    "",
+    testData.message,
+    "",
+    isBewerbung ? `→ ${WEBSITE_URL}/#kandidaten` : `→ ${WEBSITE_URL}/#wg-intern`,
+    "",
+    "_(Dies ist eine Testnachricht)_"
+  ].filter(Boolean);
+  
+  try {
+    if (to) {
+      const phone = await getBewohnerPhone(to);
+      if (!phone) {
+        return res.status(404).json({ error: `Keine Telefonnummer für ${to} gefunden` });
+      }
+      await sendWhatsApp(phone, lines.join("\n"));
+      logger.info(`Test-Nachricht (${type}) an ${to} gesendet`);
+      return res.json({ ok: true, message: `${isBewerbung ? "Bewerbung" : "Nachricht"}-Alert an ${to} gesendet` });
+    } else {
+      await broadcast(lines.join("\n"));
+      logger.info(`Test-Nachricht (${type}) an WG gebroadcastet`);
+      return res.json({ ok: true, message: `${isBewerbung ? "Bewerbung" : "Nachricht"}-Alert an WG gesendet` });
+    }
+  } catch (err) {
+    logger.error("Test-Nachricht Fehler:", err);
+    return res.status(500).json({ error: err.message });
+  }
+});
+
+// Test-Endpoint für Giessplan-Erinnerung
+exports.testGiessReminder = onRequest(async (req, res) => {
+  res.set("Access-Control-Allow-Origin", "*");
+  if (req.method === "OPTIONS") {
+    res.set("Access-Control-Allow-Methods", "GET, POST");
+    res.set("Access-Control-Allow-Headers", "Content-Type");
+    return res.status(204).send("");
+  }
+  
+  const secret = req.query.secret || req.body?.secret;
+  if (secret !== process.env.SIRI_SECRET) {
+    return res.status(401).json({ error: "Unauthorized" });
+  }
+  
+  const name = req.query.name || req.body?.name || "Manu";
+  const plant = req.query.plant || req.body?.plant || "Testpflanze";
+  
+  const phone = await getBewohnerPhone(name);
+  if (!phone) {
+    return res.status(404).json({ error: `Keine Telefonnummer für ${name} gefunden` });
+  }
+  
+  const msg = `🌱 *Giess-Erinnerung für ${name}*\n\nHeute bitte giessen:\n💧 ${plant}\n\n🦆 Deine Pflanzen danken dir!\n\n_(Dies ist eine Testnachricht)_`;
+  
+  try {
+    await sendWhatsApp(phone, msg);
+    logger.info(`Test-Giessreminder an ${name} (${phone}) gesendet`);
+    return res.json({ ok: true, message: `Erinnerung an ${name} gesendet` });
+  } catch (err) {
+    logger.error("Test-Giessreminder Fehler:", err);
+    return res.status(500).json({ error: err.message });
+  }
+});
 
 /* ==========================================================================
    Garten: Wochenplan (Europe/Zurich) — zur vollen Minute schalten

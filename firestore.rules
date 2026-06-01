@@ -70,5 +70,8 @@ service cloud.firestore {
     match /bewaesserung_tasks/{document=**} {
       allow read, write: if true;
     }
+    match /garten_commands/{document=**} {
+      allow read, write: if true;
+    }
   }
 }

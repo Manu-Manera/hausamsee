@@ -4733,6 +4733,229 @@ $("gartenPlanForm")?.addEventListener("submit", async (e) => {
 });
 
 /* ==========================================================================
+   Garten · Jetzt bewässern (30 Min, Regen ±6h)
+   ========================================================================== */
+
+const GARTEN_MANUAL_MINUTES = 30;
+const GARTEN_RAIN_METEO_TTL_MS = 15 * 60 * 1000;
+let gartenRainMeteoCache = { t: 0, data: null };
+
+function hourLooksRainy(precipMm, wmoCode) {
+  const p = Number(precipMm);
+  if (!Number.isNaN(p) && p > 0.1) return true;
+  const c = Number(wmoCode);
+  if (Number.isNaN(c)) return p > 0.05;
+  if (c >= 51 && c <= 67) return true;
+  if (c >= 80 && c <= 82) return true;
+  if (c >= 95) return true;
+  if (c >= 71 && c <= 77) return true;
+  if (c >= 85 && c <= 86) return true;
+  return p > 0.05;
+}
+
+async function fetchGartenRainMeteo() {
+  if (gartenRainMeteoCache.data && Date.now() - gartenRainMeteoCache.t < GARTEN_RAIN_METEO_TTL_MS) {
+    return gartenRainMeteoCache.data;
+  }
+  const u = new URL("https://api.open-meteo.com/v1/forecast");
+  u.searchParams.set("latitude", String(WEATHER_SPOT.lat));
+  u.searchParams.set("longitude", String(WEATHER_SPOT.lon));
+  u.searchParams.set("hourly", "precipitation,weathercode");
+  u.searchParams.set("timezone", "Europe/Zurich");
+  u.searchParams.set("past_days", "2");
+  u.searchParams.set("forecast_days", "2");
+  u.searchParams.set("timeformat", "unixtime");
+  const res = await fetch(u.toString());
+  if (!res.ok) throw new Error(`Wetter ${res.status}`);
+  const data = await res.json();
+  gartenRainMeteoCache = { t: Date.now(), data };
+  return data;
+}
+
+/** Regen in ±6h um jetzt (wie Server-Gießplan). */
+async function gartenRainRiskIn6h() {
+  try {
+    const data = await fetchGartenRainMeteo();
+    const hourly = data?.hourly;
+    const times = hourly?.time;
+    const prec = hourly?.precipitation;
+    const codes = hourly?.weathercode;
+    if (!Array.isArray(times) || !times.length) return { rainy: false, detail: "" };
+
+    const now = Date.now();
+    const ws = now - 6 * 60 * 60 * 1000;
+    const we = now + 6 * 60 * 60 * 1000;
+    const fmt = new Intl.DateTimeFormat("de-CH", {
+      timeZone: "Europe/Zurich",
+      weekday: "short",
+      day: "2-digit",
+      month: "short",
+      hour: "2-digit",
+      minute: "2-digit",
+    });
+    const hits = [];
+
+    for (let i = 0; i < times.length; i++) {
+      const raw = times[i];
+      const hs = (typeof raw === "number" ? raw : Number(raw)) * 1000;
+      if (Number.isNaN(hs)) continue;
+      const he = hs + 3600 * 1000;
+      if (hs >= we || he <= ws) continue;
+      if (!hourLooksRainy(prec?.[i], codes?.[i])) continue;
+      hits.push(fmt.format(new Date(hs)));
+    }
+
+    if (!hits.length) return { rainy: false, detail: "" };
+    const uniq = [...new Set(hits)].slice(0, 6);
+    const more = hits.length > uniq.length ? ` (+${hits.length - uniq.length} weitere)` : "";
+    return {
+      rainy: true,
+      detail: `Niederschlag erwartet bzw. gemeldet um: ${uniq.join(", ")}${more}.`,
+    };
+  } catch (e) {
+    console.warn("gartenRainRiskIn6h", e);
+    return { rainy: false, detail: "", error: true };
+  }
+}
+
+function getGartenDeviceConfigFromUi() {
+  flushGartenTimeInputs();
+  mergeGartenPlanFromDom();
+  const p = normalizeGartenPlan(gartenPlanCache);
+  return {
+    deviceComputer: ($("gartenDeviceComputer")?.value || p.deviceComputer || "Bewässerungscomputer").trim(),
+    devicePumpe: ($("gartenDeviceName")?.value || p.deviceName || "Pumpe").trim(),
+    nachlaufSec: typeof p.nachlaufSec === "number" ? p.nachlaufSec : 30,
+  };
+}
+
+function waitForGartenCommandResult(ref) {
+  return new Promise((resolve) => {
+    const timeout = setTimeout(() => {
+      unsub();
+      resolve({ ok: false, message: "Timeout – Server antwortet nicht." });
+    }, 90000);
+    const unsub = onSnapshot(ref, (snap) => {
+      const d = snap.data();
+      if (!d || d.status === "pending" || d.status === "running") return;
+      clearTimeout(timeout);
+      unsub();
+      resolve({
+        ok: d.status === "done",
+        message: d.message || (d.status === "done" ? "OK" : "Fehler"),
+      });
+    }, (err) => {
+      clearTimeout(timeout);
+      resolve({ ok: false, message: err?.message || "Listener-Fehler" });
+    });
+  });
+}
+
+async function submitGartenCommand(payload) {
+  if (!requireMember("Garten bewässern")) return { ok: false, message: "Nur für WG-Mitglieder." };
+  if (!firebaseReady) {
+    showToast("Nur mit Firebase-Verbindung möglich.", "error");
+    return { ok: false, message: "Kein Firebase" };
+  }
+  const ref = await addDoc(collection(db, "garten_commands"), {
+    ...payload,
+    status: "pending",
+    member: auth.member,
+    createdAt: serverTimestamp(),
+  });
+  return waitForGartenCommandResult(ref);
+}
+
+function openGartenRainWarnDialog(detailText) {
+  return new Promise((resolve) => {
+    const dialog = document.createElement("dialog");
+    dialog.className = "auth-dialog";
+    dialog.innerHTML = `
+      <form method="dialog" class="auth-form" style="max-width:420px;">
+        <h2 class="auth-title">🌧️ Regen-Warnung</h2>
+        <p style="margin:0 0 12px;line-height:1.45;">${escapeHtml(detailText)}</p>
+        <p class="form-note" style="margin:0 0 16px;">
+          Laut Wetterdaten (Open-Meteo, ±6 Stunden um jetzt) hat es geregnet oder es wird regnen.
+          Möchtest du die Bewässerung trotzdem starten?
+        </p>
+        <div class="auth-btns">
+          <button type="button" class="btn-secondary" id="gartenRainCancel">Abbrechen</button>
+          <button type="button" class="btn-primary" id="gartenRainForce">Trotzdem bewässern (${GARTEN_MANUAL_MINUTES} Min)</button>
+        </div>
+      </form>
+    `;
+    document.body.appendChild(dialog);
+    const done = (v) => {
+      dialog.close();
+      dialog.remove();
+      resolve(v);
+    };
+    dialog.querySelector("#gartenRainCancel").addEventListener("click", () => done(false));
+    dialog.querySelector("#gartenRainForce").addEventListener("click", () => done(true));
+    dialog.addEventListener("cancel", (e) => {
+      e.preventDefault();
+      done(false);
+    });
+    dialog.showModal();
+  });
+}
+
+async function runGartenWaterNow(forceRain) {
+  const cfg = getGartenDeviceConfigFromUi();
+  const result = await submitGartenCommand({
+    action: "start",
+    minutes: GARTEN_MANUAL_MINUTES,
+    forceRain: !!forceRain,
+    ...cfg,
+  });
+  const plain = (result.message || "").replace(/\*/g, "");
+  showToast(plain.slice(0, 280) || (result.ok ? "Bewässerung gestartet." : "Fehler"), result.ok ? "success" : "error");
+  return result.ok;
+}
+
+async function startGartenWaterNow() {
+  if (!requireMember("Jetzt bewässern")) return;
+  const btn = $("gartenWaterNowBtn");
+  const stopBtn = $("gartenWaterStopBtn");
+  if (btn) btn.disabled = true;
+  if (stopBtn) stopBtn.disabled = true;
+  try {
+    showToast("Prüfe Wetter…", "info");
+    const risk = await gartenRainRiskIn6h();
+    let forceRain = false;
+    if (risk.rainy) {
+      const proceed = await openGartenRainWarnDialog(risk.detail);
+      if (!proceed) return;
+      forceRain = true;
+    }
+    showToast(`Starte Bewässerung (${GARTEN_MANUAL_MINUTES} Min)…`, "info");
+    await runGartenWaterNow(forceRain);
+  } finally {
+    if (btn) btn.disabled = false;
+    if (stopBtn) stopBtn.disabled = false;
+  }
+}
+
+async function stopGartenWaterNow() {
+  if (!requireMember("Bewässerung stoppen")) return;
+  const btn = $("gartenWaterNowBtn");
+  const stopBtn = $("gartenWaterStopBtn");
+  if (btn) btn.disabled = true;
+  if (stopBtn) stopBtn.disabled = true;
+  try {
+    const result = await submitGartenCommand({ action: "stop" });
+    const plain = (result.message || "").replace(/\*/g, "");
+    showToast(plain.slice(0, 200) || (result.ok ? "Gestoppt." : "Fehler"), result.ok ? "success" : "error");
+  } finally {
+    if (btn) btn.disabled = false;
+    if (stopBtn) stopBtn.disabled = false;
+  }
+}
+
+$("gartenWaterNowBtn")?.addEventListener("click", () => { void startGartenWaterNow(); });
+$("gartenWaterStopBtn")?.addEventListener("click", () => { void stopGartenWaterNow(); });
+
+/* ==========================================================================
    Kandidat:innen (nur für WG)
    ========================================================================== */
 

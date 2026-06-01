@@ -16,7 +16,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,400;0,9..144,600;0,9..144,700;1,9..144,400&family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet" />
-  <link rel="stylesheet" href="styles.css?v=20260517b" />
+  <link rel="stylesheet" href="styles.css?v=20260601a" />
   <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Ctext y='.9em' font-size='90'%3E🏡%3C/text%3E%3C/svg%3E" />
 </head>
 <body>
@@ -492,6 +492,20 @@
             </div>
           </fieldset>
           
+          <div class="garten-now-row">
+            <button
+              type="button"
+              id="gartenWaterNowBtn"
+              class="btn btn-primary"
+              title="Startet sofort die Bewässerungssequenz für 30 Minuten (Bewässerungscomputer → Pumpe → Stopp). Wenn in den letzten oder nächsten 6 Stunden Regen gemeldet wurde oder erwartet wird, erscheint zuerst eine Warnung – du kannst abbrechen oder trotzdem giessen."
+            >💧 Jetzt bewässern</button>
+            <button
+              type="button"
+              id="gartenWaterStopBtn"
+              class="btn btn-ghost"
+              title="Stoppt die laufende Garten-Bewässerung sofort (Pumpe zuerst aus, dann Bewässerungscomputer)."
+            >⏹ Bewässerung stoppen</button>
+          </div>
           <div class="garten-week" id="gartenWeek"></div>
           <p class="form-note">
             Pro Tag kannst du mehrere Blöcke anlegen. «Ein» muss vor «Aus» liegen (gleicher Tag).
@@ -1155,6 +1169,6 @@
   <!-- Toast -->
   <div id="toast" class="toast hidden"></div>
 
-  <script type="module" src="app.js?v=20260517c"></script>
+  <script type="module" src="app.js?v=20260601a"></script>
 </body>
 </html>
