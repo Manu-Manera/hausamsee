@@ -3615,9 +3615,9 @@ function gartenTodoBadgesHtml(item) {
   return `<div class="gartentodo-badges">${parts.join("")}</div>`;
 }
 
-/** Terminzeile auf der Kachel: KW-Ende + Garten-Slot. */
+/** Terminzeile auf der Kachel: nur «bis spätestens» (letzter KW-Tag), ohne Kalender-Uhrzeit. */
 function formatGartenTodoCardWhenLine(next) {
-  return `${formatKwLabel(next)} · ${formatGartenWorkSlot(next)}`;
+  return formatKwLabel(next);
 }
 
 /** Kompakte Kachel-Anzeige: Status + Termin (KW «bis spätestens» für alle offenen Runden). */
