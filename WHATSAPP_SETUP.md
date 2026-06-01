@@ -29,7 +29,22 @@ Diese Anleitung richtet den WhatsApp-Bot für "Haus am See" ein. Er kann:
 5. Auf der Setup-Seite siehst du:
    - **Phone number ID** (z. B. `123456789012345`) → wird `WHATSAPP_PHONE_ID`
    - **Temporary access token** → wird `WHATSAPP_TOKEN`
-6. Füge unter **To** deine eigene Handynummer (die der WG-Mitglieder) als **Empfänger** hinzu – in der Sandbox darfst du nur an verifizierte Nummern senden.
+6. Füge unter **To** / **Add phone number** die **echten Handynummern der WG** als **Test-Empfänger** hinzu (nicht die +1-555-Botnummer). Jede Nummer muss per SMS-Code auf dem jeweiligen Handy bestätigt werden. Proaktive Nachrichten (08:00 Garten/Giess, Test-API) scheitern sonst mit **#133010**.
+
+   | Name | In Meta eintragen (E.164) | Intern (Bot `.env`) |
+   |------|---------------------------|---------------------|
+   | Manu | `+41 79 838 55 90` | `41798385590` |
+   | Corina | `+41 79 555 39 06` | `41795553906` |
+   | Jasmin | `+41 76 298 89 34` | `41762988934` |
+   | Dino | `+41 76 574 00 20` | `41765740020` |
+   | Andy | `+41 79 848 99 99` | `41798489999` |
+   | Hugues | `+41 79 591 12 51` | `41795911251` |
+   | Fanny | `+41 78 956 11 00` | `41789561100` |
+   | (weitere WG) | `+41 78 408 27 85` | `41784082785` |
+
+   **Gustav sendet von:** `+1 (555) 188-0528` (Meta-Sandbox, nur Absender – nicht als Empfänger eintragen).
+
+   Diese Liste kann nur in der [Meta Developer Console](https://developers.facebook.com) gepflegt werden, nicht per Code deployen.
 
 ## Schritt 2 – Cloud Functions deployen
 
@@ -115,4 +130,4 @@ Im `functions/index.js` kannst du die NLP-Erkennung erweitern, z. B. `Putzplan-U
   firebase functions:log --only whatsappWebhook
   ```
 - **WhatsApp send failed 401** → Token abgelaufen (Sandbox 24 h) oder falsch. Neu generieren.
-- **WhatsApp send failed 131030** → Empfänger nicht verifiziert (Sandbox-Limit). In Meta-App die Nummer als Test-Empfänger zufügen.
+- **WhatsApp send failed 131030 / #133010** → Empfänger nicht in der Meta-Sandbox verifiziert. Unter **WhatsApp → API Setup → To** alle WG-Nummern aus der Tabelle oben hinzufügen und mit SMS bestätigen.
