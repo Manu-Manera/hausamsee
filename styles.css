@@ -4194,11 +4194,29 @@ body.is-spotify-track .vinyl {
   border-radius: var(--r-md);
   padding: 12px 14px;
 }
+.garten-day.is-today {
+  background: linear-gradient(135deg, rgba(238, 248, 234, 0.95) 0%, rgba(255, 252, 246, 0.9) 100%);
+  border-color: rgba(76, 143, 88, 0.28);
+  box-shadow: inset 4px 0 0 rgba(76, 143, 88, 0.35);
+}
 .garten-day-title {
   font-size: 0.9rem;
   font-weight: 700;
   margin: 0 0 4px;
   color: var(--text);
+}
+.garten-day-today-mark {
+  display: inline-block;
+  margin-left: 6px;
+  padding: 1px 7px;
+  font-size: 0.68rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: #2e6b34;
+  background: rgba(129, 199, 132, 0.22);
+  border-radius: 999px;
+  vertical-align: middle;
 }
 .garten-day-log {
   margin: 0 0 8px;

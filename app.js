@@ -6010,9 +6010,11 @@ function renderGartenWeek() {
   if (devComp) devComp.value = data.deviceComputer || "Bewässerungscomputer";
   if (nachlauf) nachlauf.value = data.nachlaufSec ?? 30;
 
+  const todayYmd = zurichTodayYmd();
   root.innerHTML = GARTEN_DAY_DEF.map(([key, label]) => {
     const slots = data.days[key] || [];
-    const nextYmd = nextYmdForGartenDayKey(key) || zurichTodayYmd();
+    const nextYmd = nextYmdForGartenDayKey(key) || todayYmd;
+    const isToday = nextYmd === todayYmd;
     const inner = slots.length
       ? slots.map((s, i) =>
         gartenSlotRowHtml(
@@ -6023,8 +6025,8 @@ function renderGartenWeek() {
           !!data.slotSkips?.[gartenSlotSkipKey(nextYmd, key, i)]
         )).join("")
       : "";
-    return `<div class="garten-day" data-day="${key}">
-      <h4 class="garten-day-title">${label}</h4>
+    return `<div class="garten-day${isToday ? " is-today" : ""}" data-day="${key}">
+      <h4 class="garten-day-title">${escapeHtml(label)}${isToday ? ' <span class="garten-day-today-mark">Heute</span>' : ""}</h4>
       ${gartenDayLogHtml(key, data)}
       <div class="garten-slots">${inner || `<p class="form-note" style="margin:0 0 8px;">Noch keine Zeiten — unten «Zeitblock» klicken.</p>`}</div>
       <button type="button" class="btn btn-ghost small garten-add-slot" data-day="${key}">+ Zeitblock</button>
