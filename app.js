@@ -5878,7 +5878,76 @@ function defaultGartenPlan() {
     useSequenz: true,
     days: { mon: [], tue: [], wed: [], thu: [], fri: [], sat: [], sun: [] },
     slotSkips: {},
+    waterLog: {},
   };
+}
+
+function gartenYmdDaysAgo(ymd, days) {
+  const [Y, M, D] = String(ymd || zurichTodayYmd()).split("-").map(Number);
+  if ([Y, M, D].some((n) => Number.isNaN(n))) return ymd;
+  const t = Date.UTC(Y, M - 1, D) - days * 86400000;
+  return new Date(t).toLocaleDateString("en-CA", { timeZone: "Europe/Zurich" });
+}
+
+function pruneGartenWaterLog(raw) {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return {};
+  const cutoff = gartenYmdDaysAgo(zurichTodayYmd(), 21);
+  const o = {};
+  for (const [k, v] of Object.entries(raw)) {
+    if (k >= cutoff && v && typeof v === "object") o[k] = v;
+  }
+  return o;
+}
+
+function gartenWaterLogAt(entry) {
+  if (!entry?.at) return null;
+  if (typeof entry.at.toDate === "function") return entry.at.toDate();
+  if (entry.at instanceof Date) return entry.at;
+  const d = new Date(entry.at);
+  return Number.isNaN(d.getTime()) ? null : d;
+}
+
+const GARTEN_WATER_SOURCE_LABELS = {
+  plan: "Zeitplan",
+  manual: "Manuell",
+  whatsapp: "WhatsApp",
+  website: "Website",
+};
+
+function formatGartenWaterLogLine(entry) {
+  if (!entry?.status) return "Heute: noch nicht gegossen";
+  const at = gartenWaterLogAt(entry);
+  const timeStr = at
+    ? at.toLocaleTimeString("de-CH", { hour: "2-digit", minute: "2-digit", timeZone: "Europe/Zurich" })
+    : "";
+  const src = GARTEN_WATER_SOURCE_LABELS[entry.source] || entry.source || "";
+  const tail = [timeStr, src].filter(Boolean).join(" · ");
+  if (entry.status === "done") return `✅ Heute gegossen${tail ? ` · ${tail}` : ""}`;
+  if (entry.status === "started") return `💧 Bewässerung läuft${tail ? ` · ${tail}` : ""}`;
+  if (entry.status === "skipped_rain") return "🌧️ Heute wegen Regen übersprungen";
+  if (entry.status === "failed") return "❌ Bewässerung fehlgeschlagen";
+  return "Heute: noch nicht gegossen";
+}
+
+/** Log-Zeile unter dem Wochentag (heutiger Kalendertag für diesen Wochentag). */
+function gartenDayLogHtml(dayKey, data) {
+  const today = zurichTodayYmd();
+  const nextYmd = nextYmdForGartenDayKey(dayKey);
+  const isToday = nextYmd === today;
+  if (!isToday) {
+    return nextYmd
+      ? `<p class="garten-day-log is-future">Nächster Lauf: ${escapeHtml(formatGartenYmdShort(nextYmd))}</p>`
+      : "";
+  }
+  const entry = data.waterLog?.[today];
+  const cls = entry?.status === "done"
+    ? "is-done"
+    : entry?.status === "started"
+      ? "is-running"
+      : entry?.status === "skipped_rain"
+        ? "is-rain"
+        : "is-pending";
+  return `<p class="garten-day-log ${cls}">${escapeHtml(formatGartenWaterLogLine(entry))}</p>`;
 }
 
 let gartenPlanCache = null;
@@ -5892,6 +5961,7 @@ function normalizeGartenPlan(raw) {
   d.nachlaufSec = typeof raw.nachlaufSec === "number" ? Math.max(0, Math.min(300, raw.nachlaufSec)) : 30;
   d.useSequenz = raw.useSequenz !== false;
   d.slotSkips = pruneGartenSlotSkips(raw.slotSkips);
+  d.waterLog = pruneGartenWaterLog(raw.waterLog);
   "mon tue wed thu fri sat sun".split(" ").forEach((k) => {
     const arr = raw.days?.[k];
     d.days[k] = Array.isArray(arr)
@@ -5955,6 +6025,7 @@ function renderGartenWeek() {
       : "";
     return `<div class="garten-day" data-day="${key}">
       <h4 class="garten-day-title">${label}</h4>
+      ${gartenDayLogHtml(key, data)}
       <div class="garten-slots">${inner || `<p class="form-note" style="margin:0 0 8px;">Noch keine Zeiten — unten «Zeitblock» klicken.</p>`}</div>
       <button type="button" class="btn btn-ghost small garten-add-slot" data-day="${key}">+ Zeitblock</button>
     </div>`;
@@ -6096,6 +6167,7 @@ function collectGartenPlanFromDom(prev) {
       ...baseFields,
       days,
       slotSkips: gartenPlanCache ? pruneGartenSlotSkips(gartenPlanCache.slotSkips) : {},
+      waterLog: gartenPlanCache ? pruneGartenWaterLog(gartenPlanCache.waterLog) : {},
     };
   }
   GARTEN_DAY_KEYS.forEach((key) => {
@@ -6114,6 +6186,9 @@ function collectGartenPlanFromDom(prev) {
     days,
     slotSkips: gartenPlanCache
       ? pruneGartenSlotSkips(gartenPlanCache.slotSkips)
+      : {},
+    waterLog: gartenPlanCache
+      ? pruneGartenWaterLog(gartenPlanCache.waterLog)
       : {},
   };
 }

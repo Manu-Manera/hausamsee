@@ -1119,6 +1119,7 @@ async function startGartenSequenz(minutes, requestedBy, config = {}) {
       done: false,
       sendSuccessMessage: true, // Erfolgsmeldung am Ende senden
       bewässerungsMinuten: minutes, // Für die Meldung
+      waterLogSource: config.waterLogSource || (requestedBy ? "whatsapp" : "manual"),
       createdAt: FieldValue.serverTimestamp(),
     },
   ];
@@ -1128,6 +1129,17 @@ async function startGartenSequenz(minutes, requestedBy, config = {}) {
   }
   
   await debugLog("garten_seq_started", { sequenzId, minutes, deviceComputer, devicePumpe, nachlaufSec });
+
+  const { dayKey: todayKey } = zurichWeekdayKeyAndHM();
+  await setGartenWaterLog(gartenYmdZurichNow(), {
+    status: "started",
+    source: config.waterLogSource || (requestedBy ? "whatsapp" : "manual"),
+    dayKey: config.dayKey || todayKey,
+    slotIndex: config.slotIndex ?? null,
+    by: config.member || null,
+    minutes,
+    sequenzId,
+  });
   
   const pumpeAusTime = new Date(t_pumpeAus).toLocaleTimeString("de-CH", { hour: "2-digit", minute: "2-digit", timeZone: "Europe/Zurich" });
   const endeTime = new Date(t_computerAus).toLocaleTimeString("de-CH", { hour: "2-digit", minute: "2-digit", timeZone: "Europe/Zurich" });
@@ -3228,6 +3240,8 @@ exports.onGartenCommand = onDocumentCreated("garten_commands/{id}", async (event
       devicePumpe,
       nachlaufSec,
       skipRainCheck: forceRain,
+      waterLogSource: "website",
+      member,
     });
 
     await ref.update({
@@ -3688,6 +3702,46 @@ function normHM(t) {
   return `${String(parseInt(m[1], 10)).padStart(2, "0")}:${m[2]}`;
 }
 
+function gartenYmdDaysAgo(ymd, days) {
+  const [Y, M, D] = String(ymd || gartenYmdZurichNow()).split("-").map(Number);
+  if ([Y, M, D].some((n) => Number.isNaN(n))) return ymd;
+  const t = Date.UTC(Y, M - 1, D) - days * 86400000;
+  return new Date(t).toLocaleDateString("en-CA", { timeZone: "Europe/Zurich" });
+}
+
+function pruneGartenWaterLog(raw) {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return {};
+  const cutoff = gartenYmdDaysAgo(gartenYmdZurichNow(), 21);
+  const o = {};
+  for (const [k, v] of Object.entries(raw)) {
+    if (k >= cutoff && v && typeof v === "object") o[k] = v;
+  }
+  return o;
+}
+
+/** Tages-Log auf config/gartenPlan (ob heute schon gegossen wurde). */
+async function setGartenWaterLog(ymd, patch, opts = {}) {
+  const ref = db.doc("config/gartenPlan");
+  try {
+    await db.runTransaction(async (t) => {
+      const snap = await t.get(ref);
+      const data = snap.exists ? snap.data() : {};
+      const waterLog = pruneGartenWaterLog(data.waterLog || {});
+      const prev = waterLog[ymd];
+      if (opts.noOverwriteDone && (prev?.status === "done" || prev?.status === "started")) return;
+      waterLog[ymd] = {
+        ...(prev || {}),
+        ...patch,
+        ymd,
+        updatedAt: FieldValue.serverTimestamp(),
+      };
+      t.set(ref, { waterLog }, { merge: true });
+    });
+  } catch (e) {
+    logger.warn("setGartenWaterLog failed", e?.message || e);
+  }
+}
+
 async function runGartenPlanTick() {
   if (!plugs.isConfigured()) return;
   let planSnap;
@@ -3717,6 +3771,7 @@ async function runGartenPlanTick() {
       if (gartenRainSkipLoggedYmd !== ymd) {
         gartenRainSkipLoggedYmd = ymd;
         await debugLog("garten_plan_skip_rain", { ymd, dayKey });
+        await setGartenWaterLog(ymd, { status: "skipped_rain", source: "plan", dayKey }, { noOverwriteDone: true });
         logger.info(`Garten: Gießplan heute (${dayKey}) wegen Niederschlag im ±6h-Fenster übersprungen.`);
       }
       return;
@@ -3752,6 +3807,17 @@ async function runGartenPlanTick() {
             nachlaufSec: data.nachlaufSec ?? GARTEN_SEQUENZ_NACHLAUF_SEC,
           });
           await debugLog("garten_plan_seq_start", { hm, dayKey, slotIndex: idx, minutes, result: result.success });
+          if (result.success) {
+            await setGartenWaterLog(ymd, {
+              status: "started",
+              source: "plan",
+              dayKey,
+              slotIndex: idx,
+              slotOn: onT,
+              slotOff: offT,
+              minutes,
+            });
+          }
           
           // WG benachrichtigen über automatischen Start
           if (result.success) {
@@ -3909,6 +3975,12 @@ exports.checkBewaesserung = onSchedule(
               `Alles hat geklappt – der Garten ist gegossen! 🌻💧`
             );
             await debugLog("garten_seq_success_msg", { sequenzId: d.sequenzId, minutes: mins });
+            await setGartenWaterLog(gartenYmdZurichNow(), {
+              status: "done",
+              source: d.waterLogSource || (d.requestedBy ? "whatsapp" : "plan"),
+              minutes: mins,
+              sequenzId: d.sequenzId,
+            });
           }
         } catch (e) {
           logger.error(`Sequenz-Step failed for ${d.device}:`, e.message || e);

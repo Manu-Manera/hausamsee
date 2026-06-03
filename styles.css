@@ -4197,9 +4197,20 @@ body.is-spotify-track .vinyl {
 .garten-day-title {
   font-size: 0.9rem;
   font-weight: 700;
-  margin: 0 0 8px;
+  margin: 0 0 4px;
   color: var(--text);
 }
+.garten-day-log {
+  margin: 0 0 8px;
+  font-size: 0.82rem;
+  font-weight: 600;
+  line-height: 1.35;
+}
+.garten-day-log.is-done { color: #2e7d32; }
+.garten-day-log.is-running { color: #1565c0; }
+.garten-day-log.is-rain { color: #5d4037; }
+.garten-day-log.is-pending { color: #6d4c41; font-weight: 500; }
+.garten-day-log.is-future { color: var(--text-muted); font-weight: 500; font-size: 0.78rem; }
 .garten-slots {
   display: flex;
   flex-direction: column;
