@@ -1752,6 +1752,7 @@ async function addSchaden(entry, addedBy, image) {
     beschreibung: entry.beschreibung,
     prio: entry.prio,
     zustaendig: entry.zustaendig || "",
+    kuemmerer: entry.kuemmerer === "vermieter" ? "vermieter" : "wg",
     status: "offen",
     addedBy: addedBy || "WhatsApp",
     source: "whatsapp",
@@ -1766,6 +1767,7 @@ async function addSchaden(entry, addedBy, image) {
         prio: entry.prio || "medium",
         status: "offen",
         zustaendig: entry.zustaendig || "",
+        kuemmerer: entry.kuemmerer === "vermieter" ? "vermieter" : "wg",
       },
     ],
   };
@@ -1793,6 +1795,10 @@ function schadenPrioIcon(prio) {
   if (prio === "high") return "⚠️";
   if (prio === "low") return "·";
   return "🔧";
+}
+
+function schadenKuemmererTag(kuemmerer) {
+  return kuemmerer === "vermieter" ? " · 🏠 Schelly" : " · 🏡 WG";
 }
 
 async function listOffeneSchaeden(limit = 10) {
@@ -3701,6 +3707,7 @@ exports.checkSchadenReminders = onSchedule(
         ort: d.ort || "",
         prio: d.prio || "medium",
         status: d.status || "offen",
+        kuemmerer: d.kuemmerer === "vermieter" ? "vermieter" : "wg",
       });
     });
 
@@ -3724,7 +3731,7 @@ exports.checkSchadenReminders = onSchedule(
         const ort = s.ort ? ` (${s.ort})` : "";
         const st =
           s.status === "in_bearbeitung" ? " · in Arbeit" : "";
-        return `${icon} ${s.titel}${ort}${st}`;
+        return `${icon} ${s.titel}${ort}${st}${schadenKuemmererTag(s.kuemmerer)}`;
       });
 
       const msg =
@@ -4345,7 +4352,9 @@ exports.dailyDigest = onSchedule(
 
     if (schaeden.length) {
       lines.push("*🔧 Offene Schäden:*");
-      schaeden.forEach((s) => lines.push(`• ${s.titel}${s.ort ? ` (${s.ort})` : ""}`));
+      schaeden.forEach((s) =>
+        lines.push(`• ${s.titel}${s.ort ? ` (${s.ort})` : ""}${schadenKuemmererTag(s.kuemmerer)}`)
+      );
       lines.push("");
     }
 

@@ -3997,6 +3997,48 @@ body.is-spotify-track .vinyl {
   align-items: center;
 }
 
+.schaden-kuemmerer-badge {
+  font-size: 0.72rem;
+  font-weight: 600;
+  padding: 2px 8px;
+  border-radius: 999px;
+  white-space: nowrap;
+}
+
+.schaden-kuemmerer-badge.wg {
+  background: rgba(56, 142, 60, 0.15);
+  color: #2e7d32;
+}
+
+.schaden-kuemmerer-badge.vermieter {
+  background: rgba(156, 39, 176, 0.12);
+  color: #7b1fa2;
+}
+
+.schaden-kuemmerer-check {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 0.85rem;
+  color: var(--text-muted);
+  cursor: pointer;
+  user-select: none;
+}
+
+.schaden-kuemmerer-check input {
+  accent-color: var(--accent);
+}
+
+.schaden-kuemmerer-check--form {
+  align-items: flex-start;
+  line-height: 1.45;
+  color: var(--text);
+}
+
+.schaden-kuemmerer-field {
+  margin-top: -4px;
+}
+
 /* ============================================
    Haus-Cards mit Foto
    ============================================ */

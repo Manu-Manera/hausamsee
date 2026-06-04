@@ -16,7 +16,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,400;0,9..144,600;0,9..144,700;1,9..144,400&family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet" />
-  <link rel="stylesheet" href="styles.css?v=20260603h" />
+  <link rel="stylesheet" href="styles.css?v=20260604b" />
   <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Ctext y='.9em' font-size='90'%3E🏡%3C/text%3E%3C/svg%3E" />
 </head>
 <body>
@@ -763,11 +763,17 @@
                 </select>
               </div>
               <div class="field">
-                <label for="schadZustaendig">Kümmert sich</label>
+                <label for="schadZustaendig">Kümmert sich (Person)</label>
                 <select id="schadZustaendig">
                   <option value="">Noch offen</option>
                 </select>
               </div>
+            </div>
+            <div class="field schaden-kuemmerer-field">
+              <label class="schaden-kuemmerer-check schaden-kuemmerer-check--form">
+                <input type="checkbox" id="schadVermieter" />
+                <span><strong>Vermieterin</strong> Frau Schellenberg (<em>Schelly</em>) kümmert sich — sonst WG intern</span>
+              </label>
             </div>
             <div class="field">
               <label for="schadFoto">Foto (optional)</label>
@@ -1221,6 +1227,6 @@
   <!-- Toast -->
   <div id="toast" class="toast hidden"></div>
 
-  <script type="module" src="app.js?v=20260604a"></script>
+  <script type="module" src="app.js?v=20260604b"></script>
 </body>
 </html>

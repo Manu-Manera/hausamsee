@@ -6656,6 +6656,16 @@ $("kandidatForm")?.addEventListener("submit", async (e) => {
 let schaedenCache = [];
 const PRIO_LABEL = { low: "Niedrig", medium: "Mittel", high: "Hoch" };
 const SCHADEN_STATUS_LABEL = { offen: "Offen", in_bearbeitung: "In Arbeit", erledigt: "Erledigt" };
+/** wg = WG intern, vermieter = Frau Schellenberg (Schelly) */
+const SCHADEN_KUEMMERER_LABEL = { wg: "WG intern", vermieter: "Vermieterin (Schelly)" };
+
+function normalizeSchadenKuemmerer(v) {
+  return v === "vermieter" ? "vermieter" : "wg";
+}
+
+function schadenKuemmererLabel(v) {
+  return SCHADEN_KUEMMERER_LABEL[normalizeSchadenKuemmerer(v)];
+}
 
 function schadenHistoryEntry(action, fields = {}) {
   return {
@@ -6696,6 +6706,7 @@ function getSchadenHistory(item) {
       prio: item.prio || "medium",
       status: "offen",
       zustaendig: item.zustaendig || "",
+      kuemmerer: normalizeSchadenKuemmerer(item.kuemmerer),
     },
   ];
 }
@@ -6716,6 +6727,7 @@ function schadenHistoryActionLabel(action) {
   if (action === "status") return "Status";
   if (action === "zustaendig") return "Zuständig";
   if (action === "reminder") return "WhatsApp-Erinnerung";
+  if (action === "kuemmerer") return "Zuständigkeit";
   return action || "Änderung";
 }
 
@@ -6735,6 +6747,11 @@ function schadenHistoryDetailText(h, item) {
     return `${prev} → ${next}`;
   }
   if (h.action === "reminder") return h.next === "an" || h.next === true ? "eingeschaltet" : "ausgeschaltet";
+  if (h.action === "kuemmerer") {
+    const prev = schadenKuemmererLabel(h.prev);
+    const next = schadenKuemmererLabel(h.next);
+    return `${prev} → ${next}`;
+  }
   return h.note || "";
 }
 
@@ -6781,7 +6798,7 @@ function downloadSchaedenExcel() {
 
   lines.push(`${bom}Schäden – Übersicht`);
   lines.push(
-        ["ID", "Titel", "Ort", "Status", "Priorität", "Zuständig", "WhatsApp-Erinnerung", "Gemeldet von", "Erstellt am", "Beschreibung", "Foto"]
+        ["ID", "Titel", "Ort", "Status", "Priorität", "Zuständig", "Kümmert", "WhatsApp-Erinnerung", "Gemeldet von", "Erstellt am", "Beschreibung", "Foto"]
       .map(escapeCsvCell)
       .join(sep)
   );
@@ -6794,6 +6811,7 @@ function downloadSchaedenExcel() {
         SCHADEN_STATUS_LABEL[s.status] || s.status,
         PRIO_LABEL[s.prio] || s.prio,
         s.zustaendig ? mLabel(s.zustaendig) : "",
+        schadenKuemmererLabel(s.kuemmerer),
         s.zustaendig && s.reminder !== false ? "ja" : "nein",
         s.addedBy ? mLabel(s.addedBy) : "",
         formatSchadenCreated(s.createdAt),
@@ -6876,9 +6894,13 @@ function renderSchaeden() {
       ? `${mEmoji(zustaendigBewohner.name)} ${escapeHtml(mLabel(zustaendigBewohner.name))}`
       : s.zustaendig ? escapeHtml(mLabel(s.zustaendig) || s.zustaendig) : "noch niemand";
     const schadenReminderOn = !!s.zustaendig && s.reminder !== false && status !== "erledigt";
+    const kuemmerer = normalizeSchadenKuemmerer(s.kuemmerer);
     const reminderBadge = schadenReminderOn
       ? `<span class="gartentodo-reminder-badge" title="${escapeAttr(TODO_CARD_LABELS.schadenReminderTitle)}">📱</span>`
       : "";
+    const kuemmererBadge = kuemmerer === "vermieter"
+      ? `<span class="schaden-kuemmerer-badge vermieter" title="Frau Schellenberg (Schelly)">🏠 Schelly</span>`
+      : `<span class="schaden-kuemmerer-badge wg" title="WG kümmert sich intern">🏡 WG</span>`;
 
     return `
       <article class="schaden-card prio-${prio} status-${status}">
@@ -6889,11 +6911,13 @@ function renderSchaeden() {
             <span class="status-badge ${status === 'erledigt' ? 'eingezogen' : status === 'in_bearbeitung' ? 'eingeladen' : 'offen'}">
               ${status === 'erledigt' ? '✓ Erledigt' : status === 'in_bearbeitung' ? '🛠️ In Arbeit' : '⏳ Offen'}
             </span>
+            ${kuemmererBadge}
             ${reminderBadge}
           </div>
         </div>
         <div class="schaden-meta">
           ${s.ort ? `<span>📍 ${escapeHtml(s.ort)}</span>` : ""}
+          <span>${kuemmerer === "vermieter" ? "🏠" : "🏡"} ${escapeHtml(schadenKuemmererLabel(kuemmerer))}</span>
           <span>👤 Kümmert sich: ${zustaendigLabel}</span>
           ${s.addedBy ? `<span>· gemeldet von ${escapeHtml(mLabel(s.addedBy) || s.addedBy)}</span>` : ""}
         </div>
@@ -6914,6 +6938,10 @@ function renderSchaeden() {
               <option value="">— Noch offen —</option>
               ${getActiveAdults().map(b => `<option value="${b.name}" ${s.zustaendig===b.name?'selected':''}>${mEmoji(b.name)} ${escapeHtml(mLabel(b.name))}</option>`).join("")}
             </select>
+            <label class="schaden-kuemmerer-check" title="Frau Schellenberg (Schelly) vs. WG intern">
+              <input type="checkbox" class="schaden-vermieter-cb" data-id="${s.id}" ${kuemmerer === "vermieter" ? "checked" : ""} ${status === "erledigt" ? "disabled" : ""} />
+              Schelly
+            </label>
             <label class="gartentodo-reminder-toggle schaden-reminder-toggle" title="${escapeAttr(TODO_CARD_LABELS.schadenReminderTitle)}">
               <input type="checkbox" class="schaden-reminder-cb" data-id="${s.id}" ${schadenReminderOn ? "checked" : ""} ${!s.zustaendig || status === "erledigt" ? "disabled" : ""} />
               📱 Wöchentlich
@@ -6930,6 +6958,11 @@ function renderSchaeden() {
   });
   list.querySelectorAll("[data-action='zustaendig']").forEach(sel => {
     sel.addEventListener("change", () => setSchadenField(sel.dataset.id, "zustaendig", sel.value));
+  });
+  list.querySelectorAll(".schaden-vermieter-cb").forEach((cb) => {
+    cb.addEventListener("change", () =>
+      setSchadenKuemmerer(cb.dataset.id, cb.checked ? "vermieter" : "wg")
+    );
   });
   list.querySelectorAll(".schaden-reminder-cb").forEach((cb) => {
     cb.addEventListener("change", () => setSchadenReminder(cb.dataset.id, cb.checked));
@@ -6955,9 +6988,11 @@ async function setSchadenField(id, field, value) {
   if (!item) return;
   const prev = item[field] ?? "";
   if (prev === value) return;
+  const historyAction =
+    field === "status" ? "status" : field === "kuemmerer" ? "kuemmerer" : "zustaendig";
   const history = appendSchadenHistory(
     item,
-    schadenHistoryEntry(field === "status" ? "status" : "zustaendig", {
+    schadenHistoryEntry(historyAction, {
       field,
       prev,
       next: value,
@@ -6972,6 +7007,32 @@ async function setSchadenField(id, field, value) {
     updates.erledigtAt = new Date().toISOString();
     updates.reminder = false;
   }
+  if (firebaseReady) {
+    try {
+      await updateDoc(doc(db, "schaeden", id), updates);
+    } catch (e) {
+      showToast("Speichern fehlgeschlagen.", "error");
+    }
+  } else {
+    Object.assign(item, updates);
+    schaedenCache = localStore.schaeden;
+    saveLocal("schaeden", localStore.schaeden);
+    renderSchaeden();
+  }
+}
+
+async function setSchadenKuemmerer(id, kuemmerer) {
+  if (!requireAuth("Zuständigkeit speichern")) return;
+  const item = schaedenCache.find((s) => s.id === id);
+  if (!item || item.status === "erledigt") return;
+  const next = normalizeSchadenKuemmerer(kuemmerer);
+  const prev = normalizeSchadenKuemmerer(item.kuemmerer);
+  if (prev === next) return;
+  const history = appendSchadenHistory(
+    item,
+    schadenHistoryEntry("kuemmerer", { prev, next })
+  );
+  const updates = { kuemmerer: next, history };
   if (firebaseReady) {
     try {
       await updateDoc(doc(db, "schaeden", id), updates);
@@ -7030,6 +7091,7 @@ $("schadenForm")?.addEventListener("submit", async (e) => {
     beschreibung: $("schadBeschreibung").value.trim(),
     prio: $("schadPrio").value || "medium",
     zustaendig: $("schadZustaendig").value || "",
+    kuemmerer: $("schadVermieter")?.checked ? "vermieter" : "wg",
     reminder: !!$("schadZustaendig").value,
     status: "offen",
     addedBy: auth.member,
@@ -7041,6 +7103,7 @@ $("schadenForm")?.addEventListener("submit", async (e) => {
         prio: $("schadPrio").value || "medium",
         status: "offen",
         zustaendig: $("schadZustaendig").value || "",
+        kuemmerer: $("schadVermieter")?.checked ? "vermieter" : "wg",
       }),
     ],
   };
