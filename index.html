@@ -16,7 +16,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,400;0,9..144,600;0,9..144,700;1,9..144,400&family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet" />
-  <link rel="stylesheet" href="styles.css?v=20260604b" />
+  <link rel="stylesheet" href="styles.css?v=20260604e" />
   <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Ctext y='.9em' font-size='90'%3E🏡%3C/text%3E%3C/svg%3E" />
 </head>
 <body>
@@ -355,7 +355,7 @@
       <div class="kalender-panel hidden" id="tabGartentodo" data-wg-only>
         <p class="gartentodo-kw-head" id="gartenTodoKwHead">Kalenderwoche wird geladen…</p>
         <p class="gartentodo-balance" id="gartenTodoBalance" aria-live="polite"></p>
-        <p class="giess-hint">Intervall + faire Einsätze (erledigt + aktuell dran) – bei Tausch und «Erledigt» dieselbe Zählung. Person/Datum unter «Wochen-Reihenfolge &amp; Tausch»; WhatsApp-Erinnerung täglich bis erledigt.</p>
+        <p class="giess-hint">Intervall + faire Einsätze (erledigt + aktuell dran) – bei Tausch und «Erledigt» dieselbe Zählung. Person/Datum unter «Wochen-Reihenfolge &amp; Tausch»; WhatsApp-Erinnerung mit wählbarem Rhythmus bis erledigt.</p>
         <div class="gartentodo-grid" id="gartenTodoGrid"></div>
         <details class="admin-toggle" data-wg-only>
           <summary>➕ Garten-Aufgabe hinzufügen</summary>
@@ -390,10 +390,22 @@
               <p class="form-note">Vorauswahl: nächster Samstag. Uhrzeit im Kalender-Export und Anzeige: 10:00 Uhr.</p>
             </div>
             <div id="gartenTodoFormFair" class="gartentodo-fair-preview" hidden aria-live="polite"></div>
-            <label class="checkbox-row">
-              <input type="checkbox" id="gartenTodoReminder" checked />
-              <span>WhatsApp-Erinnerung (täglich bis erledigt)</span>
-            </label>
+            <div class="field">
+              <span class="field-label-inline">WhatsApp-Erinnerung (wenn fällig)</span>
+              <div class="reminder-cadence-row">
+                <label class="checkbox-row">
+                  <input type="checkbox" id="gartenTodoReminder" checked />
+                  <span>Aktiv</span>
+                </label>
+                <select id="gartenTodoReminderEvery" aria-label="Erinnerungsrhythmus">
+                  <option value="1" selected>Täglich</option>
+                  <option value="2">Alle 2 Tage</option>
+                  <option value="3">Alle 3 Tage</option>
+                  <option value="7">Wöchentlich</option>
+                  <option value="14">Alle 2 Wochen</option>
+                </select>
+              </div>
+            </div>
             <button type="submit" class="btn btn-primary">Speichern</button>
             <p class="form-note">Ohne «Wer»: wenigste Aufgaben. Fälligkeit standardmässig Samstag 10:00. Anpassungen sind für alle sichtbar.</p>
           </form>
@@ -420,10 +432,22 @@
                 <option value="14">Alle 2 Wochen</option>
               </select>
             </div>
-            <label class="checkbox-row">
-              <input type="checkbox" id="giessReminder" checked />
-              <span>WhatsApp-Erinnerung</span>
-            </label>
+            <div class="field">
+              <span class="field-label-inline">WhatsApp-Erinnerung (wenn fällig)</span>
+              <div class="reminder-cadence-row">
+                <label class="checkbox-row">
+                  <input type="checkbox" id="giessReminder" checked />
+                  <span>Aktiv</span>
+                </label>
+                <select id="giessReminderEvery" aria-label="Erinnerungsrhythmus">
+                  <option value="1" selected>Täglich</option>
+                  <option value="2">Alle 2 Tage</option>
+                  <option value="3">Alle 3 Tage</option>
+                  <option value="7">Wöchentlich</option>
+                  <option value="14">Alle 2 Wochen</option>
+                </select>
+              </div>
+            </div>
             <button type="submit" class="btn btn-primary">Speichern</button>
           </form>
         </details>
@@ -750,7 +774,7 @@
       <!-- Schäden -->
       <div class="kalender-panel hidden" id="ternTabSchaeden">
         <p class="section-lead" style="text-align:left;margin-top:0;">
-          Was muss repariert werden? Tragt Schäden ein und haltet fest, wer sich kümmert. Wer zuständig ist, kann 📱 <strong>wöchentliche WhatsApp-Erinnerungen</strong> von Gustav bekommen (montags 9:00). Verlauf und Excel-Export inklusive.
+          Was muss repariert werden? Tragt Schäden ein und haltet fest, wer sich kümmert. Wer zuständig ist, kann 📱 <strong>WhatsApp-Erinnerungen</strong> von Gustav mit wählbarem Rhythmus bekommen. Verlauf und Excel-Export inklusive.
         </p>
         <div class="schaeden-toolbar">
           <button type="button" id="schaedenExportBtn" class="btn btn-ghost">📊 Excel-Export</button>
@@ -799,6 +823,22 @@
               <label for="schadFoto">Foto (optional)</label>
               <input id="schadFoto" type="file" accept="image/*" />
               <small style="color: var(--text-muted);">Wird automatisch verkleinert.</small>
+            </div>
+            <div class="field">
+              <span class="field-label-inline">WhatsApp-Erinnerung (wenn Zuständige:r gesetzt)</span>
+              <div class="reminder-cadence-row">
+                <label class="checkbox-row">
+                  <input type="checkbox" id="schadReminder" checked />
+                  <span>Aktiv</span>
+                </label>
+                <select id="schadReminderEvery" aria-label="Erinnerungsrhythmus">
+                  <option value="1">Täglich</option>
+                  <option value="2">Alle 2 Tage</option>
+                  <option value="3">Alle 3 Tage</option>
+                  <option value="7" selected>Wöchentlich</option>
+                  <option value="14">Alle 2 Wochen</option>
+                </select>
+              </div>
             </div>
             <button type="submit" class="btn btn-primary">Schaden speichern</button>
           </form>
@@ -1247,6 +1287,6 @@
   <!-- Toast -->
   <div id="toast" class="toast hidden"></div>
 
-  <script type="module" src="app.js?v=20260604c"></script>
+  <script type="module" src="app.js?v=20260604e"></script>
 </body>
 </html>

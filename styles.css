@@ -41,7 +41,11 @@
 
 * { box-sizing: border-box; }
 
-html { scroll-behavior: smooth; }
+html {
+  scroll-behavior: smooth;
+  -webkit-text-size-adjust: 100%;
+  text-size-adjust: 100%;
+}
 
 body {
   margin: 0;
@@ -348,8 +352,8 @@ a:hover { color: var(--terracotta); }
   position: relative;
   z-index: 2;
   max-width: 860px;
-  width: 100%;
-  flex: 1;
+  width: auto;
+  flex: 0 1 auto;
   min-width: 0;
   text-align: center;
 }
@@ -357,6 +361,9 @@ a:hover { color: var(--terracotta); }
   .hero-inner {
     flex-direction: column;
     align-items: stretch;
+  }
+  .hero-content {
+    width: 100%;
   }
 }
 
@@ -549,6 +556,8 @@ a:hover { color: var(--terracotta); }
   margin-top: 10px;
   padding-top: 10px;
   border-top: 1px solid rgba(139, 94, 60, 0.15);
+  max-width: 100%;
+  overflow: hidden;
 }
 .wh-day {
   margin: 10px 0 6px;
@@ -1592,7 +1601,7 @@ textarea { resize: vertical; font-family: inherit; }
   gap: 4px;
   row-gap: 6px;
   padding: 5px;
-  width: 100%;
+  width: fit-content;
   max-width: 100%;
   margin: 0 auto 28px;
   background: var(--card);
@@ -1615,7 +1624,7 @@ textarea { resize: vertical; font-family: inherit; }
 }
 
 .tab {
-  flex: 1;
+  flex: 0 1 auto;
   padding: 10px 16px;
   border: none;
   background: transparent;
@@ -1646,7 +1655,7 @@ textarea { resize: vertical; font-family: inherit; }
 
 .putzplan-grid,
 .aufgaben-grid {
-  grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+  grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
   gap: 16px;
   margin-bottom: 20px;
 }
@@ -2035,6 +2044,38 @@ textarea { resize: vertical; font-family: inherit; }
   height: 16px;
   margin: 0;
   cursor: pointer;
+}
+.reminder-cadence-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px 12px;
+}
+.reminder-cadence-select {
+  font-family: inherit;
+  font-size: 0.85rem;
+  font-weight: 600;
+  color: var(--text-soft);
+  padding: 6px 10px;
+  border-radius: var(--r-sm);
+  border: 1px solid var(--card-border);
+  background: var(--linen);
+  min-width: 9.5rem;
+}
+.reminder-cadence-select:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+.field-label-inline {
+  display: block;
+  font-size: 0.85rem;
+  font-weight: 600;
+  color: var(--text-soft);
+  margin-bottom: 6px;
+}
+.schaden-actions-left .reminder-cadence-row {
+  flex: 1 1 100%;
+  margin-top: 4px;
 }
 .gartentodo-actions { margin-top: 8px; }
 .gartentodo-fair-preview {

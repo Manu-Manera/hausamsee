@@ -2002,7 +2002,11 @@ function buildGartenTodoIcs(item, slot = {}) {
     `Intervall: alle ${interval} Tage`,
   ];
   if (slot.roundIndex != null) descParts.push("Voraussichtliche Rotation (Plan)");
-  descParts.push(item.reminder ? "WhatsApp-Erinnerung: ein" : "WhatsApp-Erinnerung: aus");
+  descParts.push(
+    item.reminder
+      ? `WhatsApp-Erinnerung: ${reminderEveryDaysLabel(normalizeReminderEveryDays(item.reminderEveryDays, 1))}`
+      : "WhatsApp-Erinnerung: aus"
+  );
   descParts.push(gartenTodoPermalink());
   lines.push(foldIcsLine(`DESCRIPTION:${icsEscape(descParts.join("\n"))}`));
   lines.push(foldIcsLine(`URL:${gartenTodoPermalink()}`));
@@ -2638,6 +2642,71 @@ let putzCache = [];
    Giessplan (Zimmerpflanzen)
    ========================================================================== */
 
+/** WhatsApp-Erinnerungsrhythmus (Tage zwischen zwei Nachrichten, solange fällig/offen) */
+const REMINDER_EVERY_DAYS_OPTIONS = [
+  { v: 1, l: "Täglich" },
+  { v: 2, l: "Alle 2 Tage" },
+  { v: 3, l: "Alle 3 Tage" },
+  { v: 7, l: "Wöchentlich" },
+  { v: 14, l: "Alle 2 Wochen" },
+];
+
+function normalizeReminderEveryDays(raw, fallback = 1) {
+  const n = parseInt(raw, 10);
+  return REMINDER_EVERY_DAYS_OPTIONS.some((o) => o.v === n) ? n : fallback;
+}
+
+function reminderEveryDaysLabel(n) {
+  const hit = REMINDER_EVERY_DAYS_OPTIONS.find((o) => o.v === normalizeReminderEveryDays(n, 0));
+  return hit ? hit.l : `alle ${n} Tage`;
+}
+
+function reminderCadenceSelectHtml(value, fallback, id, type, disabled = false) {
+  const v = normalizeReminderEveryDays(value, fallback);
+  const dis = disabled ? " disabled" : "";
+  const opts = REMINDER_EVERY_DAYS_OPTIONS.map(
+    (o) => `<option value="${o.v}" ${o.v === v ? "selected" : ""}>${o.l}</option>`
+  ).join("");
+  return `<select class="reminder-cadence-select" data-id="${escapeAttr(id)}" data-reminder-type="${escapeAttr(type)}"${dis} aria-label="Erinnerungsrhythmus">${opts}</select>`;
+}
+
+function reminderCadenceRowHtml({ id, type, checked, everyDays, fallback, cbDisabled = false, selectDisabled = false }) {
+  const on = !!checked;
+  const cbDis = cbDisabled ? " disabled" : "";
+  const selDis = selectDisabled || !on;
+  return `
+    <div class="reminder-cadence-row">
+      <label class="gartentodo-reminder-toggle">
+        <input type="checkbox" class="reminder-cadence-cb" data-id="${escapeAttr(id)}" data-reminder-type="${escapeAttr(type)}" ${on ? "checked" : ""}${cbDis} />
+        <span>📱 WhatsApp</span>
+      </label>
+      ${reminderCadenceSelectHtml(everyDays, fallback, id, type, selDis)}
+    </div>`;
+}
+
+function bindReminderCadenceControls(root) {
+  if (!root) return;
+  root.querySelectorAll(".reminder-cadence-cb").forEach((cb) => {
+    cb.addEventListener("change", () => {
+      const sel = root.querySelector(
+        `.reminder-cadence-select[data-id="${cb.dataset.id}"][data-reminder-type="${cb.dataset.reminderType}"]`
+      );
+      if (sel) sel.disabled = !cb.checked;
+      void setReminderCadence(cb.dataset.reminderType, cb.dataset.id, {
+        reminder: cb.checked,
+        everyDays: sel ? parseInt(sel.value, 10) : undefined,
+      });
+    });
+  });
+  root.querySelectorAll(".reminder-cadence-select").forEach((sel) => {
+    sel.addEventListener("change", () => {
+      void setReminderCadence(sel.dataset.reminderType, sel.dataset.id, {
+        everyDays: parseInt(sel.value, 10),
+      });
+    });
+  });
+}
+
 /** Gemeinsame Begriffe für Giessplan- und Garten-To-Do-Kacheln */
 const TODO_CARD_LABELS = {
   task: "Aufgabe",
@@ -2650,8 +2719,10 @@ const TODO_CARD_LABELS = {
   saveDoneGarten: "Erledigt speichern",
   saveDoneGiess: "Gegossen speichern",
   whatsapp: "WhatsApp",
-  whatsappReminderTitle: "WhatsApp-Erinnerung täglich bis erledigt",
-  schadenReminderTitle: "WhatsApp-Erinnerung 1× pro Woche (Montag 9:00), solange offen",
+  whatsappReminderTitle: (days) =>
+    `WhatsApp-Erinnerung ${reminderEveryDaysLabel(days)} (wenn fällig), bis erledigt`,
+  schadenReminderTitle: (days) =>
+    `WhatsApp-Erinnerung ${reminderEveryDaysLabel(days)}, solange offen`,
   history: "Verlauf",
   historyCount: (n) => `Verlauf (${n})`,
   historyEmpty: "Noch keine Einträge.",
@@ -2750,7 +2821,7 @@ function renderGiessplan() {
             </div>
           </div>
           <div class="gartentodo-head-end">
-            ${item.reminder ? `<span class="gartentodo-reminder-badge" title="${escapeAttr(TODO_CARD_LABELS.whatsappReminderTitle)}">📱</span>` : ""}
+            ${item.reminder ? `<span class="gartentodo-reminder-badge" title="${escapeAttr(TODO_CARD_LABELS.whatsappReminderTitle(normalizeReminderEveryDays(item.reminderEveryDays, 1)))}">📱</span>` : ""}
             <span class="gartentodo-status-chip ${summary.chipCls}">${escapeHtml(summary.chip)}</span>
           </div>
         </header>
@@ -2761,6 +2832,15 @@ function renderGiessplan() {
             <button type="button" class="mini-btn gartentodo-done-btn" data-id="${item.id}" data-action="water">✅ ${TODO_CARD_LABELS.saveDoneGiess}</button>
           </div>`
             : ""}
+          <div class="gartentodo-tools">
+            ${reminderCadenceRowHtml({
+              id: item.id,
+              type: "giess",
+              checked: item.reminder,
+              everyDays: item.reminderEveryDays,
+              fallback: 1,
+            })}
+          </div>
           <div class="gartentodo-actions">
             <button type="button" class="mini-btn danger" data-id="${item.id}" data-action="delete">Löschen</button>
           </div>
@@ -2775,6 +2855,7 @@ function renderGiessplan() {
       else if (btn.dataset.action === "delete") deleteGiessItem(btn.dataset.id);
     });
   });
+  bindReminderCadenceControls(grid);
 }
 
 async function markAsWatered(id) {
@@ -2819,6 +2900,7 @@ $("giessForm")?.addEventListener("submit", async (e) => {
     who: $("giessWho").value,
     intervalDays: parseInt($("giessInterval").value, 10),
     reminder: $("giessReminder").checked,
+    reminderEveryDays: normalizeReminderEveryDays($("giessReminderEvery")?.value, 1),
     lastWatered: null,
     createdAt: Date.now()
   };
@@ -3749,7 +3831,7 @@ function renderGartenTodos() {
     const showDoneBtn = gartenTodoShowDoneButton(item);
     const cardHistoryDrop = gartenTodoCardHistoryDropdownHtml(item);
     const reminderBadge = item.reminder
-      ? `<span class="gartentodo-reminder-badge" title="${escapeAttr(TODO_CARD_LABELS.whatsappReminderTitle)}">📱</span>`
+      ? `<span class="gartentodo-reminder-badge" title="${escapeAttr(TODO_CARD_LABELS.whatsappReminderTitle(normalizeReminderEveryDays(item.reminderEveryDays, 1)))}">📱</span>`
       : "";
 
     return `
@@ -3785,10 +3867,13 @@ function renderGartenTodos() {
             : ""}
           <div class="gartentodo-tools">
             <button type="button" class="event-share-btn gartentodo-share-btn" data-id="${item.id}" data-action="ical" title="In Kalender speichern (iPhone/Android)">📅 Kalender</button>
-            <label class="gartentodo-reminder-toggle" title="${escapeAttr(TODO_CARD_LABELS.whatsappReminderTitle)}">
-              <input type="checkbox" class="gartentodo-reminder-cb" data-id="${item.id}" ${item.reminder ? "checked" : ""} />
-              <span>📱 ${TODO_CARD_LABELS.whatsapp}</span>
-            </label>
+            ${reminderCadenceRowHtml({
+              id: item.id,
+              type: "garten",
+              checked: item.reminder,
+              everyDays: item.reminderEveryDays,
+              fallback: 1,
+            })}
             ${cardHistoryDrop}
           </div>
           <div class="gartentodo-actions">
@@ -3865,35 +3950,87 @@ function renderGartenTodos() {
       }, 0);
     });
   }
-  grid.querySelectorAll(".gartentodo-reminder-cb").forEach((cb) => {
-    cb.addEventListener("change", () => void toggleGartenTodoReminder(cb.dataset.id, cb.checked));
-  });
+  bindReminderCadenceControls(grid);
 }
 
-async function toggleGartenTodoReminder(id, enabled) {
-  if (!requireMember("Garten To-Do")) return;
-  const item = gartenTodoCache.find((t) => t.id === id);
-  if (!item) return;
-  const history = appendGartenTodoHistory(
-    item,
-    gartenTodoHistoryEntry("reminder", {
-      fairNote: enabled ? "WhatsApp-Erinnerung eingeschaltet" : "WhatsApp-Erinnerung ausgeschaltet",
-    })
-  );
-  const updates = { reminder: !!enabled, history };
-  try {
+async function setReminderCadence(type, id, { reminder, everyDays } = {}) {
+  if (type === "garten") {
+    if (!requireMember("Garten To-Do")) return;
+    const item = gartenTodoCache.find((t) => t.id === id);
+    if (!item) return;
+    const updates = {};
+    if (reminder !== undefined) updates.reminder = !!reminder;
+    if (everyDays !== undefined) updates.reminderEveryDays = normalizeReminderEveryDays(everyDays, 1);
+    if (!Object.keys(updates).length) return;
+    const parts = [];
+    if (updates.reminder !== undefined) {
+      parts.push(updates.reminder ? "WhatsApp-Erinnerung an" : "WhatsApp-Erinnerung aus");
+    }
+    if (updates.reminderEveryDays !== undefined) {
+      parts.push(`Rhythmus: ${reminderEveryDaysLabel(updates.reminderEveryDays)}`);
+    }
+    updates.history = appendGartenTodoHistory(
+      item,
+      gartenTodoHistoryEntry("reminder", { fairNote: parts.join(" · ") })
+    );
+    await persistGartenTodoUpdates(id, updates, "📱 Erinnerung gespeichert.", "success");
+    return;
+  }
+  if (type === "giess") {
+    if (!requireAuth("Giessplan ändern")) return;
+    const item = giessplanCache.find((g) => g.id === id);
+    if (!item) return;
+    const updates = {};
+    if (reminder !== undefined) updates.reminder = !!reminder;
+    if (everyDays !== undefined) updates.reminderEveryDays = normalizeReminderEveryDays(everyDays, 1);
+    if (!Object.keys(updates).length) return;
+    try {
+      if (firebaseReady) {
+        await updateDoc(doc(db, "giessplan", id), updates);
+      } else {
+        Object.assign(item, updates);
+        localStore.giessplan = giessplanCache;
+        saveLocal("giessplan", localStore.giessplan);
+        renderGiessplan();
+      }
+      showToast("📱 Erinnerung gespeichert.", "success");
+    } catch (err) {
+      console.error("setReminderCadence giess", err);
+      showToast(`Speichern fehlgeschlagen: ${err.message || err}`, "error");
+    }
+    return;
+  }
+  if (type === "schaden") {
+    if (!requireAuth("Erinnerung speichern")) return;
+    const item = schaedenCache.find((s) => s.id === id);
+    if (!item || !item.zustaendig || item.status === "erledigt") return;
+    const updates = {};
+    if (reminder !== undefined) updates.reminder = !!reminder;
+    if (everyDays !== undefined) {
+      updates.reminderEveryDays = normalizeReminderEveryDays(everyDays, 7);
+    }
+    if (!Object.keys(updates).length) return;
+    const parts = [];
+    if (updates.reminder !== undefined) {
+      parts.push(updates.reminder ? "WhatsApp-Erinnerung an" : "WhatsApp-Erinnerung aus");
+    }
+    if (updates.reminderEveryDays !== undefined) {
+      parts.push(`Rhythmus: ${reminderEveryDaysLabel(updates.reminderEveryDays)}`);
+    }
+    updates.history = appendSchadenHistory(item, schadenHistoryEntry("reminder", { fairNote: parts.join(" · ") }));
     if (firebaseReady) {
-      await updateDoc(doc(db, "gartentodos", id), updates);
+      try {
+        await updateDoc(doc(db, "schaeden", id), updates);
+      } catch (e) {
+        showToast("Speichern fehlgeschlagen.", "error");
+      }
     } else {
       Object.assign(item, updates);
-      localStore.gartentodos = gartenTodoCache;
-      saveLocal("gartentodos", localStore.gartentodos);
-      renderGartenTodos();
+      schaedenCache = localStore.schaeden;
+      saveLocal("schaeden", localStore.schaeden);
+      renderSchaeden();
     }
-    showToast(enabled ? "📱 WhatsApp-Erinnerung an." : "WhatsApp-Erinnerung aus.", "success");
-  } catch (err) {
-    console.error("toggleGartenTodoReminder", err);
-    showToast(`Speichern fehlgeschlagen: ${err.message || err}`, "error");
+    showToast("📱 Erinnerung gespeichert.", "success");
   }
 }
 
@@ -4095,6 +4232,7 @@ $("gartenTodoForm")?.addEventListener("submit", async (e) => {
     task,
     intervalDays,
     reminder: $("gartenTodoReminder").checked,
+    reminderEveryDays: normalizeReminderEveryDays($("gartenTodoReminderEvery")?.value, 1),
     who,
     whoManual,
     nextDue: duePick || defaultGartenTodoDueISO(),
@@ -7251,7 +7389,10 @@ function schadenHistoryDetailText(h, item) {
     const next = h.next ? mLabel(h.next) : "—";
     return `${prev} → ${next}`;
   }
-  if (h.action === "reminder") return h.next === "an" || h.next === true ? "eingeschaltet" : "ausgeschaltet";
+  if (h.action === "reminder") {
+    if (h.fairNote) return h.fairNote;
+    return h.next === "an" || h.next === true ? "eingeschaltet" : "ausgeschaltet";
+  }
   if (h.action === "kuemmerer") {
     const prev = schadenKuemmererLabel(h.prev);
     const next = schadenKuemmererLabel(h.next);
@@ -7317,7 +7458,9 @@ function downloadSchaedenExcel() {
         PRIO_LABEL[s.prio] || s.prio,
         s.zustaendig ? mLabel(s.zustaendig) : "",
         schadenKuemmererLabel(s.kuemmerer),
-        s.zustaendig && s.reminder !== false ? "ja" : "nein",
+        s.zustaendig && s.reminder !== false
+          ? reminderEveryDaysLabel(normalizeReminderEveryDays(s.reminderEveryDays, 7))
+          : "nein",
         s.addedBy ? mLabel(s.addedBy) : "",
         formatSchadenCreated(s.createdAt),
         s.beschreibung,
@@ -7399,9 +7542,10 @@ function renderSchaeden() {
       ? `${mEmoji(zustaendigBewohner.name)} ${escapeHtml(mLabel(zustaendigBewohner.name))}`
       : s.zustaendig ? escapeHtml(mLabel(s.zustaendig) || s.zustaendig) : "noch niemand";
     const schadenReminderOn = !!s.zustaendig && s.reminder !== false && status !== "erledigt";
+    const schadenReminderDays = normalizeReminderEveryDays(s.reminderEveryDays, 7);
     const kuemmerer = normalizeSchadenKuemmerer(s.kuemmerer);
     const reminderBadge = schadenReminderOn
-      ? `<span class="gartentodo-reminder-badge" title="${escapeAttr(TODO_CARD_LABELS.schadenReminderTitle)}">📱</span>`
+      ? `<span class="gartentodo-reminder-badge" title="${escapeAttr(TODO_CARD_LABELS.schadenReminderTitle(schadenReminderDays))}">📱</span>`
       : "";
     const kuemmererBadge = kuemmerer === "vermieter"
       ? `<span class="schaden-kuemmerer-badge vermieter" title="Frau Schellenberg (Schelly)">🏠 Schelly</span>`
@@ -7447,10 +7591,17 @@ function renderSchaeden() {
               <input type="checkbox" class="schaden-vermieter-cb" data-id="${s.id}" ${kuemmerer === "vermieter" ? "checked" : ""} ${status === "erledigt" ? "disabled" : ""} />
               Schelly
             </label>
-            <label class="gartentodo-reminder-toggle schaden-reminder-toggle" title="${escapeAttr(TODO_CARD_LABELS.schadenReminderTitle)}">
-              <input type="checkbox" class="schaden-reminder-cb" data-id="${s.id}" ${schadenReminderOn ? "checked" : ""} ${!s.zustaendig || status === "erledigt" ? "disabled" : ""} />
-              📱 Wöchentlich
-            </label>
+            ${s.zustaendig && status !== "erledigt"
+              ? reminderCadenceRowHtml({
+                  id: s.id,
+                  type: "schaden",
+                  checked: schadenReminderOn,
+                  everyDays: s.reminderEveryDays,
+                  fallback: 7,
+                  cbDisabled: false,
+                  selectDisabled: !schadenReminderOn,
+                })
+              : ""}
           </div>
           <button class="mini-btn danger" data-id="${s.id}" data-action="delete">Löschen</button>
         </div>
@@ -7469,9 +7620,7 @@ function renderSchaeden() {
       setSchadenKuemmerer(cb.dataset.id, cb.checked ? "vermieter" : "wg")
     );
   });
-  list.querySelectorAll(".schaden-reminder-cb").forEach((cb) => {
-    cb.addEventListener("change", () => setSchadenReminder(cb.dataset.id, cb.checked));
-  });
+  bindReminderCadenceControls(list);
   list.querySelectorAll("[data-action='delete']").forEach(btn => {
     btn.addEventListener("click", () => {
       const s = schaedenCache.find(x => x.id === btn.dataset.id);
@@ -7506,6 +7655,9 @@ async function setSchadenField(id, field, value) {
   const updates = { [field]: value, history };
   if (field === "zustaendig") {
     updates.reminder = !!value;
+    if (value && item.reminderEveryDays == null) {
+      updates.reminderEveryDays = 7;
+    }
     if (!value) updates.lastReminderAt = null;
   }
   if (field === "status" && value === "erledigt") {
@@ -7552,28 +7704,6 @@ async function setSchadenKuemmerer(id, kuemmerer) {
   }
 }
 
-async function setSchadenReminder(id, enabled) {
-  if (!requireAuth("Erinnerung speichern")) return;
-  const item = schaedenCache.find((s) => s.id === id);
-  if (!item || !item.zustaendig || item.status === "erledigt") return;
-  const reminder = !!enabled;
-  if (item.reminder === reminder) return;
-  const history = appendSchadenHistory(item, schadenHistoryEntry("reminder", { next: reminder ? "an" : "aus" }));
-  const updates = { reminder, history };
-  if (firebaseReady) {
-    try {
-      await updateDoc(doc(db, "schaeden", id), updates);
-    } catch (e) {
-      showToast("Speichern fehlgeschlagen.", "error");
-    }
-  } else {
-    Object.assign(item, updates);
-    schaedenCache = localStore.schaeden;
-    saveLocal("schaeden", localStore.schaeden);
-    renderSchaeden();
-  }
-}
-
 async function deleteSchaden(id) {
   if (!requireAuth("Schaden löschen")) return;
   if (firebaseReady) {
@@ -7597,7 +7727,8 @@ $("schadenForm")?.addEventListener("submit", async (e) => {
     prio: $("schadPrio").value || "medium",
     zustaendig: $("schadZustaendig").value || "",
     kuemmerer: $("schadVermieter")?.checked ? "vermieter" : "wg",
-    reminder: !!$("schadZustaendig").value,
+    reminder: !!$("schadZustaendig").value && $("schadReminder")?.checked !== false,
+    reminderEveryDays: normalizeReminderEveryDays($("schadReminderEvery")?.value, 7),
     status: "offen",
     addedBy: auth.member,
     createdAt: Date.now(),

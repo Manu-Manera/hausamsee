@@ -1772,12 +1772,34 @@ async function addSchaden(entry, addedBy, image) {
     ],
   };
   if (image) payload.image = image;
-  if (payload.zustaendig) payload.reminder = entry.reminder !== false;
+  if (payload.zustaendig) {
+    payload.reminder = entry.reminder !== false;
+    payload.reminderEveryDays = normalizeReminderEveryDays(entry.reminderEveryDays, 7);
+  }
   const ref = await db.collection("schaeden").add(payload);
   return ref.id;
 }
 
-const SCHADEN_REMINDER_INTERVAL_MS = 7 * 24 * 60 * 60 * 1000;
+const REMINDER_CADENCE_ALLOWED = [1, 2, 3, 7, 14];
+
+function normalizeReminderEveryDays(raw, fallback = 1) {
+  const n = parseInt(raw, 10);
+  return REMINDER_CADENCE_ALLOWED.includes(n) ? n : fallback;
+}
+
+/** Millisekunden seit letzter WhatsApp-Erinnerung (∞ wenn noch nie). */
+function msSinceLastReminder(d) {
+  const last = d.lastReminderAt ? new Date(d.lastReminderAt).getTime() : 0;
+  if (!last || Number.isNaN(last)) return Infinity;
+  return Date.now() - last;
+}
+
+/** Erinnerung aktiv und Intervall seit lastReminderAt abgelaufen? */
+function whatsappReminderDue(d, defaultEveryDays = 1) {
+  if (!d?.reminder) return false;
+  const everyMs = normalizeReminderEveryDays(d.reminderEveryDays, defaultEveryDays) * 86400000;
+  return msSinceLastReminder(d) >= everyMs;
+}
 
 function schadenReminderEnabled(d) {
   if (!d?.zustaendig || d.status === "erledigt") return false;
@@ -1786,9 +1808,7 @@ function schadenReminderEnabled(d) {
 
 function schadenReminderDue(d) {
   if (!schadenReminderEnabled(d)) return false;
-  const last = d.lastReminderAt ? new Date(d.lastReminderAt).getTime() : 0;
-  if (!last || Number.isNaN(last)) return true;
-  return Date.now() - last >= SCHADEN_REMINDER_INTERVAL_MS;
+  return whatsappReminderDue(d, 7);
 }
 
 function schadenPrioIcon(prio) {
@@ -1992,7 +2012,7 @@ const HELP_TEXT =
   `    (Foto mitschicken = wird angehängt)\n` +
   `✅ "Schaden erledigt: Rasenmäher" — als repariert markieren\n` +
   `📋 "Schäden"\n` +
-  `📱 Zuständige auf der Website bekommen wöchentlich eine WhatsApp-Erinnerung (Mo 9:00)\n\n` +
+  `📱 Zuständige können auf der Website den WhatsApp-Erinnerungsrhythmus wählen (täglich bis alle 2 Wochen)\n\n` +
   `*Event-Anmeldung*\n` +
   `✅ "Ja Sommerfest" / "Nein Bierkastenlauf"\n` +
   `📋 "Wer kommt zum Sommerfest?"\n\n` +
@@ -3529,7 +3549,8 @@ exports.checkGiessplanReminders = onSchedule(
     snap.docs.forEach((doc) => {
       const d = doc.data();
       if (!d.reminder) return; // Nur wenn Erinnerung aktiviert
-      
+      if (!whatsappReminderDue(d, 1)) return;
+
       const lastWatered = d.lastWatered ? new Date(d.lastWatered) : null;
       const intervalDays = d.intervalDays || 3;
       
@@ -3569,6 +3590,7 @@ exports.checkGiessplanReminders = onSchedule(
     });
     
     // Sende Erinnerungen
+    const nowIso = new Date().toISOString();
     const promises = [];
     for (const [name, plants] of Object.entries(byPerson)) {
       const phone = await getBewohnerPhone(name);
@@ -3585,7 +3607,16 @@ exports.checkGiessplanReminders = onSchedule(
       const msg = `🌱 *Giess-Erinnerung für ${name}*\n\nHeute bitte giessen:\n${plantList}\n\n🦆 Deine Pflanzen danken dir!`;
       
       promises.push(
-        sendWhatsApp(phone, msg).then((ok) => ({ ok, name, phone }))
+        (async () => {
+          const ok = await sendWhatsApp(phone, msg);
+          if (!ok) return { ok: false, name };
+          await Promise.all(
+            plants.map((p) =>
+              db.collection("giessplan").doc(p.id).update({ lastReminderAt: nowIso })
+            )
+          );
+          return { ok: true, name };
+        })()
       );
     }
     
@@ -3619,6 +3650,7 @@ exports.checkGartenTodoReminders = onSchedule(
     snap.docs.forEach((doc) => {
       const d = doc.data();
       if (!d.reminder) return;
+      if (!whatsappReminderDue(d, 1)) return;
       if (gartenTodoDoneToday(d)) return;
 
       const nextDate = gartenTodoNextDueDatePlain(d);
@@ -3645,6 +3677,7 @@ exports.checkGartenTodoReminders = onSchedule(
       byPerson[t.who].push(t);
     });
 
+    const nowIso = new Date().toISOString();
     const promises = [];
     for (const [name, tasks] of Object.entries(byPerson)) {
       const phone = await getBewohnerPhone(name);
@@ -3665,7 +3698,16 @@ exports.checkGartenTodoReminders = onSchedule(
         `Antwort z.B. *garten erledigt* oder *garten erledigt Rasen hinten*\n\n🦆 Danke!`;
 
       promises.push(
-        sendWhatsApp(phone, msg).then((ok) => ({ ok, name, phone }))
+        (async () => {
+          const ok = await sendWhatsApp(phone, msg);
+          if (!ok) return { ok: false, name };
+          await Promise.all(
+            tasks.map((t) =>
+              db.collection("gartentodos").doc(t.id).update({ lastReminderAt: nowIso })
+            )
+          );
+          return { ok: true, name };
+        })()
       );
     }
 
@@ -3684,11 +3726,11 @@ exports.checkGartenTodoReminders = onSchedule(
 );
 
 /* ==========================================================================
-   Scheduler: Schäden – wöchentlich Montag 9:00 (Zuständige, offene Einträge)
+   Scheduler: Schäden – täglich 9:00, Rhythmus pro Eintrag (Zuständige, offene)
    ========================================================================== */
 
 exports.checkSchadenReminders = onSchedule(
-  { schedule: "every monday 09:00", timeZone: "Europe/Zurich" },
+  { schedule: "every day 09:00", timeZone: "Europe/Zurich" },
   async () => {
     const snap = await db.collection("schaeden").get();
     if (snap.empty) return;
