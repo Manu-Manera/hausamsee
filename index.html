@@ -16,7 +16,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,400;0,9..144,600;0,9..144,700;1,9..144,400&family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet" />
-  <link rel="stylesheet" href="styles.css?v=20260603g" />
+  <link rel="stylesheet" href="styles.css?v=20260603h" />
   <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Ctext y='.9em' font-size='90'%3E🏡%3C/text%3E%3C/svg%3E" />
 </head>
 <body>
@@ -730,8 +730,11 @@
       <!-- Schäden -->
       <div class="kalender-panel hidden" id="ternTabSchaeden">
         <p class="section-lead" style="text-align:left;margin-top:0;">
-          Was muss repariert werden? Tragt Schäden ein und haltet fest, wer sich kümmert.
+          Was muss repariert werden? Tragt Schäden ein und haltet fest, wer sich kümmert. Jeder Eintrag hat einen Verlauf und lässt sich als Excel-Datei exportieren.
         </p>
+        <div class="schaeden-toolbar">
+          <button type="button" id="schaedenExportBtn" class="btn btn-ghost">📊 Excel-Export</button>
+        </div>
         <div class="schaeden-list" id="schaedenList"></div>
         <details class="admin-toggle" open>
           <summary>➕ Schaden melden</summary>

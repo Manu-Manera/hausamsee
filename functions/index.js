@@ -1686,11 +1686,23 @@ async function addSchaden(entry, addedBy, image) {
     ort: entry.ort,
     beschreibung: entry.beschreibung,
     prio: entry.prio,
-    zustaendig: "",
+    zustaendig: entry.zustaendig || "",
     status: "offen",
     addedBy: addedBy || "WhatsApp",
     source: "whatsapp",
     createdAt: FieldValue.serverTimestamp(),
+    history: [
+      {
+        at: new Date().toISOString(),
+        by: addedBy || "WhatsApp",
+        action: "created",
+        titel: entry.titel,
+        ort: entry.ort || "",
+        prio: entry.prio || "medium",
+        status: "offen",
+        zustaendig: entry.zustaendig || "",
+      },
+    ],
   };
   if (image) payload.image = image;
   const ref = await db.collection("schaeden").add(payload);
@@ -1723,10 +1735,26 @@ async function findSchadenByTitle(needle) {
   return best;
 }
 
-async function markSchadenErledigt(id) {
-  await db.collection("schaeden").doc(id).update({
-    status: "erledigt",
-    erledigtAt: FieldValue.serverTimestamp(),
+async function markSchadenErledigt(id, by = "WhatsApp") {
+  const ref = db.collection("schaeden").doc(id);
+  await db.runTransaction(async (t) => {
+    const snap = await t.get(ref);
+    if (!snap.exists) return;
+    const data = snap.data();
+    const history = Array.isArray(data.history) ? [...data.history] : [];
+    history.unshift({
+      at: new Date().toISOString(),
+      by,
+      action: "status",
+      prev: data.status || "offen",
+      next: "erledigt",
+    });
+    if (history.length > 50) history.length = 50;
+    t.update(ref, {
+      status: "erledigt",
+      erledigtAt: FieldValue.serverTimestamp(),
+      history,
+    });
   });
 }
 

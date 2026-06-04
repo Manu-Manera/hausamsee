@@ -3859,6 +3859,44 @@ body.is-spotify-track .vinyl {
    WG-Intern · Schäden
    ============================================ */
 
+.schaeden-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-bottom: 14px;
+}
+
+.schaden-verlauf {
+  margin: 4px 0 2px;
+  font-size: 0.85rem;
+}
+.schaden-verlauf summary {
+  cursor: pointer;
+  font-weight: 600;
+  color: var(--moss-dark, #2d5016);
+}
+.schaden-verlauf .form-note {
+  margin: 6px 0 0;
+}
+.schaden-history-list {
+  margin: 8px 0 0;
+  padding: 0 0 0 1.1rem;
+  list-style: none;
+  color: var(--text-soft);
+  line-height: 1.45;
+}
+.schaden-history-list li {
+  margin-bottom: 6px;
+}
+.schaden-history-list time {
+  color: var(--text-muted);
+  white-space: nowrap;
+}
+.schaden-fair-inline {
+  font-size: 0.8rem;
+  color: #555;
+}
+
 .schaden-card {
   background: var(--card);
   border: 1px solid var(--card-border);

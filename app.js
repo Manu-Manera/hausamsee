@@ -6654,6 +6654,188 @@ $("kandidatForm")?.addEventListener("submit", async (e) => {
 
 let schaedenCache = [];
 const PRIO_LABEL = { low: "Niedrig", medium: "Mittel", high: "Hoch" };
+const SCHADEN_STATUS_LABEL = { offen: "Offen", in_bearbeitung: "In Arbeit", erledigt: "Erledigt" };
+
+function schadenHistoryEntry(action, fields = {}) {
+  return {
+    at: new Date().toISOString(),
+    by: auth.member || "WG",
+    action,
+    ...fields,
+  };
+}
+
+function appendSchadenHistory(item, entry) {
+  const hist = Array.isArray(item.history) ? [...item.history] : [];
+  hist.unshift(entry);
+  if (hist.length > 50) hist.length = 50;
+  return hist;
+}
+
+function schadenTimestampMs(ts) {
+  if (!ts) return null;
+  if (typeof ts.toDate === "function") return ts.toDate().getTime();
+  if (typeof ts === "number") return ts;
+  const d = new Date(ts);
+  return Number.isNaN(d.getTime()) ? null : d.getTime();
+}
+
+/** Bestehende Schäden ohne history[]: Anlege-Eintrag aus Metadaten. */
+function getSchadenHistory(item) {
+  if (Array.isArray(item.history) && item.history.length) return item.history;
+  const ms = schadenTimestampMs(item.createdAt);
+  if (!ms) return [];
+  return [
+    {
+      at: new Date(ms).toISOString(),
+      by: item.addedBy || "WG",
+      action: "created",
+      titel: item.titel || "",
+      ort: item.ort || "",
+      prio: item.prio || "medium",
+      status: "offen",
+      zustaendig: item.zustaendig || "",
+    },
+  ];
+}
+
+function formatSchadenHistoryWhen(at) {
+  return new Date(at).toLocaleString("de-CH", {
+    day: "2-digit",
+    month: "2-digit",
+    year: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+    timeZone: "Europe/Zurich",
+  });
+}
+
+function schadenHistoryActionLabel(action) {
+  if (action === "created") return "Gemeldet";
+  if (action === "status") return "Status";
+  if (action === "zustaendig") return "Zuständig";
+  return action || "Änderung";
+}
+
+function schadenHistoryDetailText(h, item) {
+  if (h.action === "created") {
+    const parts = [h.titel || item?.titel, h.ort || item?.ort, PRIO_LABEL[h.prio] || h.prio].filter(Boolean);
+    return parts.join(" · ") || "Schaden gemeldet";
+  }
+  if (h.action === "status") {
+    const prev = SCHADEN_STATUS_LABEL[h.prev] || h.prev || "—";
+    const next = SCHADEN_STATUS_LABEL[h.next] || h.next || "—";
+    return `${prev} → ${next}`;
+  }
+  if (h.action === "zustaendig") {
+    const prev = h.prev ? mLabel(h.prev) : "—";
+    const next = h.next ? mLabel(h.next) : "—";
+    return `${prev} → ${next}`;
+  }
+  return h.note || "";
+}
+
+function formatSchadenHistoryLine(h, item) {
+  const detail = schadenHistoryDetailText(h, item);
+  const fair = h.note ? `<br><span class="schaden-fair-inline">${escapeHtml(h.note)}</span>` : "";
+  return `<li><time>${formatSchadenHistoryWhen(h.at)}</time> · ${escapeHtml(mLabel(h.by) || h.by || "—")} · ${escapeHtml(detail)}${fair}</li>`;
+}
+
+function schadenHistoryHtml(item) {
+  const hist = getSchadenHistory(item);
+  if (!hist.length) return "<p class=\"form-note\">Noch keine Einträge im Verlauf.</p>";
+  return `<ul class="schaden-history-list">${hist.map((h) => formatSchadenHistoryLine(h, item)).join("")}</ul>`;
+}
+
+function formatSchadenCreated(ts) {
+  const ms = schadenTimestampMs(ts);
+  if (!ms) return "";
+  return new Date(ms).toLocaleString("de-CH", {
+    day: "2-digit",
+    month: "2-digit",
+    year: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+    timeZone: "Europe/Zurich",
+  });
+}
+
+function escapeCsvCell(v) {
+  const s = String(v ?? "").replace(/\r?\n/g, " ").trim();
+  if (/[;"\n\r]/.test(s)) return `"${s.replace(/"/g, '""')}"`;
+  return s;
+}
+
+function downloadSchaedenExcel() {
+  if (!schaedenCache.length) {
+    showToast("Keine Schäden zum Exportieren.", "info");
+    return;
+  }
+  const sep = ";";
+  const bom = "\uFEFF";
+  const ymd = zurichTodayYmd();
+  const lines = [];
+
+  lines.push(`${bom}Schäden – Übersicht`);
+  lines.push(
+    ["ID", "Titel", "Ort", "Status", "Priorität", "Zuständig", "Gemeldet von", "Erstellt am", "Beschreibung", "Foto"]
+      .map(escapeCsvCell)
+      .join(sep)
+  );
+  for (const s of schaedenCache) {
+    lines.push(
+      [
+        s.id,
+        s.titel,
+        s.ort,
+        SCHADEN_STATUS_LABEL[s.status] || s.status,
+        PRIO_LABEL[s.prio] || s.prio,
+        s.zustaendig ? mLabel(s.zustaendig) : "",
+        s.addedBy ? mLabel(s.addedBy) : "",
+        formatSchadenCreated(s.createdAt),
+        s.beschreibung,
+        s.image ? "ja" : "nein",
+      ]
+        .map(escapeCsvCell)
+        .join(sep)
+    );
+  }
+
+  lines.push("");
+  lines.push("Schäden – Verlauf");
+  lines.push(
+    ["Schaden-ID", "Titel", "Datum/Zeit", "Von", "Aktion", "Details"]
+      .map(escapeCsvCell)
+      .join(sep)
+  );
+  for (const s of schaedenCache) {
+    for (const h of getSchadenHistory(s)) {
+      lines.push(
+        [
+          s.id,
+          s.titel,
+          formatSchadenHistoryWhen(h.at),
+          mLabel(h.by) || h.by,
+          schadenHistoryActionLabel(h.action),
+          schadenHistoryDetailText(h, s),
+        ]
+          .map(escapeCsvCell)
+          .join(sep)
+      );
+    }
+  }
+
+  const blob = new Blob([lines.join("\r\n")], { type: "application/vnd.ms-excel;charset=utf-8" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = `Schaeden_${ymd}.xls`;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+  showToast("Excel-Export heruntergeladen.", "success");
+}
 
 function populateSchadenZustaendigSelect() {
   const select = $("schadZustaendig");
@@ -6708,6 +6890,10 @@ function renderSchaeden() {
         </div>
         ${s.beschreibung ? `<p class="schaden-body">${escapeHtml(s.beschreibung)}</p>` : ""}
         ${s.image ? `<div class="schaden-foto"><img src="${s.image}" alt="Foto zum Schaden: ${escapeAttr(s.titel || "")}" loading="lazy" /></div>` : ""}
+        <details class="schaden-verlauf">
+          <summary>Verlauf (${getSchadenHistory(s).length})</summary>
+          ${schadenHistoryHtml(s)}
+        </details>
         <div class="schaden-actions">
           <div class="schaden-actions-left">
             <select class="status-select-inline" data-id="${s.id}" data-action="status">
@@ -6749,13 +6935,30 @@ function renderSchaeden() {
 
 async function setSchadenField(id, field, value) {
   if (!requireAuth("Schaden aktualisieren")) return;
+  const item = schaedenCache.find((s) => s.id === id);
+  if (!item) return;
+  const prev = item[field] ?? "";
+  if (prev === value) return;
+  const history = appendSchadenHistory(
+    item,
+    schadenHistoryEntry(field === "status" ? "status" : "zustaendig", {
+      field,
+      prev,
+      next: value,
+    })
+  );
+  const updates = { [field]: value, history };
+  if (field === "status" && value === "erledigt") {
+    updates.erledigtAt = new Date().toISOString();
+  }
   if (firebaseReady) {
-    try { await updateDoc(doc(db, "schaeden", id), { [field]: value }); }
-    catch (e) { showToast("Speichern fehlgeschlagen.", "error"); }
+    try {
+      await updateDoc(doc(db, "schaeden", id), updates);
+    } catch (e) {
+      showToast("Speichern fehlgeschlagen.", "error");
+    }
   } else {
-    const item = localStore.schaeden.find(s => s.id === id);
-    if (!item) return;
-    item[field] = value;
+    Object.assign(item, updates);
     schaedenCache = localStore.schaeden;
     saveLocal("schaeden", localStore.schaeden);
     renderSchaeden();
@@ -6786,7 +6989,16 @@ $("schadenForm")?.addEventListener("submit", async (e) => {
     zustaendig: $("schadZustaendig").value || "",
     status: "offen",
     addedBy: auth.member,
-    createdAt: Date.now()
+    createdAt: Date.now(),
+    history: [
+      schadenHistoryEntry("created", {
+        titel: $("schadTitel").value.trim(),
+        ort: $("schadOrt").value.trim(),
+        prio: $("schadPrio").value || "medium",
+        status: "offen",
+        zustaendig: $("schadZustaendig").value || "",
+      }),
+    ],
   };
 
   const fotoInput = $("schadFoto");
@@ -7782,6 +7994,7 @@ populateProfileEmojiSelect();
 populateLoginMemberSelect();
 populatePutzWhoSelect();
 populateSchadenZustaendigSelect();
+$("schaedenExportBtn")?.addEventListener("click", () => downloadSchaedenExcel());
 renderBewohner();
 renderHausFeatures();
 renderGallery();
