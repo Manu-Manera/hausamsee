@@ -2724,6 +2724,7 @@ const TODO_CARD_LABELS = {
   saveDoneGiess: "Gegossen speichern",
   whatsapp: "WhatsApp",
   whatsappReminderTitle: "WhatsApp-Erinnerung täglich bis erledigt",
+  schadenReminderTitle: "WhatsApp-Erinnerung 1× pro Woche (Montag 9:00), solange offen",
   history: "Verlauf",
   historyCount: (n) => `Verlauf (${n})`,
   historyEmpty: "Noch keine Einträge.",
@@ -6714,6 +6715,7 @@ function schadenHistoryActionLabel(action) {
   if (action === "created") return "Gemeldet";
   if (action === "status") return "Status";
   if (action === "zustaendig") return "Zuständig";
+  if (action === "reminder") return "WhatsApp-Erinnerung";
   return action || "Änderung";
 }
 
@@ -6732,6 +6734,7 @@ function schadenHistoryDetailText(h, item) {
     const next = h.next ? mLabel(h.next) : "—";
     return `${prev} → ${next}`;
   }
+  if (h.action === "reminder") return h.next === "an" || h.next === true ? "eingeschaltet" : "ausgeschaltet";
   return h.note || "";
 }
 
@@ -6778,7 +6781,7 @@ function downloadSchaedenExcel() {
 
   lines.push(`${bom}Schäden – Übersicht`);
   lines.push(
-    ["ID", "Titel", "Ort", "Status", "Priorität", "Zuständig", "Gemeldet von", "Erstellt am", "Beschreibung", "Foto"]
+        ["ID", "Titel", "Ort", "Status", "Priorität", "Zuständig", "WhatsApp-Erinnerung", "Gemeldet von", "Erstellt am", "Beschreibung", "Foto"]
       .map(escapeCsvCell)
       .join(sep)
   );
@@ -6791,6 +6794,7 @@ function downloadSchaedenExcel() {
         SCHADEN_STATUS_LABEL[s.status] || s.status,
         PRIO_LABEL[s.prio] || s.prio,
         s.zustaendig ? mLabel(s.zustaendig) : "",
+        s.zustaendig && s.reminder !== false ? "ja" : "nein",
         s.addedBy ? mLabel(s.addedBy) : "",
         formatSchadenCreated(s.createdAt),
         s.beschreibung,
@@ -6871,6 +6875,10 @@ function renderSchaeden() {
     const zustaendigLabel = zustaendigBewohner
       ? `${mEmoji(zustaendigBewohner.name)} ${escapeHtml(mLabel(zustaendigBewohner.name))}`
       : s.zustaendig ? escapeHtml(mLabel(s.zustaendig) || s.zustaendig) : "noch niemand";
+    const schadenReminderOn = !!s.zustaendig && s.reminder !== false && status !== "erledigt";
+    const reminderBadge = schadenReminderOn
+      ? `<span class="gartentodo-reminder-badge" title="${escapeAttr(TODO_CARD_LABELS.schadenReminderTitle)}">📱</span>`
+      : "";
 
     return `
       <article class="schaden-card prio-${prio} status-${status}">
@@ -6881,6 +6889,7 @@ function renderSchaeden() {
             <span class="status-badge ${status === 'erledigt' ? 'eingezogen' : status === 'in_bearbeitung' ? 'eingeladen' : 'offen'}">
               ${status === 'erledigt' ? '✓ Erledigt' : status === 'in_bearbeitung' ? '🛠️ In Arbeit' : '⏳ Offen'}
             </span>
+            ${reminderBadge}
           </div>
         </div>
         <div class="schaden-meta">
@@ -6905,6 +6914,10 @@ function renderSchaeden() {
               <option value="">— Noch offen —</option>
               ${getActiveAdults().map(b => `<option value="${b.name}" ${s.zustaendig===b.name?'selected':''}>${mEmoji(b.name)} ${escapeHtml(mLabel(b.name))}</option>`).join("")}
             </select>
+            <label class="gartentodo-reminder-toggle schaden-reminder-toggle" title="${escapeAttr(TODO_CARD_LABELS.schadenReminderTitle)}">
+              <input type="checkbox" class="schaden-reminder-cb" data-id="${s.id}" ${schadenReminderOn ? "checked" : ""} ${!s.zustaendig || status === "erledigt" ? "disabled" : ""} />
+              📱 Wöchentlich
+            </label>
           </div>
           <button class="mini-btn danger" data-id="${s.id}" data-action="delete">Löschen</button>
         </div>
@@ -6917,6 +6930,9 @@ function renderSchaeden() {
   });
   list.querySelectorAll("[data-action='zustaendig']").forEach(sel => {
     sel.addEventListener("change", () => setSchadenField(sel.dataset.id, "zustaendig", sel.value));
+  });
+  list.querySelectorAll(".schaden-reminder-cb").forEach((cb) => {
+    cb.addEventListener("change", () => setSchadenReminder(cb.dataset.id, cb.checked));
   });
   list.querySelectorAll("[data-action='delete']").forEach(btn => {
     btn.addEventListener("click", () => {
@@ -6948,9 +6964,36 @@ async function setSchadenField(id, field, value) {
     })
   );
   const updates = { [field]: value, history };
+  if (field === "zustaendig") {
+    updates.reminder = !!value;
+    if (!value) updates.lastReminderAt = null;
+  }
   if (field === "status" && value === "erledigt") {
     updates.erledigtAt = new Date().toISOString();
+    updates.reminder = false;
   }
+  if (firebaseReady) {
+    try {
+      await updateDoc(doc(db, "schaeden", id), updates);
+    } catch (e) {
+      showToast("Speichern fehlgeschlagen.", "error");
+    }
+  } else {
+    Object.assign(item, updates);
+    schaedenCache = localStore.schaeden;
+    saveLocal("schaeden", localStore.schaeden);
+    renderSchaeden();
+  }
+}
+
+async function setSchadenReminder(id, enabled) {
+  if (!requireAuth("Erinnerung speichern")) return;
+  const item = schaedenCache.find((s) => s.id === id);
+  if (!item || !item.zustaendig || item.status === "erledigt") return;
+  const reminder = !!enabled;
+  if (item.reminder === reminder) return;
+  const history = appendSchadenHistory(item, schadenHistoryEntry("reminder", { next: reminder ? "an" : "aus" }));
+  const updates = { reminder, history };
   if (firebaseReady) {
     try {
       await updateDoc(doc(db, "schaeden", id), updates);
@@ -6987,6 +7030,7 @@ $("schadenForm")?.addEventListener("submit", async (e) => {
     beschreibung: $("schadBeschreibung").value.trim(),
     prio: $("schadPrio").value || "medium",
     zustaendig: $("schadZustaendig").value || "",
+    reminder: !!$("schadZustaendig").value,
     status: "offen",
     addedBy: auth.member,
     createdAt: Date.now(),

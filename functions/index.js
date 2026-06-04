@@ -105,10 +105,75 @@ async function debugLog(kind, data) {
    WhatsApp API (send text / download media)
    ========================================================================== */
 
-/** phoneIdOpt: pro Webhook-Event von value.metadata.phone_number_id (eingehende Nummer). Ohne: WHATSAPP_PHONE_ID. */
+const WA_META_DOC = "whatsappMeta";
+const waPhoneStatusCache = new Map();
+
+async function getWhatsAppMetaConfig() {
+  try {
+    const snap = await db.collection("config").doc(WA_META_DOC).get();
+    return snap.exists ? snap.data() : {};
+  } catch (e) {
+    logger.warn("getWhatsAppMetaConfig", e);
+    return {};
+  }
+}
+
+/** Webhook liefert die funktionierende ID; Scheduler nutzen dieselbe (nicht nur .env). */
+async function rememberWhatsAppPhoneId(phoneId) {
+  if (!phoneId) return;
+  const id = String(phoneId);
+  await db.collection("config").doc(WA_META_DOC).set(
+    { phoneNumberId: id, updatedAt: FieldValue.serverTimestamp() },
+    { merge: true }
+  );
+}
+
+async function fetchWhatsAppPhoneStatus(phoneId) {
+  if (!phoneId) return null;
+  const cached = waPhoneStatusCache.get(phoneId);
+  if (cached && Date.now() - cached.at < 10 * 60 * 1000) return cached.status;
+  const { token } = cfg();
+  if (!token) return null;
+  try {
+    const res = await fetch(
+      `https://graph.facebook.com/v20.0/${phoneId}?fields=status,display_phone_number`,
+      { headers: { Authorization: `Bearer ${token}` } }
+    );
+    const j = await res.json();
+    const status = j?.status || (j?.error ? "ERROR" : null);
+    if (status) waPhoneStatusCache.set(phoneId, { status, at: Date.now() });
+    return status;
+  } catch (e) {
+    logger.warn("fetchWhatsAppPhoneStatus", e);
+    return null;
+  }
+}
+
+/**
+ * Absender-ID: Webhook-Argument > Firestore-Cache (letzter Chat) > .env (nur wenn CONNECTED).
+ * .env mit PENDING-Nummer (z. B. eigene DE-Nummer aus Schritt 2) → Erinnerungen scheitern mit #133010.
+ */
+async function resolveWhatsAppPhoneId(phoneIdOpt) {
+  if (phoneIdOpt) return String(phoneIdOpt);
+  const meta = await getWhatsAppMetaConfig();
+  if (meta.phoneNumberId) return String(meta.phoneNumberId);
+  const envId = cfg().phoneId;
+  if (!envId) return "";
+  const st = await fetchWhatsAppPhoneStatus(envId);
+  if (st && st !== "CONNECTED") {
+    logger.warn(
+      `WHATSAPP_PHONE_ID ${envId} status=${st} – proaktive Nachrichten nutzen nur Webhook-Cache. ` +
+        "Einmal Gustav schreiben (Hilfe), dann erneut testen."
+    );
+    return meta.phoneNumberId ? String(meta.phoneNumberId) : "";
+  }
+  return envId;
+}
+
+/** phoneIdOpt: pro Webhook-Event von value.metadata.phone_number_id (eingehende Nummer). */
 async function sendWhatsAppDetailed(to, text, phoneIdOpt) {
-  const { token, phoneId: defaultPid } = cfg();
-  const phoneId = phoneIdOpt || defaultPid;
+  const { token } = cfg();
+  const phoneId = await resolveWhatsAppPhoneId(phoneIdOpt);
   if (!token || !phoneId) {
     logger.error("sendWhatsApp: fehlendes WHATSAPP_TOKEN oder WHATSAPP_PHONE_ID");
     await debugLog("send_skipped", { to, reason: "no_token_or_phone_id" });
@@ -1705,8 +1770,29 @@ async function addSchaden(entry, addedBy, image) {
     ],
   };
   if (image) payload.image = image;
+  if (payload.zustaendig) payload.reminder = entry.reminder !== false;
   const ref = await db.collection("schaeden").add(payload);
   return ref.id;
+}
+
+const SCHADEN_REMINDER_INTERVAL_MS = 7 * 24 * 60 * 60 * 1000;
+
+function schadenReminderEnabled(d) {
+  if (!d?.zustaendig || d.status === "erledigt") return false;
+  return d.reminder !== false;
+}
+
+function schadenReminderDue(d) {
+  if (!schadenReminderEnabled(d)) return false;
+  const last = d.lastReminderAt ? new Date(d.lastReminderAt).getTime() : 0;
+  if (!last || Number.isNaN(last)) return true;
+  return Date.now() - last >= SCHADEN_REMINDER_INTERVAL_MS;
+}
+
+function schadenPrioIcon(prio) {
+  if (prio === "high") return "⚠️";
+  if (prio === "low") return "·";
+  return "🔧";
 }
 
 async function listOffeneSchaeden(limit = 10) {
@@ -1899,7 +1985,8 @@ const HELP_TEXT =
   `🔧 "Schaden: Waschmaschine tropft | Keller | hoch"\n` +
   `    (Foto mitschicken = wird angehängt)\n` +
   `✅ "Schaden erledigt: Rasenmäher" — als repariert markieren\n` +
-  `📋 "Schäden"\n\n` +
+  `📋 "Schäden"\n` +
+  `📱 Zuständige auf der Website bekommen wöchentlich eine WhatsApp-Erinnerung (Mo 9:00)\n\n` +
   `*Event-Anmeldung*\n` +
   `✅ "Ja Sommerfest" / "Nein Bierkastenlauf"\n` +
   `📋 "Wer kommt zum Sommerfest?"\n\n` +
@@ -2765,6 +2852,7 @@ exports.whatsappWebhook = onRequest(
         const value = change.value || {};
         /** Muss fürs Senden passen, sonst antwortet die API mit einer anderen Nummer / still. */
         const replyPhoneId = value.metadata?.phone_number_id;
+        if (replyPhoneId) rememberWhatsAppPhoneId(replyPhoneId).catch(() => {});
         const messages = value.messages || [];
         const contacts = value.contacts || [];
         // Echte Gruppen: Meta liefert `group_id` am Message-Objekt (s. Groups Messaging
@@ -3372,14 +3460,18 @@ exports.checkReminders = onSchedule(
       const target = d.owner || (cfg().recipients[0] || "");
       if (!target) return;
       promises.push((async () => {
-        await sendWhatsApp(target, `🔔 *Erinnerung:*\n${d.text}`);
+        const ok = await sendWhatsApp(target, `🔔 *Erinnerung:*\n${d.text}`);
+        if (!ok) {
+          logger.warn(`Erinnerung nicht zugestellt an ${target}`, { id: doc.id });
+          return;
+        }
         await db.collection("erinnerungen").doc(doc.id).update({
           sent: true, sentAt: FieldValue.serverTimestamp(),
         });
       })());
     });
     await Promise.all(promises);
-    if (promises.length) logger.info(`Reminders sent: ${promises.length}`);
+    if (promises.length) logger.info(`Erinnerungen verarbeitet: ${promises.length}`);
   }
 );
 
@@ -3486,11 +3578,22 @@ exports.checkGiessplanReminders = onSchedule(
       
       const msg = `🌱 *Giess-Erinnerung für ${name}*\n\nHeute bitte giessen:\n${plantList}\n\n🦆 Deine Pflanzen danken dir!`;
       
-      promises.push(sendWhatsApp(phone, msg));
+      promises.push(
+        sendWhatsApp(phone, msg).then((ok) => ({ ok, name, phone }))
+      );
     }
     
-    await Promise.all(promises);
-    logger.info(`Giessplan: ${promises.length} Erinnerungen gesendet an ${Object.keys(byPerson).length} Personen`);
+    const results = await Promise.all(promises);
+    const sent = results.filter((r) => r.ok).length;
+    const failed = results.filter((r) => !r.ok);
+    if (failed.length) {
+      logger.warn(`Giessplan: ${failed.length} Versand(e) fehlgeschlagen`, {
+        names: failed.map((f) => f.name),
+      });
+    }
+    logger.info(
+      `Giessplan: ${sent}/${results.length} Erinnerungen zugestellt an ${Object.keys(byPerson).length} Personen`
+    );
   }
 );
 
@@ -3555,12 +3658,106 @@ exports.checkGartenTodoReminders = onSchedule(
         `🌿 *Garten To-Do für ${name}*\n\nHeute bitte erledigen:\n${taskList}\n\n` +
         `Antwort z.B. *garten erledigt* oder *garten erledigt Rasen hinten*\n\n🦆 Danke!`;
 
-      promises.push(sendWhatsApp(phone, msg));
+      promises.push(
+        sendWhatsApp(phone, msg).then((ok) => ({ ok, name, phone }))
+      );
     }
 
-    await Promise.all(promises);
+    const results = await Promise.all(promises);
+    const sent = results.filter((r) => r.ok).length;
+    const failed = results.filter((r) => !r.ok);
+    if (failed.length) {
+      logger.warn(`Garten To-Do: ${failed.length} Versand(e) fehlgeschlagen`, {
+        names: failed.map((f) => f.name),
+      });
+    }
     logger.info(
-      `Garten To-Do: ${promises.length} Erinnerungen an ${Object.keys(byPerson).length} Personen`
+      `Garten To-Do: ${sent}/${results.length} Erinnerungen an ${Object.keys(byPerson).length} Personen`
+    );
+  }
+);
+
+/* ==========================================================================
+   Scheduler: Schäden – wöchentlich Montag 9:00 (Zuständige, offene Einträge)
+   ========================================================================== */
+
+exports.checkSchadenReminders = onSchedule(
+  { schedule: "every monday 09:00", timeZone: "Europe/Zurich" },
+  async () => {
+    const snap = await db.collection("schaeden").get();
+    if (snap.empty) return;
+
+    const dueByPerson = {};
+
+    snap.docs.forEach((doc) => {
+      const d = doc.data();
+      if (!schadenReminderDue(d)) return;
+      const name = String(d.zustaendig || "").trim();
+      if (!name) return;
+      if (!dueByPerson[name]) dueByPerson[name] = [];
+      dueByPerson[name].push({
+        id: doc.id,
+        titel: d.titel || "Schaden",
+        ort: d.ort || "",
+        prio: d.prio || "medium",
+        status: d.status || "offen",
+      });
+    });
+
+    if (!Object.keys(dueByPerson).length) {
+      logger.info("Schäden: Keine wöchentlichen Erinnerungen fällig");
+      return;
+    }
+
+    const nowIso = new Date().toISOString();
+    const promises = [];
+
+    for (const [name, items] of Object.entries(dueByPerson)) {
+      const phone = await getBewohnerPhone(name);
+      if (!phone) {
+        logger.warn(`Schäden: Keine Telefonnummer für ${name}`);
+        continue;
+      }
+
+      const lines = items.map((s) => {
+        const icon = schadenPrioIcon(s.prio);
+        const ort = s.ort ? ` (${s.ort})` : "";
+        const st =
+          s.status === "in_bearbeitung" ? " · in Arbeit" : "";
+        return `${icon} ${s.titel}${ort}${st}`;
+      });
+
+      const msg =
+        `🔧 *Schäden-Erinnerung für ${name}*\n\n` +
+        `Offene Punkte, für die du zuständig bist:\n${lines.join("\n")}\n\n` +
+        `Antwort z.B. *Schaden erledigt: Titel*\n\n` +
+        `${WEBSITE_URL}/#wg-intern\n\n🦆 Danke fürs Dranbleiben!`;
+
+      promises.push(
+        (async () => {
+          const ok = await sendWhatsApp(phone, msg);
+          if (!ok) return { ok: false, name };
+          await Promise.all(
+            items.map((it) =>
+              db.collection("schaeden").doc(it.id).update({ lastReminderAt: nowIso })
+            )
+          );
+          return { ok: true, name, count: items.length };
+        })()
+      );
+    }
+
+    const results = await Promise.all(promises);
+    const sent = results.filter((r) => r.ok);
+    const failed = results.filter((r) => r && !r.ok);
+    if (failed.length) {
+      logger.warn(`Schäden: ${failed.length} Versand(e) fehlgeschlagen`, {
+        names: failed.map((f) => f.name),
+      });
+    }
+    logger.info(
+      `Schäden: ${sent.length}/${results.length} wöchentliche Erinnerungen, ` +
+        `${sent.reduce((n, r) => n + (r.count || 0), 0)} Einträge`
     );
   }
 );
@@ -3698,6 +3895,47 @@ exports.testGartenTodoReminder = onRequest(async (req, res) => {
   }
   logger.info(`Test-Garten-Todo-Reminder an ${name} (${phone}) gesendet`);
   return res.json({ ok: true, message: `Garten-Erinnerung an ${name} gesendet` });
+});
+
+exports.testSchadenReminder = onRequest(async (req, res) => {
+  res.set("Access-Control-Allow-Origin", "*");
+  if (req.method === "OPTIONS") {
+    res.set("Access-Control-Allow-Methods", "GET, POST");
+    res.set("Access-Control-Allow-Headers", "Content-Type");
+    return res.status(204).send("");
+  }
+
+  const secret = req.query.secret || req.body?.secret;
+  if (secret !== process.env.SIRI_SECRET) {
+    return res.status(401).json({ error: "Unauthorized" });
+  }
+
+  const name = req.query.name || req.body?.name || "Manu";
+  const titel = req.query.titel || req.body?.titel || "Wasserhahn Küche tropft (Test)";
+  const ort = req.query.ort || req.body?.ort || "Küche";
+
+  const phone = await getBewohnerPhone(name);
+  if (!phone) {
+    return res.status(404).json({ error: `Keine Telefonnummer für ${name} gefunden` });
+  }
+
+  const msg =
+    `🔧 *Schäden-Erinnerung für ${name}*\n\n` +
+    `Offene Punkte, für die du zuständig bist:\n` +
+    `${schadenPrioIcon("medium")} ${titel}${ort ? ` (${ort})` : ""}\n\n` +
+    `Antwort z.B. *Schaden erledigt: Titel*\n\n` +
+    `${WEBSITE_URL}/#wg-intern\n\n🦆 _(Testnachricht)_`;
+
+  const sent = await sendWhatsAppDetailed(phone, msg);
+  if (!sent.ok) {
+    return res.status(502).json({
+      ok: false,
+      error: whatsAppProactiveErrorHint(sent),
+      metaCode: sent.metaCode,
+    });
+  }
+  logger.info(`Test-Schaden-Reminder an ${name} (${phone}) gesendet`);
+  return res.json({ ok: true, message: `Schäden-Erinnerung an ${name} gesendet` });
 });
 
 /* ==========================================================================

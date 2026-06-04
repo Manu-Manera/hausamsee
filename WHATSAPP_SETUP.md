@@ -130,4 +130,6 @@ Im `functions/index.js` kannst du die NLP-Erkennung erweitern, z. B. `Putzplan-U
   firebase functions:log --only whatsappWebhook
   ```
 - **WhatsApp send failed 401** → Token abgelaufen (Sandbox 24 h) oder falsch. Neu generieren.
-- **WhatsApp send failed 131030 / #133010** → Empfänger nicht in der Meta-Sandbox verifiziert. Unter **WhatsApp → API Setup → To** alle WG-Nummern aus der Tabelle oben hinzufügen und mit SMS bestätigen.
+- **WhatsApp send failed 131030 / #133010** → Zwei häufige Ursachen:
+  1. **Empfänger** nicht in der Meta-Sandbox unter **API Setup → To** (SMS bestätigen).
+  2. **Absender:** In `.env` steht eine **eigene Nummer** (Schritt 2), Status **PENDING** – Chat-Antworten gehen trotzdem (Webhook-ID), **Erinnerungen um 8:00** nicht. Lösung: **Meta-Testnummer** (`+1 555 …`) in API Setup als Phone number ID eintragen **oder** einmal Gustav «Hilfe» schreiben (speichert die funktionierende ID in Firestore `config/whatsappMeta`). Nicht die unvollständige DE-Nummer «Gustav Gans» als `WHATSAPP_PHONE_ID` verwenden.
