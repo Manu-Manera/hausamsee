@@ -310,24 +310,44 @@
     </div>
     <div class="kalender-wrap">
       <div class="kalender-tabs" role="tablist">
-        <button class="tab" data-tab="putzplan" data-wg-only>🧹 Putzplan</button>
+        <button class="tab" data-tab="aufgaben" data-wg-only>📋 Aufgaben</button>
         <button class="tab" data-tab="gartentodo" data-wg-only>🌿 Garten To-Do</button>
         <button class="tab" data-tab="giessplan" data-wg-only>🌱 Giessplan</button>
         <button class="tab active" data-tab="termine">📅 Termine</button>
         <button class="tab" data-tab="anwesend" data-wg-only>🏡 Anwesenheit</button>
       </div>
 
-      <div class="kalender-panel hidden" id="tabPutzplan" data-wg-only>
-        <div class="putzplan-grid" id="putzplanGrid"></div>
-        <details class="admin-toggle" data-wg-only>
+      <div class="kalender-panel hidden" id="tabAufgaben" data-wg-only>
+        <p class="giess-hint">Gemeinsame To-do-Liste für alle: fällig ab Datum, optional wiederkehrend mit <strong>Reihenfolge &amp; Tausch</strong> und Verlauf (wie Garten To-Do).</p>
+        <div class="gartentodo-grid aufgaben-grid" id="aufgabenGrid"></div>
+        <details class="admin-toggle" data-wg-only open>
           <summary>➕ Aufgabe hinzufügen</summary>
-          <form id="putzForm" class="form-card inline">
-            <input id="putzTask" placeholder="Aufgabe (z.B. Küche putzen)" required />
-            <select id="putzWho" required>
-              <option value="">Wer?</option>
-            </select>
-            <input id="putzWhen" type="date" required />
-            <button type="submit" class="btn btn-primary">Speichern</button>
+          <form id="aufgabenForm" class="form-card">
+            <div class="field">
+              <label for="aufgabenTask">Aufgabe</label>
+              <input id="aufgabenTask" placeholder="z. B. Küche putzen, Keller fegen" required />
+            </div>
+            <div class="row">
+              <div class="field">
+                <label for="aufgabenWho">Zuständig</label>
+                <select id="aufgabenWho" required></select>
+              </div>
+              <div class="field">
+                <label for="aufgabenWhen">Fällig ab</label>
+                <input id="aufgabenWhen" type="date" required />
+              </div>
+            </div>
+            <div class="field">
+              <label for="aufgabenInterval">Wiederholung</label>
+              <select id="aufgabenInterval">
+                <option value="0">Einmalig (keine Reihenfolge)</option>
+                <option value="7">Alle 7 Tage</option>
+                <option value="14" selected>Alle 14 Tage</option>
+                <option value="28">Alle 28 Tage</option>
+              </select>
+              <p class="form-note">Bei Wiederholung: unter der Karte «Reihenfolge &amp; Tausch» und Uhr-Icon für den Verlauf.</p>
+            </div>
+            <button type="submit" class="btn btn-primary">Aufgabe speichern</button>
           </form>
         </details>
       </div>
@@ -1227,6 +1247,6 @@
   <!-- Toast -->
   <div id="toast" class="toast hidden"></div>
 
-  <script type="module" src="app.js?v=20260604b"></script>
+  <script type="module" src="app.js?v=20260604c"></script>
 </body>
 </html>

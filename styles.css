@@ -1639,13 +1639,16 @@ textarea { resize: vertical; font-family: inherit; }
 
 .kalender-panel.hidden { display: none; }
 
-.putzplan-grid, .termine-list, .anwesend-grid {
+.putzplan-grid, .aufgaben-grid, .termine-list, .anwesend-grid {
   display: grid;
   gap: 14px;
 }
 
-.putzplan-grid {
-  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+.putzplan-grid,
+.aufgaben-grid {
+  grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+  gap: 16px;
+  margin-bottom: 20px;
 }
 
 .putz-card {

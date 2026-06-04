@@ -1978,7 +1978,7 @@ const HELP_TEXT =
   `➕ "Neues Event: Sommerfest 15.8. 18 Uhr | Grillen am See"\n` +
   `🗑️ "Event löschen: Sommerfest"\n` +
   `📅 "Events"\n\n` +
-  `*Putzplan*\n` +
+  `*Aufgaben (Putz & Haus)*\n` +
   `➕ "Putz: Manu 20.4. Küche"\n` +
   `📋 "Wer putzt?"\n\n` +
   `*Garten To-Do / Giessplan (Website WG-Kalender)*\n` +
@@ -4334,7 +4334,7 @@ exports.dailyDigest = onSchedule(
     } else lines.push("_keine_");
     lines.push("");
 
-    lines.push("*🧹 Putzplan diese Woche:*");
+    lines.push("*📋 Aufgaben diese Woche:*");
     if (putz.length) {
       putz.forEach((p) => lines.push(`• ${p.task}${p.who ? ` – ${p.who}` : ""}${p.when ? ` (${fmtDate(p.when)})` : ""}`));
     } else lines.push("_nichts eingetragen_");

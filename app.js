@@ -444,7 +444,7 @@ const auth = {
     renderAnwesend();
     renderGallery();
     renderEvents();
-    renderPutzplan();
+    renderAufgaben();
     renderGiessplan();
     renderGartenTodos();
     populateGiessWhoSelect();
@@ -556,7 +556,7 @@ function onMemberPrefsChanged() {
   renderTermine();
   renderSchaeden();
   populateLoginMemberSelect();
-  populatePutzWhoSelect();
+  populateAufgabenWhoSelect();
   populateSchadenZustaendigSelect();
   renderSettingsBewohnerRoster();
 }
@@ -567,7 +567,7 @@ function onMovedOutChanged() {
   renderTermine();
   renderSchaeden();
   populateLoginMemberSelect();
-  populatePutzWhoSelect();
+  populateAufgabenWhoSelect();
   populateSchadenZustaendigSelect();
   updateLoginChip();
   renderSettingsBewohnerRoster();
@@ -900,14 +900,17 @@ function openLoginDialog() {
   try { $("loginDialog")?.showModal(); } catch (_) { /* */ }
 }
 
-function populatePutzWhoSelect() {
-  const select = $("putzWho");
+function populateAufgabenWhoSelect() {
+  const select = $("aufgabenWho");
   if (!select) return;
   const current = select.value;
-  const adults = getActiveAdults();
-  select.innerHTML = `<option value="">Wer?</option>` +
-    adults.map(b => `<option value="${b.name}">${mEmoji(b.name)} ${escapeHtml(mLabel(b.name))}</option>`).join("");
+  select.innerHTML = gartenTodoWhoOptionsHtml("", true);
   if (current) select.value = current;
+}
+
+function setAufgabenFormDefaults() {
+  const when = $("aufgabenWhen");
+  if (when && !when.value) when.value = zurichTodayYmd();
 }
 
 $("loginBtn")?.addEventListener("click", () => {
@@ -2626,86 +2629,10 @@ function syncKalenderTabs() {
 }
 
 /* ==========================================================================
-   Putzplan
+   Aufgaben (Firestore-Collection: putzplan)
    ========================================================================== */
 
 let putzCache = [];
-
-function renderPutzplan() {
-  const grid = $("putzplanGrid");
-  const sorted = [...putzCache].sort((a, b) => new Date(a.when) - new Date(b.when));
-  if (sorted.length === 0) {
-    grid.innerHTML = `<div class="empty-state" style="grid-column: 1/-1;">Noch keine Aufgaben – zum Glück! 🧼</div>`;
-    return;
-  }
-  grid.innerHTML = sorted.map(p => `
-    <div class="putz-card ${p.done ? 'done' : ''}">
-      <div class="putz-task">${escapeHtml(p.task)}</div>
-      <div class="putz-meta">
-        <span>${escapeHtml(p.who)} · ${new Date(p.when).toLocaleDateString("de-CH", {weekday:"short", day:"2-digit", month:"short"})}</span>
-      </div>
-      ${auth.isAuthed ? `<div class="putz-actions">
-        <button class="mini-btn" data-id="${p.id}" data-action="toggle">${p.done ? "↺ rückgängig" : "✓ erledigt"}</button>
-        <button class="mini-btn danger" data-id="${p.id}" data-action="delete">Löschen</button>
-      </div>` : ""}
-    </div>
-  `).join("");
-  grid.querySelectorAll(".mini-btn").forEach(btn => {
-    btn.addEventListener("click", () => {
-      if (btn.dataset.action === "toggle") togglePutz(btn.dataset.id);
-      else if (btn.dataset.action === "delete") deletePutz(btn.dataset.id);
-    });
-  });
-}
-
-async function togglePutz(id) {
-  if (!requireAuth("Putzplan ändern")) return;
-  const item = putzCache.find(p => p.id === id);
-  if (!item) return;
-  if (firebaseReady) {
-    await updateDoc(doc(db, "putzplan", id), { done: !item.done });
-  } else {
-    item.done = !item.done;
-    localStore.putzplan = putzCache;
-    saveLocal("putzplan", localStore.putzplan);
-    renderPutzplan();
-  }
-}
-
-async function deletePutz(id) {
-  if (!requireAuth("Putzplan ändern")) return;
-  if (firebaseReady) {
-    await deleteDoc(doc(db, "putzplan", id));
-  } else {
-    localStore.putzplan = localStore.putzplan.filter(p => p.id !== id);
-    putzCache = localStore.putzplan;
-    saveLocal("putzplan", localStore.putzplan);
-    renderPutzplan();
-  }
-}
-
-$("putzForm")?.addEventListener("submit", async (e) => {
-  e.preventDefault();
-  if (!requireAuth("Putzplan ändern")) return;
-  const entry = {
-    task: $("putzTask").value.trim(),
-    who: $("putzWho").value,
-    when: $("putzWhen").value,
-    done: false,
-    createdAt: Date.now()
-  };
-  if (firebaseReady) {
-    await addDoc(collection(db, "putzplan"), { ...entry, createdAt: serverTimestamp() });
-  } else {
-    entry.id = "local_" + Date.now();
-    localStore.putzplan.push(entry);
-    putzCache = localStore.putzplan;
-    saveLocal("putzplan", localStore.putzplan);
-    renderPutzplan();
-  }
-  e.target.reset();
-  showToast("Gespeichert.", "success");
-});
 
 /* ==========================================================================
    Giessplan (Zimmerpflanzen)
@@ -4196,6 +4123,584 @@ $("gartenTodoForm")?.addEventListener("submit", async (e) => {
   populateGartenTodoWhoSelect();
   const dueHint = `fällig ${formatGartenWorkSlot(parseGartenTodoDueISO(duePick || defaultGartenTodoDueISO()))}`;
   showToast(`🌿 Gespeichert – ${who}, ${dueHint}.`, "success");
+});
+
+/* ==========================================================================
+   Aufgaben – Render, Reihenfolge, Tausch, Verlauf (wie Garten To-Do)
+   ========================================================================== */
+
+function aufgabenIsRecurring(item) {
+  return (item.intervalDays || 0) > 0;
+}
+
+function aufgabenNextDueDate(item) {
+  const manual = parseGartenTodoDueISO(item.nextDue || item.when);
+  if (manual) return manual;
+  const interval = item.intervalDays || 0;
+  if (!interval) return parseGartenTodoDueISO(item.when) || today0();
+  if (item.lastDone) {
+    return addDaysLocal(startOfDayLocal(new Date(item.lastDone)), interval);
+  }
+  return parseGartenTodoDueISO(item.when) || today0();
+}
+
+function formatAufgabenSlot(date) {
+  return date.toLocaleDateString("de-CH", {
+    weekday: "short",
+    day: "2-digit",
+    month: "short",
+    year: "numeric",
+    timeZone: "Europe/Zurich",
+  });
+}
+
+function getAufgabenStatus(item) {
+  if (!aufgabenIsRecurring(item)) {
+    return item.done ? "done" : "upcoming";
+  }
+  if (gartenTodoDoneToday(item)) return "done-today";
+  const next = aufgabenNextDueDate(item);
+  const today = today0();
+  if (next < today) return "overdue";
+  if (next.getTime() === today.getTime()) return "due-today";
+  return "upcoming";
+}
+
+function buildAufgabenRotation(item, rounds = 10) {
+  const interval = item.intervalDays || 7;
+  const adults = [...getActiveAdultNames()].sort((a, b) => a.localeCompare(b, "de"));
+  if (!adults.length) return [];
+  const overridesByDue = gartenTodoRotationOverridesByDue(item);
+  let who = item.who && adults.includes(item.who) ? item.who : adults[0];
+  let date = aufgabenNextDueDate(item);
+  const rows = [];
+  for (let i = 0; i < rounds; i++) {
+    const dueIso = toISODateLocal(date);
+    let swapInfo = null;
+    const ov = overridesByDue[dueIso];
+    if (ov?.who && adults.includes(ov.who)) {
+      who = ov.who;
+      if (ov.swappedAt) swapInfo = { by: ov.swappedBy, at: ov.swappedAt };
+    } else if (i === 0 && item.whoSwappedAt) {
+      swapInfo = { by: item.whoSwappedBy, at: item.whoSwappedAt };
+    }
+    rows.push({
+      who,
+      date: new Date(date),
+      dueIso,
+      kw: formatKwLabel(date),
+      slot: formatAufgabenSlot(date),
+      current: i === 0,
+      swapInfo,
+      roundIndex: i,
+    });
+    const idx = adults.indexOf(who);
+    who = adults[(idx + 1) % adults.length];
+    date = addDaysLocal(date, interval);
+  }
+  return rows;
+}
+
+function aufgabenRotationHtml(item, canEdit = false) {
+  const rows = buildAufgabenRotation(item);
+  if (!rows.length) return "<p class=\"form-note\">Keine aktiven Erwachsenen.</p>";
+  const lis = rows
+    .map((r) => {
+      const n = r.roundIndex + 1;
+      const itemCls = [
+        "gartentodo-rotation-item",
+        r.current ? "is-next" : "",
+        r.roundIndex > 0 ? "is-later" : "",
+      ]
+        .filter(Boolean)
+        .join(" ");
+      const saveBtn = canEdit
+        ? gartenTodoIconBtn(
+            "gartentodo-rotation-save",
+            "Person tauschen (z.B. Urlaub)",
+            GARTEN_TODO_ICON_SVG.swap,
+            `data-id="${escapeHtml(item.id)}" data-due="${escapeHtml(r.dueIso)}" data-round="${r.roundIndex}"`
+          )
+        : "";
+      const calBtn = gartenTodoIconBtn(
+        "gartentodo-rotation-ical",
+        "In Kalender speichern",
+        GARTEN_TODO_ICON_SVG.calendar,
+        `data-id="${escapeHtml(item.id)}" data-due="${escapeHtml(r.dueIso)}" data-who="${escapeHtml(r.who)}" data-round="${r.roundIndex}"`
+      );
+      const historyDrop = r.swapInfo ? gartenTodoHistoryDropdownHtml(item, r) : "";
+      const whoControls = canEdit
+        ? `<select class="gartentodo-rotation-who" data-rotation-who="${escapeHtml(item.id)}" data-due="${escapeHtml(r.dueIso)}" data-round="${r.roundIndex}" aria-label="Person für ${escapeHtml(r.slot)}">${gartenTodoWhoOptionsHtml(r.who, false, true)}</select>`
+        : `<span class="gartentodo-rotation-person-name">${escapeHtml(mLabel(r.who))}</span>`;
+      return `<li class="${itemCls}">
+        <div class="gartentodo-rotation-rank" aria-label="Termin ${n}">
+          <span class="gartentodo-rotation-rank-n">${n}</span>
+        </div>
+        <div class="gartentodo-rotation-body">
+          <p class="gartentodo-rotation-heading">
+            <span class="gartentodo-rotation-when">${escapeHtml(r.slot)}</span>
+          </p>
+          <p class="gartentodo-rotation-kw">${r.kw}</p>
+          <div class="gartentodo-rotation-toolbar">
+            ${whoControls}
+            <div class="gartentodo-icon-group" role="group" aria-label="Aktionen">
+              ${saveBtn}
+              ${calBtn}
+              ${historyDrop}
+            </div>
+          </div>
+        </div>
+      </li>`;
+    })
+    .join("");
+  const hint = canEdit
+    ? `Icons: tauschen · Kalender · Uhr (Verlauf). Zeile 1 = nächste Runde, alle ${item.intervalDays || 7} Tage.`
+    : `Wiederholung alle ${item.intervalDays || 7} Tage.`;
+  return `<ol class="gartentodo-rotation-list" start="1">${lis}</ol><p class="form-note">${hint}</p>`;
+}
+
+function formatAufgabenCardSummary(item) {
+  const status = getAufgabenStatus(item);
+  const next = aufgabenNextDueDate(item);
+  const whenLine = formatAufgabenSlot(next);
+  if (status === "done") {
+    return { chip: TODO_CARD_LABELS.chipDone, chipCls: "done", when: TODO_CARD_LABELS.doneToday };
+  }
+  if (status === "done-today") {
+    return { chip: TODO_CARD_LABELS.chipDone, chipCls: "done", when: TODO_CARD_LABELS.doneToday };
+  }
+  if (status === "overdue") {
+    const days = Math.ceil((today0() - next) / 86400000);
+    return {
+      chip: TODO_CARD_LABELS.chipActive,
+      chipCls: "overdue",
+      when: `${whenLine} · ${TODO_CARD_LABELS.overdueDays(days)}`,
+    };
+  }
+  if (status === "due-today") {
+    return { chip: TODO_CARD_LABELS.chipActive, chipCls: "due-today", when: whenLine };
+  }
+  return { chip: TODO_CARD_LABELS.chipActive, chipCls: "upcoming", when: whenLine };
+}
+
+function aufgabenShowDoneButton(item) {
+  if (!aufgabenIsRecurring(item)) return !item.done;
+  const s = getAufgabenStatus(item);
+  return s === "overdue" || s === "due-today" || s === "upcoming";
+}
+
+function buildAufgabenIcs(item, dueIso, who, roundIndex = null) {
+  const due = parseGartenTodoDueISO(dueIso) || aufgabenNextDueDate(item);
+  if (isNaN(due.getTime())) return null;
+  const assignee = who || item.who || "";
+  const y = due.getFullYear();
+  const mo = due.getMonth() + 1;
+  const da = due.getDate();
+  const dtStart = zurichWallToUtcDate(y, mo, da, 9, 0);
+  const dtEnd = zurichWallToUtcDate(y, mo, da, 10, 0);
+  const now = new Date();
+  const roundSuffix = roundIndex != null ? `-r${roundIndex}` : "";
+  const uid = `aufgabe-${item.id || due.getTime()}${roundSuffix}@hausamsee`;
+  const summary = `📋 ${item.task} – ${mLabel(assignee)}`;
+  const lines = [
+    "BEGIN:VCALENDAR",
+    "VERSION:2.0",
+    "PRODID:-//Haus am See//Aufgaben//DE",
+    "CALSCALE:GREGORIAN",
+    "METHOD:PUBLISH",
+    "BEGIN:VEVENT",
+    `UID:${uid}`,
+    `DTSTAMP:${toIcsDate(now)}`,
+    `DTSTART:${toIcsDate(dtStart)}`,
+    `DTEND:${toIcsDate(dtEnd)}`,
+    foldIcsLine(`SUMMARY:${icsEscape(summary)}`),
+    foldIcsLine(`LOCATION:${icsEscape("Haus am See, Pilatusstrasse 40, Pfäffikon ZH")}`),
+  ];
+  const descParts = [`Aufgabe · Zuständig: ${assignee || "—"}`];
+  if (aufgabenIsRecurring(item)) descParts.push(`Wiederholung: alle ${item.intervalDays} Tage`);
+  else descParts.push("Einmalige Aufgabe");
+  if (roundIndex != null) descParts.push("Geplanter Termin aus Reihenfolge");
+  descParts.push(gartenTodoPermalink());
+  lines.push(foldIcsLine(`DESCRIPTION:${icsEscape(descParts.join("\n"))}`));
+  lines.push(foldIcsLine(`URL:${gartenTodoPermalink()}`));
+  appendIcsAlarms(lines, [
+    { trigger: "-P1D", description: `Morgen: ${item.task}` },
+    { trigger: "-PT0M", description: `Heute: ${item.task}` },
+  ]);
+  lines.push("END:VEVENT", "END:VCALENDAR");
+  return lines.join("\r\n");
+}
+
+function downloadAufgabenIcs(item, dueIso, who, roundIndex = null) {
+  const ics = buildAufgabenIcs(item, dueIso, who, roundIndex);
+  if (!ics) {
+    showToast("Termin ungültig.", "error");
+    return;
+  }
+  const blob = new Blob([ics], { type: "text/calendar;charset=utf-8" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  const base = (item.task || "aufgabe")
+    .replace(/[^a-z0-9äöüß -]/gi, "")
+    .trim()
+    .replace(/\s+/g, "-")
+    .toLowerCase() || "aufgabe";
+  a.download = `haus-am-see-aufgabe-${base}.ics`;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+  showToast("Kalender-Datei heruntergeladen.", "success");
+}
+
+async function persistAufgabenUpdates(id, updates, toastMsg, toastType = "success") {
+  const item = putzCache.find((p) => p.id === id);
+  if (!item) return false;
+  const snapshot = {};
+  Object.keys(updates).forEach((k) => {
+    const v = item[k];
+    snapshot[k] = Array.isArray(v) ? [...v] : v;
+  });
+  Object.assign(item, updates);
+  try {
+    if (firebaseReady) {
+      await updateDoc(doc(db, "putzplan", id), updates);
+    } else {
+      localStore.putzplan = putzCache;
+      saveLocal("putzplan", localStore.putzplan);
+    }
+    renderAufgaben();
+    showToast(toastMsg, toastType);
+    return true;
+  } catch (err) {
+    Object.assign(item, snapshot);
+    console.error("persistAufgabenUpdates", err);
+    showToast(`Speichern fehlgeschlagen: ${err.message || err}`, "error");
+    return false;
+  }
+}
+
+async function saveAufgabenRotationSlot(id, dueIso, roundIndex, who, triggerBtn = null) {
+  if (!requireMember("Aufgaben")) return;
+  const item = putzCache.find((p) => p.id === id);
+  if (!item || !who || !dueIso) {
+    showToast("Bitte Person wählen.", "error");
+    return;
+  }
+  const rows = buildAufgabenRotation(item);
+  const row = rows[roundIndex];
+  const prevWho = row?.who || item.who;
+  if (prevWho === who) {
+    showToast("Keine Änderung – gleiche Person.", "info");
+    return;
+  }
+  if (triggerBtn) {
+    triggerBtn.disabled = true;
+  }
+  const history = appendGartenTodoHistory(
+    item,
+    gartenTodoHistoryEntry(roundIndex === 0 ? "plan" : "rotation", {
+      who,
+      nextDue: dueIso,
+      prevWho,
+      prevDue: roundIndex === 0 ? (item.when || dueIso) : dueIso,
+      fairNote: `Tausch: ${mLabel(prevWho)} → ${mLabel(who)}`,
+    })
+  );
+  const swapMeta = gartenTodoNewSwapMeta();
+  let updates;
+  if (roundIndex === 0) {
+    updates = {
+      who,
+      when: dueIso,
+      nextDue: dueIso,
+      whoManual: true,
+      whoSwappedBy: swapMeta.swappedBy,
+      whoSwappedAt: swapMeta.swappedAt,
+      rotationOverrides: removeGartenTodoRotationOverride(normalizeGartenTodoRotationOverrides(item), dueIso),
+      history,
+    };
+  } else {
+    updates = {
+      rotationOverrides: upsertGartenTodoRotationOverride(
+        normalizeGartenTodoRotationOverrides(item),
+        dueIso,
+        who,
+        swapMeta
+      ),
+      whoManual: true,
+      history,
+    };
+  }
+  const ok = await persistAufgabenUpdates(id, updates, `Tausch gespeichert (${mLabel(who)}).`);
+  if (triggerBtn) {
+    triggerBtn.disabled = false;
+    triggerBtn.innerHTML = GARTEN_TODO_ICON_SVG.swap;
+  }
+  if (!ok) renderAufgaben();
+}
+
+async function markAufgabenDone(id, rotateNext = true) {
+  if (!requireMember("Aufgaben")) return;
+  const item = putzCache.find((p) => p.id === id);
+  if (!item) return;
+  if (!aufgabenIsRecurring(item)) {
+    const history = appendGartenTodoHistory(
+      item,
+      gartenTodoHistoryEntry("done", {
+        completedBy: auth.member || item.who || "WG",
+        fairNote: "Einmalige Aufgabe erledigt",
+      })
+    );
+    await persistAufgabenUpdates(id, { done: true, history }, "✅ Erledigt gespeichert.");
+    return;
+  }
+  const now = new Date().toISOString();
+  const interval = item.intervalDays || 7;
+  const completedBy = auth.member || item.who || "WG";
+  const nextWho = rotateNext ? pickNextAssignee(item.who) : item.who;
+  const nextDue = toISODateLocal(addDaysLocal(today0(), interval));
+  const history = appendGartenTodoHistory(
+    item,
+    gartenTodoHistoryEntry("done", {
+      completedBy,
+      who: nextWho,
+      nextDue,
+      fairNote: rotateNext ? `Nächste Person: ${mLabel(nextWho)}` : "Gleiche Person bleibt dran.",
+    })
+  );
+  await persistAufgabenUpdates(
+    id,
+    {
+      lastDone: now,
+      lastCompletedBy: completedBy,
+      who: nextWho,
+      when: nextDue,
+      nextDue,
+      done: false,
+      whoManual: false,
+      history,
+    },
+    `✅ Erledigt – nächste Runde: ${mLabel(nextWho)}, ${formatAufgabenSlot(parseGartenTodoDueISO(nextDue))}.`
+  );
+}
+
+async function toggleAufgabenOneShot(id) {
+  if (!requireAuth("Aufgaben ändern")) return;
+  const item = putzCache.find((p) => p.id === id);
+  if (!item || aufgabenIsRecurring(item)) return;
+  const nextDone = !item.done;
+  const history = appendGartenTodoHistory(
+    item,
+    gartenTodoHistoryEntry("done", {
+      fairNote: nextDone ? "Einmalige Aufgabe erledigt" : "Wieder als offen markiert",
+    })
+  );
+  await persistAufgabenUpdates(
+    id,
+    { done: nextDone, history },
+    nextDone ? "Als erledigt markiert." : "Wieder offen."
+  );
+}
+
+async function deleteAufgabe(id) {
+  if (!requireAuth("Aufgaben löschen")) return;
+  if (!confirm("Diese Aufgabe wirklich löschen?")) return;
+  if (firebaseReady) {
+    await deleteDoc(doc(db, "putzplan", id));
+  } else {
+    localStore.putzplan = localStore.putzplan.filter((p) => p.id !== id);
+    putzCache = localStore.putzplan;
+    saveLocal("putzplan", localStore.putzplan);
+    renderAufgaben();
+  }
+  showToast("Entfernt.", "success");
+}
+
+function renderAufgaben() {
+  const grid = $("aufgabenGrid");
+  if (!grid) return;
+
+  const order = { overdue: 0, "due-today": 1, upcoming: 2, done: 3, "done-today": 4 };
+  const sorted = [...putzCache].sort((a, b) => {
+    const sa = getAufgabenStatus(a);
+    const sb = getAufgabenStatus(b);
+    const diff = (order[sa] ?? 2) - (order[sb] ?? 2);
+    if (diff !== 0) return diff;
+    return aufgabenNextDueDate(a) - aufgabenNextDueDate(b);
+  });
+
+  if (!sorted.length) {
+    grid.innerHTML = `<div class="empty-state" style="grid-column:1/-1;">Noch keine Aufgaben – Zeit, die Liste zu starten! 📋</div>`;
+    return;
+  }
+
+  grid.innerHTML = sorted
+    .map((item) => {
+      const status = getAufgabenStatus(item);
+      const summary = formatAufgabenCardSummary(item);
+      const recurring = aufgabenIsRecurring(item);
+      const whoName = item.who ? mLabel(item.who) : "Noch offen";
+      const whoEmoji = item.who ? mEmoji(item.who) : "👤";
+      const canEdit = auth.isMember;
+      const showDoneBtn = aufgabenShowDoneButton(item);
+      const cardHistoryDrop = gartenTodoCardHistoryDropdownHtml(item);
+      const typeBadge = recurring
+        ? `<span class="gartentodo-badge">🔁 alle ${item.intervalDays} Tage</span>`
+        : `<span class="gartentodo-badge manual">📌 einmalig</span>`;
+
+      return `
+      <div class="gartentodo-card ${status}">
+        <header class="gartentodo-card-head">
+          <div class="gartentodo-hero">
+            <p class="gartentodo-hero-label">${TODO_CARD_LABELS.task}</p>
+            <h3 class="gartentodo-task-title">${escapeHtml(item.task)}</h3>
+            <div class="gartentodo-assignee${item.who ? "" : " is-empty"}">
+              <span class="gartentodo-assignee-label">${TODO_CARD_LABELS.assignee}</span>
+              <span class="gartentodo-assignee-value"><span class="gartentodo-assignee-emoji" aria-hidden="true">${whoEmoji}</span> ${escapeHtml(whoName)}</span>
+            </div>
+          </div>
+          <div class="gartentodo-head-end">
+            ${typeBadge}
+            <span class="gartentodo-status-chip ${summary.chipCls}">${escapeHtml(summary.chip)}</span>
+          </div>
+        </header>
+        <p class="gartentodo-when-line">${escapeHtml(summary.when)}</p>
+        ${canEdit && recurring ? `
+          <details class="gartentodo-subdetails">
+            <summary>📅 Reihenfolge &amp; Tausch</summary>
+            ${aufgabenRotationHtml(item, true)}
+          </details>
+          ${showDoneBtn
+            ? `<div class="gartentodo-done-actions">
+            <button type="button" class="mini-btn gartentodo-done-btn" data-id="${item.id}" data-action="done">✅ ${TODO_CARD_LABELS.saveDoneGarten}</button>
+          </div>`
+            : ""}
+        ` : ""}
+        ${canEdit ? `
+          <div class="gartentodo-tools">
+            ${recurring
+              ? `<button type="button" class="event-share-btn gartentodo-share-btn" data-id="${item.id}" data-action="ical-main" title="Nächste Runde in den Kalender">📅 Kalender</button>`
+              : ""}
+            ${cardHistoryDrop}
+          </div>
+          <div class="gartentodo-actions">
+            ${!recurring
+              ? `<button type="button" class="mini-btn" data-id="${item.id}" data-action="toggle">${item.done ? "↺ Wieder offen" : "✅ Erledigt"}</button>`
+              : ""}
+            <button type="button" class="mini-btn danger" data-id="${item.id}" data-action="delete">Löschen</button>
+          </div>
+        ` : `<div class="gartentodo-tools">${cardHistoryDrop}</div>`}
+      </div>`;
+    })
+    .join("");
+
+  grid.querySelectorAll(".gartentodo-done-btn[data-action='done']").forEach((btn) => {
+    btn.addEventListener("click", () => void markAufgabenDone(btn.dataset.id, true));
+  });
+  grid.querySelectorAll("[data-action='toggle']").forEach((btn) => {
+    btn.addEventListener("click", () => void toggleAufgabenOneShot(btn.dataset.id));
+  });
+  grid.querySelectorAll("[data-action='delete']").forEach((btn) => {
+    btn.addEventListener("click", () => void deleteAufgabe(btn.dataset.id));
+  });
+  grid.querySelectorAll(".gartentodo-share-btn[data-action='ical-main']").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      const item = putzCache.find((p) => p.id === btn.dataset.id);
+      if (!item) return;
+      downloadAufgabenIcs(item, toISODateLocal(aufgabenNextDueDate(item)), item.who);
+    });
+  });
+  grid.querySelectorAll(".gartentodo-rotation-ical").forEach((btn) => {
+    btn.addEventListener("click", (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      const item = putzCache.find((p) => p.id === btn.dataset.id);
+      if (!item) return;
+      const sel = grid.querySelector(
+        `.gartentodo-rotation-who[data-rotation-who="${btn.dataset.id}"][data-due="${btn.dataset.due}"]`
+      );
+      const who = sel?.value || btn.dataset.who;
+      downloadAufgabenIcs(item, btn.dataset.due, who, parseInt(btn.dataset.round, 10));
+    });
+  });
+  grid.querySelectorAll(".gartentodo-rotation-save").forEach((btn) => {
+    btn.addEventListener("click", (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      const sel = grid.querySelector(
+        `.gartentodo-rotation-who[data-rotation-who="${btn.dataset.id}"][data-due="${btn.dataset.due}"]`
+      );
+      void saveAufgabenRotationSlot(
+        btn.dataset.id,
+        btn.dataset.due,
+        parseInt(btn.dataset.round, 10),
+        sel?.value,
+        btn
+      );
+    });
+  });
+  grid.querySelectorAll(".gartentodo-verlauf-icon-btn").forEach((btn) => {
+    btn.addEventListener("click", (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      toggleGartenTodoRowHistory(btn.dataset.historyFor, btn.dataset.historyDue, grid);
+    });
+  });
+  if (!window._aufgabenHistoryAwayBound) {
+    window._aufgabenHistoryAwayBound = true;
+    document.addEventListener("click", (e) => {
+      window.setTimeout(() => {
+        if (e.target.closest(".gartentodo-history-drop, .gartentodo-history-panel, .gartentodo-verlauf-icon-btn")) return;
+        const g = $("aufgabenGrid");
+        if (g) closeGartenTodoHistoryPanels(g);
+      }, 0);
+    });
+  }
+}
+
+$("aufgabenForm")?.addEventListener("submit", async (e) => {
+  e.preventDefault();
+  if (!requireMember("Aufgaben")) return;
+  const task = $("aufgabenTask").value.trim();
+  const who = $("aufgabenWho").value;
+  const when = $("aufgabenWhen").value;
+  const intervalDays = parseInt($("aufgabenInterval").value, 10) || 0;
+  if (!task || !who || !when) {
+    showToast("Bitte Aufgabe, Person und Datum ausfüllen.", "error");
+    return;
+  }
+  const entry = {
+    task,
+    who,
+    when,
+    nextDue: when,
+    intervalDays,
+    done: false,
+    lastDone: null,
+    rotationOverrides: [],
+    history: [
+      gartenTodoHistoryEntry("created", {
+        who,
+        nextDue: when,
+        fairNote: intervalDays ? `Wiederholung alle ${intervalDays} Tage` : "Einmalige Aufgabe",
+      }),
+    ],
+  };
+  if (firebaseReady) {
+    await addDoc(collection(db, "putzplan"), { ...entry, createdAt: serverTimestamp() });
+  } else {
+    entry.id = "local_" + Date.now();
+    localStore.putzplan.push(entry);
+    putzCache = localStore.putzplan;
+    saveLocal("putzplan", localStore.putzplan);
+    renderAufgaben();
+  }
+  e.target.reset();
+  setAufgabenFormDefaults();
+  populateAufgabenWhoSelect();
+  showToast("Aufgabe gespeichert.", "success");
 });
 
 /* ==========================================================================
@@ -7936,7 +8441,7 @@ function setupListeners() {
     giessplanCache = localStore.giessplan || [];
     gartenTodoCache = localStore.gartentodos || [];
     renderEvents();
-    renderPutzplan();
+    renderAufgaben();
     renderGiessplan();
     renderGartenTodos();
     populateGiessWhoSelect();
@@ -7969,7 +8474,7 @@ function setupListeners() {
 
   onSnapshot(query(collection(db, "putzplan"), orderBy("createdAt", "desc")), (snap) => {
     putzCache = snap.docs.map(d => ({ id: d.id, ...d.data() }));
-    renderPutzplan();
+    renderAufgaben();
   }, (err) => console.warn("putzplan listener:", err.message));
 
   onSnapshot(query(collection(db, "giessplan"), orderBy("createdAt", "desc")), (snap) => {
@@ -8099,7 +8604,8 @@ function setupScrollAnim() {
 
 populateProfileEmojiSelect();
 populateLoginMemberSelect();
-populatePutzWhoSelect();
+populateAufgabenWhoSelect();
+setAufgabenFormDefaults();
 populateSchadenZustaendigSelect();
 $("schaedenExportBtn")?.addEventListener("click", () => downloadSchaedenExcel());
 renderBewohner();
@@ -8131,7 +8637,7 @@ loadAuthConfig().then(() => {
   auth.init();
   onMovedOutChanged();
   populateLoginMemberSelect();
-  populatePutzWhoSelect();
+  populateAufgabenWhoSelect();
   setupListeners();
   setupRoomShareUI();
   if (new URLSearchParams(window.location.search).get("openLogin") === "1" ||
