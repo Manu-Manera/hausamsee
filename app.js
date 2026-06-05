@@ -5552,6 +5552,28 @@ function jacuzziHeroBrief(status) {
   return warm ? "Warm ♨️" : "Keine Messung";
 }
 
+function buildJacuzziMeasureHtml({ compact = false } = {}) {
+  if (!auth.isMember) return "";
+  const status = jacuzziStatusCache?.measureRequestStatus;
+  const btnLabel = jacuzziMeasureBusy ? "⏳ Wird geladen…" : "📡 Jetzt messen";
+  const btnDisabled = jacuzziMeasureBusy ? " disabled" : "";
+  let statusHtml = "";
+  if (status?.message) {
+    const cls = status.ok ? "is-ok" : status.unchanged ? "is-warn" : "is-bad";
+    const rel = status.at ? fmtJacuzziRelative(status.at) : "";
+    statusHtml = `<p class="jacuzzi-measure-status-line"><span class="jacuzzi-measure-status ${cls}">${escapeHtml(status.message)}</span>${rel ? ` <span class="form-note">(${escapeHtml(rel)})</span>` : ""}</p>`;
+  }
+  if (compact) {
+    return `<button type="button" class="btn btn-primary small jacuzzi-measure-btn"${btnDisabled}>${btnLabel}</button>`;
+  }
+  return `
+    <div class="jacuzzi-measure-inline">
+      <button type="button" class="btn btn-primary jacuzzi-measure-btn"${btnDisabled}>${btnLabel}</button>
+      ${statusHtml}
+      <p class="form-note jacuzzi-measure-hint">Zuerst in der <strong>Blue Connect App</strong> am Jacuzzi messen (Bluetooth), dann hier tippen – Gustav lädt die Werte aus der Cloud.</p>
+    </div>`;
+}
+
 function renderJacuzziPanel() {
   const el = $("jacuzziHeroWidget");
   if (!el) return;
@@ -5571,12 +5593,15 @@ function renderJacuzziPanel() {
   const verlaufPanel = jacuzziHeroVerlaufOpen
     ? `<div class="jacuzzi-hero-verlauf" id="jacuzziHeroVerlaufPanel">${buildJacuzziReadingsHtml(JACUZZI_VERLAUF_LIMIT)}</div>`
     : "";
+  const measureExpanded = buildJacuzziMeasureHtml();
+  const measureCompact = buildJacuzziMeasureHtml({ compact: true });
   const expandedBody = jacuzziHeroExpanded
     ? `
       <div class="jacuzzi-hero-body-panel" id="jacuzziHeroBodyPanel">
         <div class="jacuzzi-kalender-dashboard bc-dashboard-wrap${warm ? " is-warm" : ""}">
           ${buildJacuzziConnectDashboard(status)}
         </div>
+        ${measureExpanded}
         ${belegHtml}
         <button type="button" class="jacuzzi-verlauf-btn jacuzzi-hero-verlauf-btn" id="jacuzziHeroVerlaufBtn" aria-expanded="${jacuzziHeroVerlaufOpen ? "true" : "false"}" aria-controls="jacuzziHeroVerlaufPanel">
           📊 ${escapeHtml(verlaufLabel)}
@@ -5589,59 +5614,28 @@ function renderJacuzziPanel() {
   el.className = `jacuzzi-hero jacuzzi-kalender${warm ? " is-warm" : ""}${jacuzziHeroExpanded ? " is-expanded" : " is-collapsed"}`;
   el.innerHTML = `
     <div class="jacuzzi-hero-card">
-      <button type="button" class="jacuzzi-hero-toggle" id="jacuzziHeroToggle" aria-expanded="${jacuzziHeroExpanded ? "true" : "false"}" aria-controls="jacuzziHeroBodyPanel">
-        <span class="jacuzzi-hero-toggle-main">
-          <span class="jacuzzi-hero-label">🛁 Jacuzzi</span>
-          <span class="jacuzzi-hero-brief">${escapeHtml(brief)}</span>
-        </span>
-        <span class="jacuzzi-hero-chevron" aria-hidden="true">${jacuzziHeroExpanded ? "▾" : "▸"}</span>
-      </button>
+      <div class="jacuzzi-hero-head-row">
+        <button type="button" class="jacuzzi-hero-toggle" id="jacuzziHeroToggle" aria-expanded="${jacuzziHeroExpanded ? "true" : "false"}" aria-controls="jacuzziHeroBodyPanel">
+          <span class="jacuzzi-hero-toggle-main">
+            <span class="jacuzzi-hero-label">🛁 Jacuzzi</span>
+            <span class="jacuzzi-hero-brief">${escapeHtml(brief)}</span>
+          </span>
+          <span class="jacuzzi-hero-chevron" aria-hidden="true">${jacuzziHeroExpanded ? "▾" : "▸"}</span>
+        </button>
+        ${!jacuzziHeroExpanded ? measureCompact : ""}
+      </div>
       ${expandedBody}
     </div>
   `;
 
   syncJacuzziWhatsappOpt();
-  syncJacuzziMeasureUI();
 }
 
 let jacuzziMeasureBusy = false;
 let jacuzziMeasureRequestAt = 0;
 
 function syncJacuzziMeasureUI() {
-  const row = $("jacuzziMeasureRow");
-  const btn = $("jacuzziMeasureNowBtn");
-  const hint = $("jacuzziMeasureHint");
-  if (!row || !btn) return;
-
-  if (!auth.isMember) {
-    row.classList.add("hidden");
-    btn.disabled = true;
-    return;
-  }
-  row.classList.remove("hidden");
-
-  const status = jacuzziStatusCache?.measureRequestStatus;
-  const baseHint =
-    "Zuerst in der <strong>Blue Connect App</strong> am Jacuzzi messen (Bluetooth), dann hier tippen – Gustav lädt die Werte aus der Cloud.";
-
-  if (jacuzziMeasureBusy) {
-    btn.disabled = true;
-    btn.textContent = "⏳ Wird geladen…";
-    if (hint) hint.innerHTML = "Messung wird aus der Blue&nbsp;Riiot-Cloud geholt…";
-    return;
-  }
-
-  btn.disabled = false;
-  btn.textContent = "📡 Jetzt messen";
-  if (hint) {
-    if (status?.message) {
-      const when = status.at ? fmtJacuzziRelative(status.at) : "";
-      const cls = status.ok ? "is-ok" : status.unchanged ? "is-warn" : "is-bad";
-      hint.innerHTML = `<span class="jacuzzi-measure-status ${cls}">${escapeHtml(status.message)}</span>${when ? ` <span class="form-note">(${escapeHtml(when)})</span>` : ""}<br><span class="form-note">${baseHint}</span>`;
-    } else {
-      hint.innerHTML = baseHint;
-    }
-  }
+  renderJacuzziPanel();
 }
 
 async function requestJacuzziMeasureNow() {
@@ -5761,6 +5755,12 @@ async function saveJacuzziWhatsappPref(enabled) {
 function setupJacuzziVerlaufToggles() {
   $("jacuzziHeroWidget")?.addEventListener("click", (e) => {
     if (e.target.closest("a")) return;
+    if (e.target.closest(".jacuzzi-measure-btn")) {
+      e.preventDefault();
+      e.stopPropagation();
+      void requestJacuzziMeasureNow();
+      return;
+    }
     if (e.target.closest("#jacuzziHeroVerlaufBtn")) {
       jacuzziHeroVerlaufOpen = !jacuzziHeroVerlaufOpen;
       renderJacuzziPanel();
@@ -5776,7 +5776,6 @@ function setupJacuzziVerlaufToggles() {
   $("jacuzziWhatsappCheckbox")?.addEventListener("change", (e) => {
     void saveJacuzziWhatsappPref(e.target.checked);
   });
-  $("jacuzziMeasureNowBtn")?.addEventListener("click", () => void requestJacuzziMeasureNow());
 }
 
 function wellnessWhoLine(booking) {
