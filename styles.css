@@ -344,6 +344,9 @@ a:hover { color: var(--terracotta); }
   flex: 0 0 auto;
   width: min(360px, 100%);
   max-width: 360px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
 }
 .hero-weather-slot:empty {
   display: none;
@@ -2558,22 +2561,222 @@ textarea { resize: vertical; font-family: inherit; }
 .jacuzzi-status-chip.warm { background: #fff3e0; color: #bf360c; }
 .jacuzzi-status-chip.cool { background: #e3f2fd; color: #1565c0; }
 .jacuzzi-status-chip.unknown { background: #f5f5f5; color: #666; }
+.jacuzzi-hero-card {
+  width: 100%;
+  text-align: left;
+  padding: 14px 16px 12px;
+  background: var(--card);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  border: 1px solid var(--card-border);
+  border-radius: var(--r-lg);
+  box-shadow: var(--card-shadow);
+}
+.jacuzzi-hero.is-warm .jacuzzi-hero-card {
+  border-color: rgba(198, 122, 80, 0.45);
+  background: linear-gradient(135deg, rgba(255, 248, 240, 0.98), rgba(253, 249, 242, 0.95));
+}
+.jacuzzi-hero-top {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+.jacuzzi-hero-label {
+  font-size: 0.72rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--terracotta-dark);
+}
+.jacuzzi-hero-updated {
+  font-size: 0.72rem;
+  color: var(--text-muted);
+  text-align: right;
+  line-height: 1.3;
+}
+.jacuzzi-hero-body {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 8px 12px;
+  margin-bottom: 10px;
+}
+.jacuzzi-hero-temp {
+  font-family: 'Fraunces', Georgia, serif;
+  font-size: 1.85rem;
+  font-weight: 700;
+  color: var(--terracotta-dark);
+  line-height: 1;
+}
+.jacuzzi-hero-foot {
+  margin: 10px 0 0;
+  font-size: 0.75rem;
+  color: var(--text-muted);
+  line-height: 1.4;
+}
+.jacuzzi-hero-foot a {
+  color: var(--terracotta-dark);
+  font-weight: 600;
+}
+.jacuzzi-verlauf-block {
+  margin: 16px 0 8px;
+}
+.jacuzzi-verlauf-btn {
+  width: 100%;
+  justify-content: center;
+  font-size: 0.88rem;
+  padding: 10px 14px;
+  border-radius: var(--r-sm);
+  border: 1px dashed var(--card-border);
+  background: rgba(253, 249, 242, 0.7);
+  cursor: pointer;
+}
+.jacuzzi-hero-verlauf-btn {
+  margin-bottom: 0;
+}
+.jacuzzi-hero-verlauf {
+  margin-top: 10px;
+}
 .jacuzzi-readings-wrap {
   display: flex;
   flex-direction: column;
   gap: 6px;
-  max-height: 220px;
+  max-height: 280px;
   overflow-y: auto;
+  margin-top: 10px;
+}
+.jacuzzi-readings-wrap.hidden {
+  display: none;
+}
+.jacuzzi-verlauf-empty {
+  margin: 0;
+  padding: 8px 0;
 }
 .jacuzzi-reading-row {
-  display: flex;
-  justify-content: space-between;
-  gap: 12px;
-  font-size: 0.88rem;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto auto auto;
+  align-items: center;
+  gap: 8px 10px;
+  font-size: 0.82rem;
   padding: 8px 12px;
   background: rgba(233, 220, 192, 0.25);
   border-radius: var(--r-sm);
 }
+.jacuzzi-reading-when {
+  color: var(--text-soft);
+  font-variant-numeric: tabular-nums;
+}
+.jacuzzi-reading-src {
+  font-size: 0.75rem;
+  color: var(--text-muted);
+  text-align: right;
+  white-space: nowrap;
+}
+.jacuzzi-water-metrics {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+  gap: 10px;
+  margin: 12px 0 10px;
+}
+.jacuzzi-water-metrics.is-compact {
+  grid-template-columns: 1fr;
+  gap: 6px;
+  margin: 10px 0 8px;
+}
+.jacuzzi-metric {
+  padding: 10px 12px;
+  border-radius: var(--r-sm);
+  border: 1px solid transparent;
+}
+.jacuzzi-metric.is-ok {
+  background: #e8f5e9;
+  border-color: rgba(46, 125, 50, 0.25);
+}
+.jacuzzi-metric.is-warn {
+  background: #fff8e1;
+  border-color: rgba(249, 168, 37, 0.35);
+}
+.jacuzzi-metric.is-bad {
+  background: #ffebee;
+  border-color: rgba(198, 40, 40, 0.3);
+}
+.jacuzzi-metric.is-unknown {
+  background: #f5f5f5;
+  border-color: rgba(0, 0, 0, 0.08);
+}
+.jacuzzi-metric-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 4px;
+}
+.jacuzzi-metric-dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+.jacuzzi-metric.is-ok .jacuzzi-metric-dot { background: #2e7d32; }
+.jacuzzi-metric.is-warn .jacuzzi-metric-dot { background: #f9a825; }
+.jacuzzi-metric.is-bad .jacuzzi-metric-dot { background: #c62828; }
+.jacuzzi-metric.is-unknown .jacuzzi-metric-dot { background: #9e9e9e; }
+.jacuzzi-metric-label {
+  font-size: 0.72rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--text-soft);
+}
+.jacuzzi-metric-status {
+  margin-left: auto;
+  font-size: 0.68rem;
+  font-weight: 600;
+  color: var(--text-muted);
+}
+.jacuzzi-water-metrics.is-compact .jacuzzi-metric {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 10px;
+}
+.jacuzzi-water-metrics.is-compact .jacuzzi-metric-head,
+.jacuzzi-water-metrics.is-compact .jacuzzi-metric-range {
+  display: none;
+}
+.jacuzzi-water-metrics.is-compact .jacuzzi-metric-value {
+  margin-left: auto;
+  font-size: 0.9rem;
+  font-weight: 700;
+}
+.jacuzzi-metric-value {
+  font-family: 'Fraunces', Georgia, serif;
+  font-size: 1.35rem;
+  font-weight: 700;
+  color: var(--cocoa);
+  line-height: 1.1;
+}
+.jacuzzi-metric-range {
+  margin-top: 2px;
+  font-size: 0.72rem;
+  color: var(--text-muted);
+}
+.jacuzzi-reading-extras {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+.jacuzzi-reading-extra {
+  font-size: 0.72rem;
+  font-weight: 600;
+  padding: 2px 7px;
+  border-radius: 999px;
+}
+.jacuzzi-reading-extra.is-ok { background: #e8f5e9; color: #2e7d32; }
+.jacuzzi-reading-extra.is-warn { background: #fff8e1; color: #f57f17; }
+.jacuzzi-reading-extra.is-bad { background: #ffebee; color: #c62828; }
+.jacuzzi-reading-extra.is-unknown { background: #f5f5f5; color: #666; }
 .wellness-belegung-grid {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));

@@ -16,7 +16,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,400;0,9..144,600;0,9..144,700;1,9..144,400&family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet" />
-  <link rel="stylesheet" href="styles.css?v=20260605b" />
+  <link rel="stylesheet" href="styles.css?v=20260605e" />
   <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Ctext y='.9em' font-size='90'%3E🏡%3C/text%3E%3C/svg%3E" />
 </head>
 <body>
@@ -76,6 +76,7 @@
             <p class="weather-hero-attrib"><a href="https://open-meteo.com" target="_blank" rel="noopener">Open-Meteo</a></p>
           </div>
         </div>
+        <div class="jacuzzi-hero" id="jacuzziHeroWidget" aria-live="polite"></div>
       </div>
       <div class="hero-content">
       <span class="eyebrow">Pilatusstrasse 40 · Pfäffikon ZH</span>
@@ -487,10 +488,14 @@
       </div>
 
       <div class="kalender-panel hidden" id="tabJacuzzi">
-        <p class="giess-hint">Temperatur vom Blue&nbsp;Riiot-Schwimmer (oder manuell). Gustav antwortet auf <em>«Jacuzzi warm?»</em> per WhatsApp.</p>
+        <p class="giess-hint">Temperatur vom Blue&nbsp;Riiot-Schwimmer – Gustav holt den letzten Cloud-Stand alle 15&nbsp;Min. (Handy muss nicht offen sein). Auch: <em>«Jacuzzi warm?»</em> per WhatsApp.</p>
         <div class="jacuzzi-status-card" id="jacuzziStatusCard" aria-live="polite"></div>
-        <h3 class="wellness-subhead">Letzte Messungen</h3>
-        <div class="jacuzzi-readings-wrap" id="jacuzziReadingsList"></div>
+        <div class="jacuzzi-verlauf-block">
+          <button type="button" class="btn btn-ghost jacuzzi-verlauf-btn" id="jacuzziVerlaufBtn" aria-expanded="false" aria-controls="jacuzziReadingsList">
+            📊 Verlauf
+          </button>
+          <div class="jacuzzi-readings-wrap hidden" id="jacuzziReadingsList" role="region" aria-label="Jacuzzi-Messverlauf"></div>
+        </div>
         <details class="admin-toggle" data-wg-only>
           <summary>➕ Temperatur eintragen</summary>
           <form id="jacuzziReadingForm" class="form-card inline">
@@ -500,7 +505,7 @@
             </div>
             <button type="submit" class="btn btn-primary">Speichern</button>
           </form>
-          <p class="form-note">Automatisch: Blue&nbsp;Riiot-Cloud auslesen (z.&nbsp;B. <a href="https://github.com/LordMike/MBW.BlueRiiot2MQTT" target="_blank" rel="noopener">BlueRiiot2MQTT</a>) → Temperatur an <code>jacuzziReading</code> senden.</p>
+          <p class="form-note">Automatisch läuft über die Blue&nbsp;Riiot-Cloud (Server-Sync). Manuell nur falls nötig.</p>
         </details>
       </div>
 
@@ -1348,6 +1353,6 @@
   <!-- Toast -->
   <div id="toast" class="toast hidden"></div>
 
-  <script type="module" src="app.js?v=20260605b"></script>
+  <script type="module" src="app.js?v=20260605e"></script>
 </body>
 </html>

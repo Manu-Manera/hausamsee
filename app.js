@@ -5133,6 +5133,9 @@ const JACUZZI_WARM_TEMP_C = 36;
 let wellnessBookingsCache = [];
 let jacuzziReadingsCache = [];
 let jacuzziStatusCache = null;
+const JACUZZI_VERLAUF_LIMIT = 10;
+let jacuzziVerlaufOpen = false;
+let jacuzziHeroVerlaufOpen = false;
 
 function wellnessTimestampMs(v) {
   if (!v) return null;
@@ -5179,6 +5182,188 @@ function isJacuzziWarm(status) {
   return temp != null && !Number.isNaN(temp) && temp >= threshold;
 }
 
+function fmtJacuzziWhen(v) {
+  const ms = wellnessTimestampMs(v);
+  if (!ms) return "—";
+  return new Date(ms).toLocaleString("de-CH", {
+    day: "2-digit",
+    month: "2-digit",
+    year: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+    timeZone: "Europe/Zurich",
+  });
+}
+
+function jacuzziSourceLabel(source) {
+  if (source === "blueriiot") return "Blue Riiot";
+  if (source === "manual") return "Manuell";
+  return source || "";
+}
+
+function jacuzziMetricFromStatus(status, key) {
+  const value = status?.[key];
+  if (value == null || Number.isNaN(Number(value))) return null;
+  return {
+    value: Number(value),
+    okMin: status?.[`${key}OkMin`],
+    okMax: status?.[`${key}OkMax`],
+    warnLow: status?.[`${key}WarnLow`],
+    warnHigh: status?.[`${key}WarnHigh`],
+  };
+}
+
+function jacuzziAmpelLevel(metric) {
+  if (!metric || metric.value == null || Number.isNaN(metric.value)) return "unknown";
+  const v = metric.value;
+  const { okMin, okMax, warnLow, warnHigh } = metric;
+  if (okMin != null && okMax != null && v >= okMin && v <= okMax) return "ok";
+  if (warnLow != null && warnHigh != null && v >= warnLow && v <= warnHigh) return "warn";
+  return "bad";
+}
+
+function jacuzziAmpelLabel(level) {
+  if (level === "ok") return "Im Soll";
+  if (level === "warn") return "Grenzbereich";
+  if (level === "bad") return "Kritisch";
+  return "Keine Daten";
+}
+
+function fmtJacuzziMetricRange(metric) {
+  if (!metric || metric.okMin == null || metric.okMax == null) return "";
+  const unit = metric.unit || "";
+  return `Soll ${metric.okMin}–${metric.okMax}${unit}`;
+}
+
+function buildJacuzziMetricChip({ label, metric, formatValue, compact = false }) {
+  if (!metric) return "";
+  const level = jacuzziAmpelLevel(metric);
+  const valueStr = formatValue(metric.value);
+  const rangeStr = fmtJacuzziMetricRange(metric);
+  const statusStr = jacuzziAmpelLabel(level);
+  if (compact) {
+    return `
+      <div class="jacuzzi-metric is-${level}" title="${escapeHtml(rangeStr || statusStr)}">
+        <span class="jacuzzi-metric-dot" aria-hidden="true"></span>
+        <span class="jacuzzi-metric-label">${escapeHtml(label)}</span>
+        <span class="jacuzzi-metric-value">${escapeHtml(valueStr)}</span>
+      </div>`;
+  }
+  return `
+    <div class="jacuzzi-metric is-${level}">
+      <div class="jacuzzi-metric-head">
+        <span class="jacuzzi-metric-dot" aria-hidden="true"></span>
+        <span class="jacuzzi-metric-label">${escapeHtml(label)}</span>
+        <span class="jacuzzi-metric-status">${escapeHtml(statusStr)}</span>
+      </div>
+      <div class="jacuzzi-metric-value">${escapeHtml(valueStr)}</div>
+      ${rangeStr ? `<div class="jacuzzi-metric-range">${escapeHtml(rangeStr)}</div>` : ""}
+    </div>`;
+}
+
+function buildJacuzziWaterMetricsHtml(status, { compact = false } = {}) {
+  const phMetric = jacuzziMetricFromStatus(status, "ph");
+  const orpMetric = jacuzziMetricFromStatus(status, "orp");
+  if (!phMetric && !orpMetric) return "";
+
+  const chips = [
+    phMetric
+      ? buildJacuzziMetricChip({
+          label: "pH",
+          metric: { ...phMetric, unit: "" },
+          formatValue: (v) => Number(v).toFixed(1),
+          compact,
+        })
+      : "",
+    orpMetric
+      ? buildJacuzziMetricChip({
+          label: "Chlor (Redox)",
+          metric: { ...orpMetric, unit: " mV" },
+          formatValue: (v) => `${Math.round(Number(v))} mV`,
+          compact,
+        })
+      : "",
+  ].join("");
+
+  return `<div class="jacuzzi-water-metrics${compact ? " is-compact" : ""}">${chips}</div>`;
+}
+
+function getJacuzziReadingsSorted(limit = JACUZZI_VERLAUF_LIMIT) {
+  return [...jacuzziReadingsCache]
+    .sort((a, b) => (wellnessTimestampMs(b.at) || 0) - (wellnessTimestampMs(a.at) || 0))
+    .slice(0, limit);
+}
+
+function buildJacuzziReadingsHtml(limit = JACUZZI_VERLAUF_LIMIT) {
+  const readings = getJacuzziReadingsSorted(limit);
+  if (!readings.length) {
+    return `<p class="form-note jacuzzi-verlauf-empty">Noch keine Messungen in der Cloud.</p>`;
+  }
+  return readings
+    .map((r) => {
+      const when = fmtJacuzziWhen(r.at);
+      const src = jacuzziSourceLabel(r.source);
+      const extras = [];
+      if (r.ph != null && !Number.isNaN(Number(r.ph))) {
+        const lvl = jacuzziAmpelLevel(jacuzziMetricFromStatus(r, "ph"));
+        extras.push(`<span class="jacuzzi-reading-extra is-${lvl}">pH ${Number(r.ph).toFixed(1)}</span>`);
+      }
+      if (r.orp != null && !Number.isNaN(Number(r.orp))) {
+        const lvl = jacuzziAmpelLevel(jacuzziMetricFromStatus(r, "orp"));
+        extras.push(`<span class="jacuzzi-reading-extra is-${lvl}">${Math.round(Number(r.orp))} mV</span>`);
+      }
+      const extrasHtml = extras.length ? `<span class="jacuzzi-reading-extras">${extras.join("")}</span>` : "";
+      return `<div class="jacuzzi-reading-row"><span class="jacuzzi-reading-when">${escapeHtml(when)}</span><strong>${Number(r.tempC).toFixed(1)} °C</strong>${extrasHtml}<span class="jacuzzi-reading-src">${escapeHtml(src)}</span></div>`;
+    })
+    .join("");
+}
+
+function renderJacuzziHero() {
+  const el = $("jacuzziHeroWidget");
+  if (!el) return;
+
+  const status = jacuzziStatusCache;
+  const warm = isJacuzziWarm(status);
+  const temp = status?.tempC != null ? Number(status.tempC) : null;
+  const updatedStr = status?.updatedAt ? fmtJacuzziWhen(status.updatedAt) : "";
+  const hasTemp = temp != null && !Number.isNaN(temp);
+
+  let chip = '<span class="jacuzzi-status-chip unknown">Keine Messung</span>';
+  let tempHtml = '<span class="jacuzzi-hero-temp">— °C</span>';
+  if (hasTemp) {
+    chip = warm
+      ? '<span class="jacuzzi-status-chip warm">Warm ♨️</span>'
+      : '<span class="jacuzzi-status-chip cool">Wird warm…</span>';
+    tempHtml = `<span class="jacuzzi-hero-temp">${temp.toFixed(1)} °C</span>`;
+  }
+
+  const verlaufCount = Math.min(jacuzziReadingsCache.length, JACUZZI_VERLAUF_LIMIT);
+  const verlaufLabel = jacuzziHeroVerlaufOpen ? "Verlauf ausblenden" : `Verlauf (${verlaufCount || "0"})`;
+  const verlaufPanel = jacuzziHeroVerlaufOpen
+    ? `<div class="jacuzzi-hero-verlauf" id="jacuzziHeroVerlaufPanel">${buildJacuzziReadingsHtml(JACUZZI_VERLAUF_LIMIT)}</div>`
+    : "";
+
+  el.className = `jacuzzi-hero${warm ? " is-warm" : ""}`;
+  el.innerHTML = `
+    <div class="jacuzzi-hero-card">
+      <div class="jacuzzi-hero-top">
+        <span class="jacuzzi-hero-label">🛁 Jacuzzi</span>
+        <span class="jacuzzi-hero-updated">${updatedStr ? `Stand ${escapeHtml(updatedStr)}` : "Wird geladen …"}</span>
+      </div>
+      <div class="jacuzzi-hero-body">
+        ${tempHtml}
+        ${chip}
+      </div>
+      ${buildJacuzziWaterMetricsHtml(status, { compact: true })}
+      <button type="button" class="jacuzzi-verlauf-btn jacuzzi-hero-verlauf-btn" id="jacuzziHeroVerlaufBtn" aria-expanded="${jacuzziHeroVerlaufOpen ? "true" : "false"}" aria-controls="jacuzziHeroVerlaufPanel">
+        📊 ${escapeHtml(verlaufLabel)}
+      </button>
+      ${verlaufPanel}
+      <p class="jacuzzi-hero-foot"><a href="#kalender">Kalender → Jacuzzi</a> · Gustav: <em>Jacuzzi warm?</em></p>
+    </div>
+  `;
+}
+
 function renderJacuzziPanel() {
   const card = $("jacuzziStatusCard");
   const list = $("jacuzziReadingsList");
@@ -5199,15 +5384,8 @@ function renderJacuzziPanel() {
     tempHtml = `<span class="jacuzzi-status-temp">${temp.toFixed(1)} °C</span>`;
   }
 
-  const updatedStr = updatedMs
-    ? new Date(updatedMs).toLocaleString("de-CH", {
-        day: "2-digit",
-        month: "2-digit",
-        hour: "2-digit",
-        minute: "2-digit",
-        timeZone: "Europe/Zurich",
-      })
-    : "";
+  const updatedStr = updatedMs ? fmtJacuzziWhen(status.updatedAt) : "";
+  const waterMetricsHtml = buildJacuzziWaterMetricsHtml(status);
 
   let belegHtml = booking
     ? `<p class="wellness-belegung-detail">📅 Belegt ${fmtWellnessDateLabel(booking.startAt)} (${fmtWellnessTimeRange(booking.startAt, booking.endAt)}) – ${escapeHtml(booking.who || "?")}</p>`
@@ -5216,33 +5394,39 @@ function renderJacuzziPanel() {
   card.className = `jacuzzi-status-card${warm ? " is-warm" : ""}`;
   card.innerHTML = `
     <div class="jacuzzi-status-main">${tempHtml}${chip}</div>
-    ${updatedStr ? `<p class="form-note" style="margin:0 0 8px;">Stand: ${escapeHtml(updatedStr)}${status?.source ? ` · ${escapeHtml(status.source)}` : ""}</p>` : ""}
+    ${updatedStr ? `<p class="form-note" style="margin:0 0 8px;">Stand: ${escapeHtml(updatedStr)}${status?.source ? ` · ${escapeHtml(jacuzziSourceLabel(status.source))}` : ""}</p>` : ""}
+    ${waterMetricsHtml}
     ${belegHtml}
   `;
 
-  if (!list) return;
-  const readings = [...jacuzziReadingsCache]
-    .sort((a, b) => (wellnessTimestampMs(b.at) || 0) - (wellnessTimestampMs(a.at) || 0))
-    .slice(0, 24);
-  if (!readings.length) {
-    list.innerHTML = `<p class="form-note">Noch keine Messungen – manuell eintragen oder Blue&nbsp;Riiot-Bridge.</p>`;
-    return;
+  const verlaufBtn = $("jacuzziVerlaufBtn");
+  if (verlaufBtn) {
+    const count = Math.min(jacuzziReadingsCache.length, JACUZZI_VERLAUF_LIMIT);
+    verlaufBtn.textContent = jacuzziVerlaufOpen ? "📊 Verlauf ausblenden" : `📊 Verlauf (letzte ${count || "0"})`;
+    verlaufBtn.setAttribute("aria-expanded", jacuzziVerlaufOpen ? "true" : "false");
   }
-  list.innerHTML = readings
-    .map((r) => {
-      const ms = wellnessTimestampMs(r.at);
-      const when = ms
-        ? new Date(ms).toLocaleString("de-CH", {
-            day: "2-digit",
-            month: "2-digit",
-            hour: "2-digit",
-            minute: "2-digit",
-            timeZone: "Europe/Zurich",
-          })
-        : "—";
-      return `<div class="jacuzzi-reading-row"><span>${when}</span><strong>${Number(r.tempC).toFixed(1)} °C</strong><span>${escapeHtml(r.source || "")}</span></div>`;
-    })
-    .join("");
+
+  if (list) {
+    list.classList.toggle("hidden", !jacuzziVerlaufOpen);
+    if (jacuzziVerlaufOpen) {
+      list.innerHTML = buildJacuzziReadingsHtml(JACUZZI_VERLAUF_LIMIT);
+    }
+  }
+
+  renderJacuzziHero();
+}
+
+function setupJacuzziVerlaufToggles() {
+  $("jacuzziVerlaufBtn")?.addEventListener("click", () => {
+    jacuzziVerlaufOpen = !jacuzziVerlaufOpen;
+    renderJacuzziPanel();
+  });
+  $("jacuzziHeroWidget")?.addEventListener("click", (e) => {
+    if (e.target.closest("#jacuzziHeroVerlaufBtn")) {
+      jacuzziHeroVerlaufOpen = !jacuzziHeroVerlaufOpen;
+      renderJacuzziPanel();
+    }
+  });
 }
 
 function renderWellnessBelegung() {
@@ -9076,6 +9260,7 @@ renderBewohner();
 renderHausFeatures();
 renderGallery();
 setupScrollAnim();
+setupJacuzziVerlaufToggles();
 function placeWeatherWidget() {
   const w = document.getElementById("weatherWidget");
   const d = document.getElementById("weatherSlotDesktop");

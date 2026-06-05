@@ -33,6 +33,7 @@ const logger = require("firebase-functions/logger");
 const PLUG_PROVIDER = (process.env.PLUG_PROVIDER || "tuya").toLowerCase();
 const plugs = require(PLUG_PROVIDER === "meross" ? "./meross" : "./tuya");
 const llmRouter = require("./llmRouter");
+const blueriiot = require("./blueriiot");
 
 initializeApp();
 const db = getFirestore();
@@ -1928,7 +1929,11 @@ async function buildJacuzziWarmReply() {
       lines.push(`Stand: ${fmtTimeZurich(new Date(status.updatedAt))} Uhr`);
     }
   } else {
-    lines.push("🛁 Keine aktuelle Temperatur – auf der Website oder per Blue-Riiot-Bridge.");
+    lines.push(
+      blueriiot.blueriiotEnabled()
+        ? "🛁 Noch keine Temperatur in der Cloud – Sync läuft alle 15 Min."
+        : "🛁 Keine Temperatur – Blue-Riiot-Sync in functions/.env aktivieren."
+    );
   }
   if (booking) {
     const when = fmtWellnessDateLabel(booking.startAt);
@@ -4661,7 +4666,116 @@ exports.checkGartenRegenPolster = onSchedule(
   }
 );
 
-/** Blue-Riiot-Bridge / manuelles Script: Temperatur in Firestore schreiben */
+function jacuzziMetricExtras(reading = {}) {
+  const extras = {};
+  for (const key of ["ph", "orp"]) {
+    const m = reading[key];
+    if (!m || m.value == null || Number.isNaN(Number(m.value))) continue;
+    extras[key] = Number(m.value);
+    if (m.okMin != null) extras[`${key}OkMin`] = Number(m.okMin);
+    if (m.okMax != null) extras[`${key}OkMax`] = Number(m.okMax);
+    if (m.warnLow != null) extras[`${key}WarnLow`] = Number(m.warnLow);
+    if (m.warnHigh != null) extras[`${key}WarnHigh`] = Number(m.warnHigh);
+  }
+  return extras;
+}
+
+async function persistJacuzziReading({ tempC, at, source, extras = {} }) {
+  const measuredAt = at || new Date().toISOString();
+  const status = {
+    tempC,
+    warmThresholdC: JACUZZI_WARM_TEMP_C,
+    targetTempC: 38,
+    updatedAt: measuredAt,
+    source: String(source || "blueriiot").slice(0, 32),
+    ...extras,
+  };
+  const readingDoc = {
+    tempC,
+    at: measuredAt,
+    source: status.source,
+  };
+  for (const key of ["ph", "orp"]) {
+    if (status[key] != null) readingDoc[key] = status[key];
+    for (const suffix of ["OkMin", "OkMax", "WarnLow", "WarnHigh"]) {
+      const field = `${key}${suffix}`;
+      if (status[field] != null) readingDoc[field] = status[field];
+    }
+  }
+  await db.doc("config/jacuzzi").set(status, { merge: true });
+  await db.collection("jacuzziReadings").add(readingDoc);
+  return status;
+}
+
+/** Blue Riiot Cloud: alle 15 Min. letzte Messung → Website & Gustav */
+exports.syncBlueriiotJacuzzi = onSchedule(
+  { schedule: "every 15 minutes", timeZone: "Europe/Zurich" },
+  async () => {
+    if (!blueriiot.blueriiotEnabled()) return;
+
+    let cached = {};
+    try {
+      const cfgSnap = await db.doc("config/blueriiot").get();
+      if (cfgSnap.exists) cached = cfgSnap.data() || {};
+    } catch (e) {
+      logger.warn("syncBlueriiotJacuzzi: config/blueriiot", e?.message);
+    }
+
+    let reading;
+    try {
+      reading = await blueriiot.fetchLatestTemperature(cached);
+    } catch (e) {
+      logger.error("syncBlueriiotJacuzzi: API", e?.message || e);
+      await db.doc("config/blueriiot").set(
+        { lastError: String(e.message || e), lastSyncAt: new Date().toISOString() },
+        { merge: true }
+      );
+      return;
+    }
+
+    if (!reading || Number.isNaN(reading.tempC)) {
+      logger.info("syncBlueriiotJacuzzi: keine neue Temperatur");
+      return;
+    }
+
+    const prevSnap = await db.doc("config/jacuzzi").get();
+    const prev = prevSnap.exists ? prevSnap.data() : {};
+    const waterExtras = jacuzziMetricExtras(reading);
+    const sameTimestamp = prev.blueriiotMeasuredAt === reading.measuredAt;
+    const needsWaterUpdate = waterExtras.orp != null && prev.orp == null;
+    if (sameTimestamp && !needsWaterUpdate) {
+      return;
+    }
+
+    await persistJacuzziReading({
+      tempC: reading.tempC,
+      at: reading.measuredAt,
+      source: "blueriiot",
+      extras: {
+        blueriiotMeasuredAt: reading.measuredAt,
+        poolId: reading.poolId,
+        deviceSerial: reading.deviceSerial,
+        ...waterExtras,
+      },
+    });
+
+    await db.doc("config/blueriiot").set(
+      {
+        poolId: reading.poolId,
+        deviceSerial: reading.deviceSerial,
+        lastSyncAt: new Date().toISOString(),
+        lastMeasuredAt: reading.measuredAt,
+        lastTempC: reading.tempC,
+        lastError: null,
+      },
+      { merge: true }
+    );
+
+    logger.info(`Blue Riiot: ${reading.tempC}°C @ ${reading.measuredAt}`);
+  }
+);
+
+/** Manueller Push / Legacy-Bridge: Temperatur in Firestore schreiben */
 exports.jacuzziReading = onRequest(async (req, res) => {
   res.set("Access-Control-Allow-Origin", "*");
   if (req.method === "OPTIONS") {
@@ -4677,19 +4791,8 @@ exports.jacuzziReading = onRequest(async (req, res) => {
   if (Number.isNaN(tempC) || tempC < 0 || tempC > 60) {
     return res.status(400).json({ error: "tempC (0–60) required" });
   }
-  const now = new Date().toISOString();
-  const source = String(req.body?.source || req.query?.source || "blueriiot").slice(0, 32);
-  await db.doc("config/jacuzzi").set(
-    {
-      tempC,
-      warmThresholdC: JACUZZI_WARM_TEMP_C,
-      targetTempC: 38,
-      updatedAt: now,
-      source,
-    },
-    { merge: true }
-  );
-  await db.collection("jacuzziReadings").add({ tempC, at: now, source });
+  const source = String(req.body?.source || req.query?.source || "manual").slice(0, 32);
+  await persistJacuzziReading({ tempC, at: new Date().toISOString(), source });
   return res.json({ ok: true, tempC, warm: tempC >= JACUZZI_WARM_TEMP_C });
 });
 
