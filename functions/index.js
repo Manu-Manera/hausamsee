@@ -22,7 +22,7 @@
  */
 
 const { onRequest } = require("firebase-functions/v2/https");
-const { onDocumentCreated, onDocumentUpdated } = require("firebase-functions/v2/firestore");
+const { onDocumentCreated } = require("firebase-functions/v2/firestore");
 const { onSchedule } = require("firebase-functions/v2/scheduler");
 const { setGlobalOptions } = require("firebase-functions/v2");
 const { initializeApp } = require("firebase-admin/app");
@@ -6185,56 +6185,6 @@ async function runBlueriiotSyncOnce({ force = false } = {}) {
   logger.info(`Blue Riiot: ${reading.tempC}°C @ ${reading.measuredAt}`, reading.releaseMeta || {});
   return { ok: true, unchanged: false, reading, status, prev };
 }
-
-function buildJacuzziMeasureStatusMessage(result) {
-  if (!result?.ok) {
-    if (result?.reason === "disabled") {
-      return "Blue Riiot-Sync ist auf dem Server deaktiviert.";
-    }
-    if (result?.reason === "api_error") {
-      return `API-Fehler: ${result.error || "unbekannt"}`;
-    }
-    if (result?.reason === "no_reading") {
-      return "Keine Messung gefunden – zuerst in der Blue Connect App messen (Bluetooth am Jacuzzi), dann erneut tippen.";
-    }
-    return "Messung fehlgeschlagen.";
-  }
-  const r = result.reading;
-  const parts = [`${Number(r.tempC).toFixed(1)} °C`];
-  if (r.ph?.value != null) parts.push(`pH ${Number(r.ph.value).toFixed(1)}`);
-  if (r.orp?.value != null) parts.push(`Chlor ${Math.round(Number(r.orp.value))} mV`);
-  if (result.unchanged) {
-    return `Keine neuere Messung als zuletzt (${parts.join(" · ")}). Bitte zuerst in Blue Connect messen.`;
-  }
-  return `Aktualisiert: ${parts.join(" · ")}`;
-}
-
-/** Website-Button «Jetzt messen»: measureRequest auf config/jacuzzi */
-exports.onJacuzziMeasureRequest = onDocumentUpdated("config/jacuzzi", async (event) => {
-  const before = event.data.before?.data()?.measureRequest;
-  const after = event.data.after?.data()?.measureRequest;
-  const beforeAt = before?.at?.toMillis?.() ?? before?.at ?? null;
-  const afterAt = after?.at?.toMillis?.() ?? after?.at ?? null;
-  if (!afterAt || beforeAt === afterAt) return;
-
-  const by = after.by || "";
-  const result = await runBlueriiotSyncOnce({ force: true });
-  const message = buildJacuzziMeasureStatusMessage(result);
-  const patch = {
-    measureRequestStatus: {
-      at: new Date().toISOString(),
-      by,
-      ok: !!result?.ok && !result?.unchanged,
-      unchanged: !!result?.unchanged,
-      message,
-      tempC: result?.reading?.tempC ?? null,
-      ph: result?.reading?.ph?.value ?? null,
-      orp: result?.reading?.orp?.value ?? null,
-    },
-  };
-  await event.data.after.ref.set(patch, { merge: true });
-  logger.info("onJacuzziMeasureRequest", { by, ok: patch.measureRequestStatus.ok, message });
-});
 
 /** Blue Riiot Cloud: alle 5 Min. letzte Messung → Website & Gustav */
 exports.syncBlueriiotJacuzzi = onSchedule(

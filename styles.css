@@ -5642,38 +5642,3 @@ body.wg-guest a[href="#intern"] {
   margin-top: 8px;
 }
 .event-bring-form input { flex: 1; min-width: 0; }
-
-/* Jacuzzi «Jetzt messen» */
-.jacuzzi-hero-head-row {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 8px 10px;
-}
-.jacuzzi-hero-head-row .jacuzzi-hero-toggle {
-  flex: 1 1 180px;
-  min-width: 0;
-}
-.jacuzzi-measure-inline {
-  margin: 12px 0 10px;
-  padding: 12px 14px;
-  background: var(--bg-soft, #f8f5f2);
-  border-radius: 12px;
-  border: 1px solid var(--card-border);
-}
-.jacuzzi-measure-inline .jacuzzi-measure-btn {
-  width: 100%;
-  margin-bottom: 8px;
-}
-.jacuzzi-measure-hint {
-  margin: 6px 0 0 !important;
-  font-size: 0.82rem;
-  line-height: 1.45;
-}
-.jacuzzi-measure-status-line {
-  margin: 0 0 6px;
-  font-size: 0.85rem;
-}
-.jacuzzi-measure-status.is-ok { color: #2a7a4b; font-weight: 600; }
-.jacuzzi-measure-status.is-warn { color: #9a6b00; font-weight: 600; }
-.jacuzzi-measure-status.is-bad { color: var(--danger, #c44); font-weight: 600; }
