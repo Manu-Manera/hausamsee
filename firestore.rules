@@ -82,5 +82,8 @@ service cloud.firestore {
     match /jacuzziReadings/{document=**} {
       allow read, write: if true;
     }
+    match /polls/{document=**} {
+      allow read, write: if true;
+    }
   }
 }

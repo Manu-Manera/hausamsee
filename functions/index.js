@@ -222,6 +222,51 @@ async function sendWhatsApp(to, text, phoneIdOpt) {
   return r.ok;
 }
 
+/** WhatsApp Interactive Reply Buttons (max. 3, Titel je max. 20 Zeichen). */
+async function sendWhatsAppInteractiveButtons(to, { body, footer, buttons }, phoneIdOpt) {
+  const { token } = cfg();
+  const phoneId = await resolveWhatsAppPhoneId(phoneIdOpt);
+  if (!token || !phoneId) {
+    return { ok: false, reason: "no_token_or_phone_id" };
+  }
+  const url = `https://graph.facebook.com/v20.0/${phoneId}/messages`;
+  const interactive = {
+    type: "button",
+    body: { text: String(body || "").slice(0, 1024) },
+    action: {
+      buttons: (buttons || []).slice(0, 3).map((b) => ({
+        type: "reply",
+        reply: {
+          id: String(b.id || "").slice(0, 256),
+          title: String(b.title || "").slice(0, 20),
+        },
+      })),
+    },
+  };
+  if (footer) interactive.footer = { text: String(footer).slice(0, 60) };
+  try {
+    const res = await fetch(url, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+      body: JSON.stringify({
+        messaging_product: "whatsapp",
+        to,
+        type: "interactive",
+        interactive,
+      }),
+    });
+    const bodyText = await res.text().catch(() => "");
+    if (!res.ok) {
+      logger.warn("sendWhatsAppInteractiveButtons failed", { status: res.status, body: bodyText.slice(0, 300) });
+      return { ok: false, status: res.status, error: bodyText };
+    }
+    return { ok: true };
+  } catch (e) {
+    logger.error("sendWhatsAppInteractiveButtons", e);
+    return { ok: false, reason: "fetch_failed" };
+  }
+}
+
 function whatsAppProactiveErrorHint(sendResult) {
   if (sendResult?.metaCode === 133010) {
     return (
@@ -884,8 +929,9 @@ function parseRSVPMessage(raw) {
   // "Ja/Nein/Yes/No/Oui/Non <title>"
   let m = s.match(/^(ja|nein|yes|no|oui|non|maybe|vielleicht|peut-etre|zusage|absage|dabei|nicht\s+dabei)\s+(?:zu[rm]?\s+|for\s+|pour\s+)?(.+)$/i);
   if (m) {
+    const maybe = /(vielleicht|maybe|peut-?etre)/i.test(m[1]);
     const yes = /(ja|yes|oui|zusage|dabei)/i.test(m[1]) && !/nicht/i.test(m[1]);
-    return { wantsIn: yes, title: m[2].trim() };
+    return { wantsIn: maybe ? null : yes, maybe, title: m[2].trim() };
   }
   return null;
 }
@@ -2132,6 +2178,244 @@ function parseWellnessQuery(raw) {
   return null;
 }
 
+/* ==========================================================================
+   Umfragen (Variante B: WhatsApp-Buttons, A: Text-RSVP, C: Website-Link)
+   ========================================================================== */
+
+function isPollQuestionIntent(raw) {
+  const s = String(raw || "").trim();
+  if (!s || !/\?\s*$/.test(s)) return false;
+  if (isWellnessBookingIntent(s) || parseWellnessQuery(s)) return false;
+  if (/^(wer|was|wie|wo|wann|warum|who|what|how|where|when|qui|quoi|comment)\b/i.test(s)) return false;
+  if (/^(umfrage|poll|sondage)\b/i.test(s)) return true;
+  return /\b(spieleabend|grillabend|apéro|apero|zämme|zäme|treff|meetup|party|abend|zämespiel|zäme\s*spiel|goht\s*das|chömmed|chömed|wotsch|wot\s*mer)\b/i.test(s);
+}
+
+function parsePollQuestion(raw) {
+  const s = String(raw || "").trim();
+  if (!isPollQuestionIntent(s)) return null;
+  const cleaned = s.replace(/\?+\s*$/, "").trim();
+  const whenRe = /\s+(morgen|heute|übermorgen|uebermorgen|am\s+(?:montag|dienstag|mittwoch|donnerstag|freitag|samstag|sonntag)|on\s+\w+|demain|today|tomorrow)\s*$/i;
+  const wm = cleaned.match(whenRe);
+  if (wm) {
+    const title = cleaned.slice(0, wm.index).trim();
+    return { title: title || cleaned, whenLabel: wm[1].trim(), mode: "buttons", question: s };
+  }
+  return { title: cleaned, whenLabel: "", mode: "buttons", question: s };
+}
+
+function parsePollStartCommand(raw) {
+  const s = String(raw || "").trim();
+  let mode = "buttons";
+  let m = s.match(/^umfrage\s+text\s*[:\-–]?\s*(.+)$/i);
+  if (m) mode = "text";
+  else m = s.match(/^umfrage\s*(?:neu\s*)?[:\-–]\s*(.+)$/i);
+  if (!m) return null;
+  const rest = m[1].trim();
+  const parts = rest.split("|").map((x) => x.trim());
+  const title = parts[0];
+  if (!title) return null;
+  const whenLabel = parts[1] || "";
+  const modePart = (parts[2] || "").toLowerCase();
+  if (modePart === "text") mode = "text";
+  if (modePart === "buttons" || modePart === "button") mode = "buttons";
+  const question = whenLabel ? `${title} ${whenLabel}?` : `${title}?`;
+  return { title, whenLabel, mode, question };
+}
+
+function parsePollStatusCommand(raw) {
+  const s = String(raw || "").trim();
+  let m = s.match(/^umfrage\s+status\s*[:\-–]?\s*(.+)$/i);
+  if (m) return { title: m[1].trim() };
+  m = s.match(/^(?:wie\s+si[eht]'?s?\s+aus|stand|ergebnis|zämmefassung|zusammenfassung)\s*(?:bei|zum|zur|zu|für)?\s*(.+?)\s*[?.!]*$/i);
+  if (m) return { title: m[1].trim() };
+  m = s.match(/^umfrage\s+(?!text\b|status\b|neu\b)(.+)$/i);
+  if (m && !m[1].includes("|")) return { title: m[1].trim() };
+  m = s.match(/^(?:wer\s+sagt\s+ja|wer\s+kommt)\s+(?:zu[rm]?\s+)?(.+?)\s*[?.!]*$/i);
+  if (m) return { title: m[1].trim() };
+  return null;
+}
+
+function inferPollEventDate(whenLabel) {
+  const s = String(whenLabel || "").toLowerCase().trim();
+  const d = new Date();
+  d.setHours(19, 0, 0, 0);
+  if (/morgen|tomorrow|demain|morn\b/i.test(s)) {
+    d.setDate(d.getDate() + 1);
+  } else if (/übermorgen|uebermorgen/i.test(s)) {
+    d.setDate(d.getDate() + 2);
+  }
+  const { date } = extractDate(whenLabel || "");
+  if (date) {
+    const dd = new Date(date);
+    const { hh, mi } = extractTime(whenLabel);
+    dd.setHours(hh === null ? 19 : hh, mi, 0, 0);
+    return dd.toISOString();
+  }
+  return d.toISOString();
+}
+
+async function findPollByTitle(title, { openOnly = false } = {}) {
+  const snap = await db.collection("polls").get();
+  const needle = String(title || "").toLowerCase().trim();
+  let best = null;
+  let bestScore = -1;
+  snap.forEach((doc) => {
+    const data = doc.data();
+    if (openOnly && data?.status === "closed") return;
+    const t = String(data?.title || "").toLowerCase();
+    if (!t) return;
+    let score = 0;
+    if (t === needle) score = 100;
+    else if (t.startsWith(needle) || needle.startsWith(t)) score = 70;
+    else if (t.includes(needle) || needle.includes(t)) score = 40;
+    if (score > bestScore) {
+      bestScore = score;
+      best = { id: doc.id, ...data };
+    }
+  });
+  return bestScore > 0 ? best : null;
+}
+
+function buildPollSummary(poll) {
+  const responses = Object.values(poll.responses || {});
+  const ja = [];
+  const nein = [];
+  const vielleicht = [];
+  const respondedNames = new Set();
+  for (const r of responses) {
+    const n = r.name || "?";
+    respondedNames.add(n.toLowerCase());
+    if (r.choice === "ja") ja.push(n);
+    else if (r.choice === "nein") nein.push(n);
+    else vielleicht.push(n);
+  }
+  const nochNicht = ADULTS.filter(
+    (a) => ![...respondedNames].some((n) => n === a.toLowerCase() || n.startsWith(a.toLowerCase()))
+  );
+  const whenLine = poll.whenLabel ? `\n📅 ${poll.whenLabel}` : "";
+  const modeHint =
+    poll.mode === "text"
+      ? "\n💬 _Text-Umfrage (Ja/Nein/Vielleicht + Eventname)_"
+      : "\n🔘 _Button-Umfrage_";
+  const lines = [
+    `📊 *Umfrage: ${poll.title}*${whenLine}`,
+    poll.question ? `❓ ${poll.question}` : "",
+    "",
+    `✅ *Ja* (${ja.length})${ja.length ? `: ${ja.join(", ")}` : ""}`,
+    `❌ *Nein* (${nein.length})${nein.length ? `: ${nein.join(", ")}` : ""}`,
+    `🤔 *Vielleicht* (${vielleicht.length})${vielleicht.length ? `: ${vielleicht.join(", ")}` : ""}`,
+    nochNicht.length ? `\n⏳ *Noch keine Antwort* (${nochNicht.length}): ${nochNicht.join(", ")}` : "",
+    modeHint,
+    `\n🌐 ${WEBSITE_URL}/#events`,
+  ];
+  return lines.filter((x) => x !== "").join("\n");
+}
+
+async function recordPollResponse(pollId, from, senderName, choice) {
+  const ref = db.collection("polls").doc(pollId);
+  const snap = await ref.get();
+  if (!snap.exists) return null;
+  const poll = snap.data();
+  const name = (await resolveResidentFromWhatsApp(from, senderName)) || senderName || "Gast";
+  const key = String(from || "").replace(/\D/g, "") || name.toLowerCase();
+  await ref.update({
+    [`responses.${key}`]: { name, choice, at: new Date().toISOString() },
+  });
+  if (poll.eventId) {
+    if (choice === "ja") await addRSVP(poll.eventId, name);
+    else if (choice === "nein") await removeRSVP(poll.eventId, name);
+  }
+  return { poll, name, choice };
+}
+
+async function startPoll(opts) {
+  const { title, whenLabel, question, mode, from, organizerName, phoneId } = opts;
+  const ref = db.collection("polls").doc();
+  const eventDate = inferPollEventDate(whenLabel);
+  const eventId = await createEvent(
+    {
+      title,
+      date: eventDate,
+      description: "Umfrage via Gustav",
+      emoji: mode === "buttons" ? "📊" : "🎉",
+    },
+    from
+  );
+  const poll = {
+    title,
+    whenLabel: whenLabel || "",
+    question: question || `${title}${whenLabel ? ` ${whenLabel}` : ""}?`,
+    mode,
+    eventId,
+    status: "open",
+    createdByPhone: String(from || "").replace(/\D/g, ""),
+    organizerName: organizerName || "",
+    createdAt: FieldValue.serverTimestamp(),
+    responses: {},
+  };
+  await ref.set(poll);
+  const pollId = ref.id;
+  const { recipients } = cfg();
+  const targets = recipients.length ? [...new Set(recipients)] : [from];
+  const orgLabel = organizerName ? ` von *${organizerName}*` : "";
+  const whenLine = whenLabel ? `\n📅 ${whenLabel}` : "";
+  const linkLine = `\n\n🌐 ${WEBSITE_URL}/#events`;
+
+  if (mode === "buttons") {
+    const body = `📊 *Umfrage${orgLabel}*\n\n${poll.question}${whenLine}\n\nTippt einen Button 👇`;
+    for (const to of targets) {
+      await sendWhatsAppInteractiveButtons(
+        to,
+        {
+          body,
+          footer: "Gustav · Haus am See",
+          buttons: [
+            { id: `poll_${pollId}_ja`, title: "✅ Ja" },
+            { id: `poll_${pollId}_nein`, title: "❌ Nein" },
+            { id: `poll_${pollId}_vielleicht`, title: "🤔 Vielleicht" },
+          ],
+        },
+        phoneId
+      );
+    }
+    return { pollId, sent: targets.length, mode, eventId };
+  }
+
+  const text =
+    `📊 *Umfrage${orgLabel}*\n\n*${poll.question}*${whenLine}\n\n` +
+    `Antwortet mit:\n✅ *Ja ${title}*\n❌ *Nein ${title}*\n🤔 *Vielleicht ${title}*` +
+    linkLine;
+  for (const to of targets) {
+    await sendWhatsApp(to, text, phoneId);
+  }
+  return { pollId, sent: targets.length, mode, eventId };
+}
+
+async function handlePollButtonReply(ctx) {
+  const { from, buttonId, senderName, reply } = ctx;
+  const m = String(buttonId || "").match(/^poll_([^_]+)_(ja|nein|vielleicht)$/i);
+  if (!m) return false;
+  const pollId = m[1];
+  const choice = m[2].toLowerCase();
+  const ref = db.collection("polls").doc(pollId);
+  const snap = await ref.get();
+  if (!snap.exists) {
+    await reply("🤷 Diese Umfrage kenne ich nicht mehr.");
+    return true;
+  }
+  const poll = snap.data();
+  if (poll.status === "closed") {
+    await reply("⏹️ Diese Umfrage ist schon geschlossen.");
+    return true;
+  }
+  const result = await recordPollResponse(pollId, from, senderName, choice);
+  const emoji = { ja: "✅", nein: "❌", vielleicht: "🤔" }[choice] || "📊";
+  const label = choice.charAt(0).toUpperCase() + choice.slice(1);
+  await reply(`${emoji} Notiert: *${label}* für *${result.poll.title}*`);
+  return true;
+}
+
 async function listOffeneSchaeden(limit = 10) {
   const snap = await db.collection("schaeden").get();
   const items = [];
@@ -2328,9 +2612,15 @@ const HELP_TEXT =
   `✅ "Schaden erledigt: Rasenmäher" — als repariert markieren\n` +
   `📋 "Schäden"\n` +
   `📱 Zuständige können auf der Website den WhatsApp-Erinnerungsrhythmus wählen (täglich bis alle 2 Wochen)\n\n` +
-  `*Event-Anmeldung*\n` +
-  `✅ "Ja Sommerfest" / "Nein Bierkastenlauf"\n` +
+  `*Event-Anmeldung & Umfragen*\n` +
+  `📊 *Variante B (Standard):* "Spieleabend morgen?" oder "Umfrage: Spieleabend | morgen" → Gustav schickt der WG *WhatsApp-Buttons* (Ja/Nein/Vielleicht)\n` +
+  `📋 *Zusammenfassung:* "Umfrage Status Spieleabend" / "Wie sieht's aus Spieleabend?"\n` +
+  `💬 *Variante A (Text):* "Umfrage Text: Spieleabend | morgen" → Antwort mit *Ja/Nein/Vielleicht Spieleabend*\n` +
+  `🌐 *Variante C:* Event erscheint auf der Website → ${WEBSITE_URL}/#events\n` +
+  `✅ Klassisch: "Ja Sommerfest" / "Nein Bierkastenlauf"\n` +
   `📋 "Wer kommt zum Sommerfest?"\n\n` +
+  `*Sprachen*\n` +
+  `🇩🇪 Hochdeutsch · 🇨🇭 Züritüütsch & St. Gallerdeutsch (verstehen & antworten) · 🇬🇧 English · 🇫🇷 Français\n\n` +
   `*Fotos* (Bild + Caption)\n` +
   `🏠 "Foto Hausbild garten" — für Hausbilder\n` +
   `🎉 "Foto Sommerfest" — für Event-Fotos\n` +
@@ -2370,9 +2660,15 @@ const HELP_TEXT_EN =
   `    (attach photo = saved with report)\n` +
   `✅ "Damage done: Lawn mower" — mark as fixed\n` +
   `📋 "Damages"\n\n` +
-  `*Event RSVP*\n` +
-  `✅ "Yes Summer party" / "No Beer run"\n` +
+  `*Polls & Event RSVP*\n` +
+  `📊 *Option B (default):* "Game night tomorrow?" or "Poll: Game night | tomorrow" → Gustav sends *WhatsApp buttons* (Yes/No/Maybe) to the WG\n` +
+  `📋 *Summary:* "Poll status Game night" / "How's it looking Game night?"\n` +
+  `💬 *Option A (text):* "Poll text: Game night | tomorrow" → reply with *Yes/No/Maybe Game night*\n` +
+  `🌐 *Option C:* Event on the website → ${WEBSITE_URL}/#events\n` +
+  `✅ Classic: "Yes Summer party" / "No Beer run"\n` +
   `📋 "Who's coming to Summer party?"\n\n` +
+  `*Languages*\n` +
+  `🇩🇪 German · 🇨🇭 Swiss German (Zurich & St. Gallen dialects) · 🇬🇧 English · 🇫🇷 French\n\n` +
   `*Photos* (Image + Caption)\n` +
   `🏠 "Photo house garden" — for house images\n` +
   `🎉 "Photo Summer party" — for event photos\n` +
@@ -2410,9 +2706,15 @@ const HELP_TEXT_FR =
   `    (joindre photo = enregistrée avec le rapport)\n` +
   `✅ "Dommage réparé: Tondeuse" — marquer comme réparé\n` +
   `📋 "Dommages"\n\n` +
-  `*Inscription événement*\n` +
-  `✅ "Oui Fête d'été" / "Non Course de bière"\n` +
+  `*Sondages & RSVP événements*\n` +
+  `📊 *Option B (défaut):* "Soirée jeux demain?" ou "Sondage: Soirée jeux | demain" → Gustav envoie des *boutons WhatsApp* (Oui/Non/Peut-être) au groupe\n` +
+  `📋 *Résumé:* "Sondage statut Soirée jeux" / "Comment ça se présente Soirée jeux?"\n` +
+  `💬 *Option A (texte):* "Sondage texte: Soirée jeux | demain"\n` +
+  `🌐 *Option C:* Événement sur le site → ${WEBSITE_URL}/#events\n` +
+  `✅ Classique: "Oui Fête d'été" / "Non Course de bière"\n` +
   `📋 "Qui vient à la Fête d'été?"\n\n` +
+  `*Langues*\n` +
+  `🇩🇪 Allemand · 🇨🇭 Suisse allemand (Zurich & St-Gall) · 🇬🇧 Anglais · 🇫🇷 Français\n\n` +
   `*Photos* (Image + Légende)\n` +
   `🏠 "Photo maison jardin" — pour images de la maison\n` +
   `🎉 "Photo Fête d'été" — pour photos d'événement\n` +
@@ -2453,7 +2755,7 @@ function detectLanguage(text) {
   // 2) Für längere Texte: Marker zählen
   const enMarkers = (s.match(/\b(the|is|are|what|who|where|how|please|yes|no|turn|water|plants|lights|home|away|coming|damage|remind|guestbook|cleaning|applicants|upcoming)\b/g) || []).length;
   const frMarkers = (s.match(/\b(le|la|les|qui|quoi|comment|est|sont|oui|non|lumiere|pompe|arrose|dommage|evenement|rappelle|livre|menage|candidats|chambre)\b/g) || []).length;
-  const deMarkers = (s.match(/\b(ist|bitte|hilfe|ja|nein|wer|was|wie|wo|schaden|pumpe|licht|garten|wasser|bin|da|weg|putzt|bewerber|zimmer|hallo|danke)\b/g) || []).length;
+  const deMarkers = (s.match(/\b(ist|bitte|hilfe|ja|nein|wer|was|wie|wo|schaden|pumpe|licht|garten|wasser|bin|da|weg|putzt|bewerber|zimmer|hallo|danke|grüezi|gruezi|säg|sägmal|chönd|chömmed|chömed|gsi|gärn|wotsch|wot|mer|dä|dänn|morn|goht|chasch|umfrage)\b/g) || []).length;
   
   // Sprache mit den meisten Markern gewinnt
   if (enMarkers > deMarkers && enMarkers > frMarkers && enMarkers >= 1) return "en";
@@ -2664,22 +2966,80 @@ async function dispatch(ctx) {
     return true;
   }
 
-  // 11) RSVP (Ja/Nein)
+  // 11) RSVP (Ja/Nein/Vielleicht)
   const rsvp = parseRSVPMessage(rawInput);
   if (rsvp) {
     const ev = await findEventByTitle(rsvp.title);
-    if (!ev) {
-      await reply(`🤷 Kein Event mit "${rsvp.title}" gefunden.\nSchick "Events" für die Liste.`);
+    const poll = await findPollByTitle(rsvp.title, { openOnly: true });
+    if (!ev && !poll) {
+      await reply(`🤷 Kein Event/Umfrage mit "${rsvp.title}" gefunden.\nSchick "Events" für die Liste.`);
       return true;
     }
     const name = senderName || "Gast";
-    if (rsvp.wantsIn) {
-      await addRSVP(ev.id, name);
-      await reply(`✅ ${name} angemeldet für *${ev.title}* (${fmtDateTime(ev.date)}).`);
-    } else {
-      const removed = await removeRSVP(ev.id, name);
-      await reply(removed ? `❌ ${name} abgemeldet von *${ev.title}*.` : `ℹ️ Du warst nicht angemeldet für *${ev.title}*.`);
+    if (rsvp.maybe) {
+      if (poll) await recordPollResponse(poll.id, from, senderName, "vielleicht");
+      await reply(`🤔 ${name}: *Vielleicht* für *${rsvp.title}* notiert.`);
+      return true;
     }
+    if (rsvp.wantsIn) {
+      if (ev) await addRSVP(ev.id, name);
+      if (poll) await recordPollResponse(poll.id, from, senderName, "ja");
+      const title = ev?.title || poll?.title || rsvp.title;
+      const when = ev?.date ? ` (${fmtDateTime(ev.date)})` : "";
+      await reply(`✅ ${name} angemeldet für *${title}*${when}.`);
+    } else {
+      if (ev) await removeRSVP(ev.id, name);
+      if (poll) await recordPollResponse(poll.id, from, senderName, "nein");
+      const title = ev?.title || poll?.title || rsvp.title;
+      await reply(`❌ ${name} abgemeldet von *${title}*.`);
+    }
+    return true;
+  }
+
+  // 11b) Umfrage Status / Zusammenfassung
+  const pollStatus = parsePollStatusCommand(rawInput);
+  if (pollStatus) {
+    const poll = await findPollByTitle(pollStatus.title);
+    if (!poll) {
+      await reply(`🤷 Keine Umfrage zu "${pollStatus.title}" gefunden.`);
+    } else {
+      await reply(buildPollSummary(poll));
+    }
+    return true;
+  }
+
+  // 11c) Umfrage starten (explizit)
+  const pollStart = parsePollStartCommand(rawInput);
+  if (pollStart) {
+    const organizer = (await resolveResidentFromWhatsApp(from, senderName)) || senderName || "";
+    const result = await startPoll({
+      ...pollStart,
+      from,
+      organizerName: organizer,
+      phoneId: replyPhoneId,
+    });
+    const modeLabel = result.mode === "buttons" ? "Buttons an die WG" : "Text-Umfrage an die WG";
+    await reply(
+      `📊 Umfrage *${pollStart.title}* gestartet – ${modeLabel} (*${result.sent}* Empfänger).\n\n` +
+        `📋 Zusammenfassung: *Umfrage Status ${pollStart.title}*\n\n${WEBSITE_URL}/#events`
+    );
+    return true;
+  }
+
+  // 11d) Natürliche Umfrage-Frage ("Spieleabend morgen?")
+  const pollQ = parsePollQuestion(rawInput);
+  if (pollQ) {
+    const organizer = (await resolveResidentFromWhatsApp(from, senderName)) || senderName || "";
+    const result = await startPoll({
+      ...pollQ,
+      from,
+      organizerName: organizer,
+      phoneId: replyPhoneId,
+    });
+    await reply(
+      `📊 Umfrage läuft! Ich hab der WG Buttons geschickt.\n\n` +
+        `📋 Status: *Umfrage Status ${pollQ.title}* oder *Wie sieht's aus ${pollQ.title}?*`
+    );
     return true;
   }
 
@@ -3269,7 +3629,19 @@ exports.whatsappWebhook = onRequest(
           if (type === "text") text = msg.text?.body || "";
           else if (type === "image") { mediaId = msg.image?.id; caption = msg.image?.caption || ""; }
           else if (type === "button") text = msg.button?.text || "";
-          else if (type === "interactive") text = msg.interactive?.button_reply?.title || msg.interactive?.list_reply?.title || "";
+          else if (type === "interactive") {
+            const buttonReplyId = msg.interactive?.button_reply?.id || "";
+            if (buttonReplyId && String(buttonReplyId).startsWith("poll_")) {
+              const handledPoll = await handlePollButtonReply({
+                from,
+                buttonId: buttonReplyId,
+                senderName,
+                reply: answer,
+              });
+              if (handledPoll) continue;
+            }
+            text = msg.interactive?.button_reply?.title || msg.interactive?.list_reply?.title || "";
+          }
           else if (type === "audio") text = "[Sprachnachricht]";
           else if (type === "video") { mediaId = msg.video?.id; caption = msg.video?.caption || ""; }
 
