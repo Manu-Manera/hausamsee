@@ -5160,8 +5160,8 @@ function fmtWellnessTimeRange(startAt, endAt) {
 
 function fmtWellnessDateLabel(startAt) {
   const start = new Date(startAt);
-  const today0 = startOfDayLocal(new Date());
-  const day0 = startOfDayLocal(start);
+  const today0 = startOfDayLocal(new Date()).getTime();
+  const day0 = startOfDayLocal(start).getTime();
   if (day0 === today0) return "heute";
   const tomorrow0 = today0 + 86400000;
   if (day0 === tomorrow0) return "morgen";
