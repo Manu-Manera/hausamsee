@@ -5151,7 +5151,6 @@ let jacuzziReadingsCache = [];
 let jacuzziStatusCache = null;
 const JACUZZI_VERLAUF_LIMIT = 10;
 const JACUZZI_HERO_EXPANDED_KEY = "has_jacuzzi_hero_open";
-let jacuzziVerlaufOpen = false;
 let jacuzziHeroVerlaufOpen = false;
 let jacuzziHeroExpanded = localStorage.getItem(JACUZZI_HERO_EXPANDED_KEY) === "1";
 
@@ -5468,13 +5467,20 @@ function jacuzziHeroBrief(status) {
   return warm ? "Warm ♨️" : "Keine Messung";
 }
 
-function renderJacuzziHero() {
+function renderJacuzziPanel() {
   const el = $("jacuzziHeroWidget");
   if (!el) return;
 
   const status = jacuzziStatusCache;
   const warm = isJacuzziWarm(status);
   const brief = jacuzziHeroBrief(status);
+  const booking = getActiveWellnessBooking("jacuzzi");
+  const whoSuffix =
+    auth.isMember && booking?.who ? ` – ${escapeHtml(booking.who)}` : "";
+  const belegHtml = booking
+    ? `<p class="wellness-belegung-detail">📅 Belegt ${fmtWellnessDateLabel(booking.startAt)} (${fmtWellnessTimeRange(booking.startAt, booking.endAt)})${whoSuffix}</p>`
+    : `<p class="wellness-belegung-detail">📅 Gerade frei – Gustav: <em>Jacuzzi warm?</em></p>`;
+
   const verlaufCount = Math.min(jacuzziReadingsCache.length, JACUZZI_VERLAUF_LIMIT);
   const verlaufLabel = jacuzziHeroVerlaufOpen ? "Verlauf ausblenden" : `Verlauf (${verlaufCount || "0"})`;
   const verlaufPanel = jacuzziHeroVerlaufOpen
@@ -5483,16 +5489,19 @@ function renderJacuzziHero() {
   const expandedBody = jacuzziHeroExpanded
     ? `
       <div class="jacuzzi-hero-body-panel" id="jacuzziHeroBodyPanel">
-        ${buildJacuzziConnectDashboard(status, { compact: true })}
+        <div class="jacuzzi-kalender-dashboard bc-dashboard-wrap${warm ? " is-warm" : ""}">
+          ${buildJacuzziConnectDashboard(status)}
+        </div>
+        ${belegHtml}
         <button type="button" class="jacuzzi-verlauf-btn jacuzzi-hero-verlauf-btn" id="jacuzziHeroVerlaufBtn" aria-expanded="${jacuzziHeroVerlaufOpen ? "true" : "false"}" aria-controls="jacuzziHeroVerlaufPanel">
           📊 ${escapeHtml(verlaufLabel)}
         </button>
         ${verlaufPanel}
-        <p class="jacuzzi-hero-foot"><a href="#kalender">Kalender → Jacuzzi</a> · Gustav: <em>Jacuzzi warm?</em></p>
+        <p class="form-note jacuzzi-panel-hint">Blue&nbsp;Riiot-Cloud · Sync alle 5&nbsp;Min. · Gustav: <em>Jacuzzi warm?</em></p>
       </div>`
     : "";
 
-  el.className = `jacuzzi-hero${warm ? " is-warm" : ""}${jacuzziHeroExpanded ? " is-expanded" : " is-collapsed"}`;
+  el.className = `jacuzzi-hero jacuzzi-kalender${warm ? " is-warm" : ""}${jacuzziHeroExpanded ? " is-expanded" : " is-collapsed"}`;
   el.innerHTML = `
     <div class="jacuzzi-hero-card">
       <button type="button" class="jacuzzi-hero-toggle" id="jacuzziHeroToggle" aria-expanded="${jacuzziHeroExpanded ? "true" : "false"}" aria-controls="jacuzziHeroBodyPanel">
@@ -5505,50 +5514,7 @@ function renderJacuzziHero() {
       ${expandedBody}
     </div>
   `;
-}
 
-function renderJacuzziPanel() {
-  const card = $("jacuzziStatusCard");
-  const list = $("jacuzziReadingsList");
-  if (!card) return;
-
-  const status = jacuzziStatusCache;
-  const warm = isJacuzziWarm(status);
-  const temp = status?.tempC != null ? Number(status.tempC) : null;
-  const booking = getActiveWellnessBooking("jacuzzi");
-
-  const whoSuffix =
-    auth.isMember && booking?.who ? ` – ${escapeHtml(booking.who)}` : "";
-  let belegHtml = booking
-    ? `<p class="wellness-belegung-detail">📅 Belegt ${fmtWellnessDateLabel(booking.startAt)} (${fmtWellnessTimeRange(booking.startAt, booking.endAt)})${whoSuffix}</p>`
-    : `<p class="wellness-belegung-detail">📅 Gerade frei – Gustav: <em>Jacuzzi warm?</em></p>`;
-  const warmChip =
-    temp != null && !Number.isNaN(temp) && warm
-      ? `<div class="jacuzzi-warm-banner">♨️ Jacuzzi ist warm (${temp.toFixed(1).replace(".", ",")} °C)</div>`
-      : "";
-
-  card.className = `jacuzzi-status-card bc-dashboard-wrap${warm ? " is-warm" : ""}`;
-  card.innerHTML = `
-    ${warmChip}
-    ${buildJacuzziConnectDashboard(status)}
-    ${belegHtml}
-  `;
-
-  const verlaufBtn = $("jacuzziVerlaufBtn");
-  if (verlaufBtn) {
-    const count = Math.min(jacuzziReadingsCache.length, JACUZZI_VERLAUF_LIMIT);
-    verlaufBtn.textContent = jacuzziVerlaufOpen ? "📊 Verlauf ausblenden" : `📊 Verlauf (letzte ${count || "0"})`;
-    verlaufBtn.setAttribute("aria-expanded", jacuzziVerlaufOpen ? "true" : "false");
-  }
-
-  if (list) {
-    list.classList.toggle("hidden", !jacuzziVerlaufOpen);
-    if (jacuzziVerlaufOpen) {
-      list.innerHTML = buildJacuzziReadingsHtml(JACUZZI_VERLAUF_LIMIT);
-    }
-  }
-
-  renderJacuzziHero();
   syncJacuzziWhatsappOpt();
 }
 
@@ -5631,10 +5597,6 @@ async function saveJacuzziWhatsappPref(enabled) {
 }
 
 function setupJacuzziVerlaufToggles() {
-  $("jacuzziVerlaufBtn")?.addEventListener("click", () => {
-    jacuzziVerlaufOpen = !jacuzziVerlaufOpen;
-    renderJacuzziPanel();
-  });
   $("jacuzziHeroWidget")?.addEventListener("click", (e) => {
     if (e.target.closest("a")) return;
     if (e.target.closest("#jacuzziHeroVerlaufBtn")) {
@@ -5646,7 +5608,7 @@ function setupJacuzziVerlaufToggles() {
       jacuzziHeroExpanded = !jacuzziHeroExpanded;
       localStorage.setItem(JACUZZI_HERO_EXPANDED_KEY, jacuzziHeroExpanded ? "1" : "0");
       if (!jacuzziHeroExpanded) jacuzziHeroVerlaufOpen = false;
-      renderJacuzziHero();
+      renderJacuzziPanel();
     }
   });
   $("jacuzziWhatsappCheckbox")?.addEventListener("change", (e) => {
