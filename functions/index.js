@@ -51,6 +51,8 @@ const WEATHER_LON = 8.7808;
 /** Min./Max. vor Regen-Stundenbeginn; Scheduler alle 5 Min (siehe checkGartenRegenPolster) */
 const RAIN_ALERT_MIN_MINUTES = 10;
 const RAIN_ALERT_MAX_MINUTES = 55;
+/** Mindestabstand zwischen zwei Polster-Alerts (Dauerregen = sonst jede Stunde ein neuer Slot) */
+const RAIN_ALERT_COOLDOWN_MS = 4 * 60 * 60 * 1000;
 const GARTEN_POLSTER_ALERT_DOC = "config/gartenPolsterRainAlert";
 
 const BEWOHNER = ["Corina", "Jasmin", "Dino", "Andy", "Manu", "Hugues", "Fanny", "Eliot", "Oscar"];
@@ -385,13 +387,37 @@ In ca. *${mRound} Minuten* könnte es in Pfäffikon nass werden (Stunde ab *${wh
 Trocken bleiben! 🌿✨`;
 }
 
+function hourlySlotMs(raw) {
+  const n = typeof raw === "number" ? raw : Number(raw);
+  return Number.isNaN(n) ? null : n * 1000;
+}
+
+/** Index der laufenden Open-Meteo-Stunde (Stundenbeginn ≤ jetzt < +1h). */
+function getCurrentHourlyIndex(hourly) {
+  const times = hourly?.time;
+  if (!Array.isArray(times) || !times.length) return -1;
+  const nowMs = Date.now();
+  for (let i = 0; i < times.length; i++) {
+    const slotMs = hourlySlotMs(times[i]);
+    if (slotMs == null) continue;
+    if (slotMs <= nowMs && nowMs < slotMs + 3600 * 1000) return i;
+  }
+  return -1;
+}
+
+/** Läuft es in der aktuellen Stunde schon (laut Forecast)? → Polster-Hinweis zu spät. */
+function isCurrentlyRaining(hourly) {
+  const i = getCurrentHourlyIndex(hourly);
+  if (i < 0) return false;
+  return hourLooksRainy(hourly.precipitation?.[i], hourly.weathercode?.[i]);
+}
+
 /**
- * Nächster Regen-Stunden-Slot für Polster-Alert.
- * Berücksichtigt auch die laufende Stunde, wenn es dort schon nass wird.
+ * Nächster Polster-Alert-Slot: erster Wechsel trocken → nass (nicht jede weitere Regenstunde).
+ * Kein Alert, wenn es in der laufenden Stunde schon regnet.
  */
 function findRainAlertSlot(hourly) {
-  const next = findNextRainyHourSlot(hourly);
-  if (next) return next;
+  if (isCurrentlyRaining(hourly)) return null;
 
   const times = hourly?.time;
   const prec = hourly?.precipitation;
@@ -400,12 +426,15 @@ function findRainAlertSlot(hourly) {
 
   const nowMs = Date.now();
   for (let i = 0; i < times.length; i++) {
-    const raw = times[i];
-    const slotMs = (typeof raw === "number" ? raw : Number(raw)) * 1000;
-    if (Number.isNaN(slotMs)) continue;
-    const slotEnd = slotMs + 3600 * 1000;
-    if (slotMs > nowMs || slotEnd <= nowMs) continue;
+    const slotMs = hourlySlotMs(times[i]);
+    if (slotMs == null || slotMs <= nowMs) continue;
     if (!hourLooksRainy(prec?.[i], codes?.[i])) continue;
+
+    const prevIdx = i - 1;
+    if (prevIdx >= 0 && hourLooksRainy(prec?.[prevIdx], codes?.[prevIdx])) {
+      continue;
+    }
+
     const whenLabel = fmtTimeZurich(new Date(slotMs));
     return { slotUnix: Math.floor(slotMs / 1000), whenLabel };
   }
@@ -4440,8 +4469,15 @@ exports.checkGartenRegenPolster = onSchedule(
 
     const ref = db.doc(GARTEN_POLSTER_ALERT_DOC);
     const prev = await ref.get();
-    const last = prev.exists ? prev.data()?.lastRainSlotUnix : null;
+    const prevData = prev.exists ? prev.data() : {};
+    const last = prevData.lastRainSlotUnix;
     if (last != null && Number(last) === slot.slotUnix) {
+      return;
+    }
+    const lastSentMs = prevData.lastAlertSentAt
+      ? new Date(prevData.lastAlertSentAt).getTime()
+      : prevData.sentAt?.toDate?.()?.getTime?.() ?? 0;
+    if (lastSentMs && Date.now() - lastSentMs < RAIN_ALERT_COOLDOWN_MS) {
       return;
     }
 
@@ -4453,6 +4489,7 @@ exports.checkGartenRegenPolster = onSchedule(
           lastRainSlotUnix: slot.slotUnix,
           whenLabel: slot.whenLabel,
           minutesUntilApprox: Math.round(minutesUntil * 10) / 10,
+          lastAlertSentAt: new Date().toISOString(),
           sentAt: FieldValue.serverTimestamp(),
           sentTo: okList,
           failedTo: failList,
