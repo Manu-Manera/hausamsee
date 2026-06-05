@@ -5225,7 +5225,7 @@ function renderJacuzziPanel() {
     .sort((a, b) => (wellnessTimestampMs(b.at) || 0) - (wellnessTimestampMs(a.at) || 0))
     .slice(0, 24);
   if (!readings.length) {
-    list.innerHTML = `<p class="form-note">Noch keine Messungen – manuell eintragen oder Bluetti-Bridge.</p>`;
+    list.innerHTML = `<p class="form-note">Noch keine Messungen – manuell eintragen oder Blue&nbsp;Riiot-Bridge.</p>`;
     return;
   }
   list.innerHTML = readings

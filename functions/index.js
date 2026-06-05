@@ -1928,7 +1928,7 @@ async function buildJacuzziWarmReply() {
       lines.push(`Stand: ${fmtTimeZurich(new Date(status.updatedAt))} Uhr`);
     }
   } else {
-    lines.push("🛁 Keine aktuelle Temperatur – auf der Website oder per Bluetti-Bridge.");
+    lines.push("🛁 Keine aktuelle Temperatur – auf der Website oder per Blue-Riiot-Bridge.");
   }
   if (booking) {
     const when = fmtWellnessDateLabel(booking.startAt);
@@ -4661,7 +4661,7 @@ exports.checkGartenRegenPolster = onSchedule(
   }
 );
 
-/** Bluetti-Bridge / manuelles Script: Temperatur in Firestore schreiben */
+/** Blue-Riiot-Bridge / manuelles Script: Temperatur in Firestore schreiben */
 exports.jacuzziReading = onRequest(async (req, res) => {
   res.set("Access-Control-Allow-Origin", "*");
   if (req.method === "OPTIONS") {
@@ -4678,7 +4678,7 @@ exports.jacuzziReading = onRequest(async (req, res) => {
     return res.status(400).json({ error: "tempC (0–60) required" });
   }
   const now = new Date().toISOString();
-  const source = String(req.body?.source || req.query?.source || "bluetti").slice(0, 32);
+  const source = String(req.body?.source || req.query?.source || "blueriiot").slice(0, 32);
   await db.doc("config/jacuzzi").set(
     {
       tempC,
