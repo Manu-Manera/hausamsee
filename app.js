@@ -18,6 +18,7 @@ import {
   increment
 } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
 import { firebaseConfig } from "./firebase-config.js";
+import { generateEventFlyerJpeg, eventDataFromFormFields } from "./event-flyer.js";
 
 /* ==========================================================================
    Konfiguration – Bewohner & WG-Passwort
@@ -1760,6 +1761,9 @@ function renderEvents() {
       if (confirm("Event wirklich löschen?")) deleteEvent(btn.dataset.id);
     });
   });
+  list.querySelectorAll(".event-generate-flyer").forEach((btn) => {
+    btn.addEventListener("click", () => void generateFlyerForSavedEvent(btn.dataset.id));
+  });
   list.querySelectorAll(".event-edit").forEach(btn => {
     btn.addEventListener("click", () => {
       if (!requireAuth("Events bearbeiten")) return;
@@ -1941,6 +1945,7 @@ function renderEventCard(ev, isPast) {
         ` : ""}
         ${auth.isMember ? `
           <div class="event-admin">
+            <button class="event-generate-flyer" data-id="${ev.id}" title="Flyer aus Event-Daten erstellen">📄 Flyer</button>
             <button class="event-edit" data-id="${ev.id}" title="Event bearbeiten">✏️ Bearbeiten</button>
             <button class="event-delete" data-id="${ev.id}">Löschen</button>
           </div>
@@ -2587,6 +2592,8 @@ $("evFlyer")?.addEventListener("change", async (e) => {
   }
 });
 
+$("evGenerateFlyer")?.addEventListener("click", () => void generateFlyerFromForm());
+
 $("evFlyerRemove")?.addEventListener("click", () => {
   evFlyerData = null;
   evFlyerRemove = true;
@@ -2601,6 +2608,77 @@ function resetEvFlyerState() {
   const input = $("evFlyer");
   if (input) input.value = "";
   setEvFlyerPreview(null);
+}
+
+function eventDataFromEventForm() {
+  return eventDataFromFormFields({
+    title: $("evTitle")?.value,
+    date: $("evDate")?.value,
+    endDate: $("evEndDate")?.value,
+    description: $("evDesc")?.value,
+    location: $("evLocation")?.value,
+    emoji: $("evEmoji")?.value,
+  });
+}
+
+async function applyGeneratedFlyer(dataUrl) {
+  evFlyerData = dataUrl;
+  evFlyerRemove = false;
+  const input = $("evFlyer");
+  if (input) input.value = "";
+  setEvFlyerPreview(dataUrl);
+}
+
+async function generateFlyerFromForm() {
+  if (!requireAuth("Flyer erstellen")) return;
+  const data = eventDataFromEventForm();
+  if (!data.title || !data.date) {
+    showToast("Bitte zuerst Titel und Datum ausfüllen.", "error");
+    return;
+  }
+  const btn = $("evGenerateFlyer");
+  if (btn) btn.disabled = true;
+  try {
+    showToast("Flyer wird erstellt…", "info");
+    const dataUrl = await generateEventFlyerJpeg(data);
+    await applyGeneratedFlyer(dataUrl);
+    showToast("Flyer erstellt – wird beim Speichern mit dem Event verknüpft.", "success");
+  } catch (err) {
+    console.error(err);
+    showToast("Flyer konnte nicht erstellt werden.", "error");
+  } finally {
+    if (btn) btn.disabled = false;
+  }
+}
+
+async function generateFlyerForSavedEvent(eventId) {
+  if (!requireAuth("Flyer erstellen")) return;
+  const ev = eventsCache.find((e) => e.id === eventId);
+  if (!ev) return;
+  try {
+    showToast("Flyer wird erstellt…", "info");
+    const dataUrl = await generateEventFlyerJpeg({
+      title: ev.title,
+      date: ev.date,
+      endDate: ev.endDate,
+      description: ev.description,
+      location: ev.location,
+      emoji: ev.emoji,
+    });
+    if (firebaseReady) {
+      await updateDoc(doc(db, "events", eventId), { flyerSrc: dataUrl });
+    } else {
+      const idx = localStore.events.findIndex((e) => e.id === eventId);
+      if (idx >= 0) localStore.events[idx].flyerSrc = dataUrl;
+      eventsCache = localStore.events;
+      saveLocal("events", localStore.events);
+      renderEvents();
+    }
+    showToast("Flyer am Event gespeichert.", "success");
+  } catch (err) {
+    console.error(err);
+    showToast("Flyer konnte nicht erstellt werden.", "error");
+  }
 }
 
 function startEditEvent(id) {
@@ -9236,6 +9314,7 @@ function renderGustavHub() {
             <li><em>Kino frei?</em> · <em>Sauna frei?</em></li>
             <li><em>WLAN?</em> · <em>Müll?</em></li>
             <li><em>Mitbringen Spieleabend: Salat</em></li>
+            <li><em>Flyer Sommerfest</em></li>
             <li><em>Kino heute Avatar</em></li>
           </ul>
         </details>

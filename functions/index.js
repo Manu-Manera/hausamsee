@@ -41,6 +41,7 @@ const einkaufsliste = require("./einkaufsliste");
 const hausWiki = require("./hausWiki");
 const birthdays = require("./birthdays");
 const gustavExtras = require("./gustavExtras");
+const eventFlyer = require("./eventFlyer");
 const { saturday10Iso } = require("./calendarIcs");
 const blueriiot = require("./blueriiot");
 
@@ -2920,7 +2921,8 @@ async function addEventFoto(eventId, src) {
 const HELP_TEXT =
   `👋 Hoi! Ich heisse *Gustav* (Haus am See). Du kannst mich (1:1 oder in Gruppen mit *@gustav* / @bot) **auch** allgemein etwas fragen – wie ChatGPT, plus unsere Befehle unten.\n\n` +
   `*Events*\n` +
-  `➕ "Neues Event: Sommerfest 15.8. 18 Uhr | Grillen am See"\n` +
+  `➕ "Neues Event: Sommerfest 15.8. 18 Uhr | Grillen am See" (+ Flyer auto)\n` +
+  `📄 "Flyer Sommerfest" – Flyer für bestehendes Event\n` +
   `🗑️ "Event löschen: Sommerfest"\n` +
   `📅 "Events"\n\n` +
   `*Aufgaben (Putz & Haus)*\n` +
@@ -3290,12 +3292,38 @@ async function dispatch(ctx) {
     return true;
   }
 
-  // 3) Neues Event
+  // 3) Flyer für Event
+  const flyerCmd = eventFlyer.parseFlyerCommand(rawInput);
+  if (flyerCmd) {
+    if (!flyerCmd.title) {
+      await reply("📄 *Flyer erstellen*\n\nSchreib z. B.:\n_Flyer Sommerfest_\n_Flyer für Bierkastenlauf_");
+      return true;
+    }
+    const ev = await findEventByTitle(flyerCmd.title);
+    if (!ev) {
+      await reply(`Kein Event gefunden für «${flyerCmd.title}».`);
+      return true;
+    }
+    await eventFlyer.attachFlyerToEvent(db, ev.id, ev);
+    await reply(
+      `📄 Flyer erstellt für *${ev.title}*\n📅 ${fmtDateTime(ev.date)}\n\nAuf der Website unter Events ansehen & teilen:\n${WEBSITE_URL}/#events`
+    );
+    return true;
+  }
+
+  // 4) Neues Event
   const newEv = parseEventMessage(rawInput);
   if (newEv) {
     const id = await createEvent(newEv, from);
+    try {
+      await eventFlyer.attachFlyerToEvent(db, id, newEv);
+    } catch (e) {
+      logger.warn("eventFlyer after create", e?.message);
+    }
     const desc = newEv.description ? `\n📝 ${newEv.description}` : "";
-    await reply(`✅ Event angelegt: *${newEv.title}*\n📅 ${fmtDateTime(newEv.date)}${desc}\n\n${WEBSITE_URL}/#events`);
+    await reply(
+      `✅ Event angelegt: *${newEv.title}*\n📅 ${fmtDateTime(newEv.date)}${desc}\n📄 Flyer automatisch erstellt\n\n${WEBSITE_URL}/#events`
+    );
     await debugLog("event_created", { id, from, title: newEv.title });
     return true;
   }

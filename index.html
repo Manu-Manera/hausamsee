@@ -16,7 +16,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,400;0,9..144,600;0,9..144,700;1,9..144,400&family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet" />
-  <link rel="stylesheet" href="styles.css?v=20260605i" />
+  <link rel="stylesheet" href="styles.css?v=20260605j" />
   <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Ctext y='.9em' font-size='90'%3E🏡%3C/text%3E%3C/svg%3E" />
 </head>
 <body>
@@ -285,8 +285,14 @@
         </div>
         <div class="field">
           <label for="evFlyer">Flyer (optional)</label>
-          <input id="evFlyer" type="file" accept="image/*" />
-          <p class="form-note">Bild-Flyer wird automatisch verkleinert. PDF? Einfach als Screenshot/Export hochladen.</p>
+          <div class="ev-flyer-actions">
+            <button type="button" class="btn btn-primary" id="evGenerateFlyer">📄 Flyer generieren</button>
+            <label class="btn btn-ghost ev-flyer-upload-btn">
+              ⬆️ Bild hochladen
+              <input id="evFlyer" type="file" accept="image/*" hidden />
+            </label>
+          </div>
+          <p class="form-note">«Flyer generieren» erstellt ein Plakat im Haus-am-See-Look aus Titel, Datum &amp; Beschreibung – wie beim Sommerfest.</p>
         </div>
         <div id="evFlyerPreview" class="flyer-preview hidden">
           <img id="evFlyerImg" alt="Flyer-Vorschau" />
@@ -1393,6 +1399,6 @@
   <!-- Toast -->
   <div id="toast" class="toast hidden"></div>
 
-  <script type="module" src="app.js?v=20260605i"></script>
+  <script type="module" src="app.js?v=20260605j"></script>
 </body>
 </html>

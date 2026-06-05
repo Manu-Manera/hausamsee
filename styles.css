@@ -1187,6 +1187,28 @@ a:hover { color: var(--terracotta); }
   background: rgba(255, 255, 255, 0.5);
   margin-bottom: 14px;
 }
+.ev-flyer-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+.ev-flyer-upload-btn {
+  cursor: pointer;
+  margin: 0;
+}
+.event-generate-flyer {
+  font-size: 0.82rem;
+  padding: 6px 10px;
+  border-radius: 999px;
+  border: 1px solid var(--card-border);
+  background: var(--linen);
+  color: var(--terracotta-dark);
+  cursor: pointer;
+}
+.event-generate-flyer:hover {
+  background: var(--cream-2);
+}
 .flyer-preview.hidden { display: none; }
 .flyer-preview img {
   max-width: 160px;
