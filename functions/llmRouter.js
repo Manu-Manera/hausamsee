@@ -80,6 +80,10 @@ Beispiele:
 - Watered indoor plants / Zimmerpflanzen gegossen -> *Giessplan gegossen* or *Giessplan gegossen: Wohnzimmer*
 - Jacuzzi warm / hot tub temperature -> *Jacuzzi warm?*
 - Sauna/Kino/Jacuzzi free / frei / available -> *Kino frei?* / *Sauna frei?* / *Jacuzzi frei?*
+- Reserve / block / belegt / besetzt Jacuzzi/Sauna/Kino -> *Wellness belegen: Ressource | Wer | Start | Ende*
+  Examples: "Jacuzzi besetzt von mir bis 15 Uhr" -> *Wellness belegen: Jacuzzi | SENDER | jetzt | 15:00*
+  "Sauna for Andy until 8pm" -> *Wellness belegen: Sauna | Andy | jetzt | 20:00*
+  Use SENDER when user says ich/mir/mich/me/myself; otherwise the named person.
 - Water garden/Arrose jardin/Garten bewässern/Giesse die Blumen -> Startet Garten-Sequenz (Bewässerungscomputer + Pumpe)
 - Stop watering/Stop arrosage/Bewässerung stopp/Garten aus -> Stoppt Garten-Bewässerung
 - Who's cleaning?/Qui nettoie?/Wer putzt? -> *Wer putzt?*
@@ -106,12 +110,23 @@ Beispiele:
 - *Gaestebuch: Text*
 - *Erinner mich Datum um Uhrzeit an: Text*
 - *Bewerber*; *Bewerber: Name, Alter | Info | Tel*; *Zimmer teilen*
-- *Ja Eventtitel*; *Nein Eventtitel*; *Wer kommt zum Eventtitel?*`;
+- *Ja Eventtitel*; *Nein Eventtitel*; *Wer kommt zum Eventtitel?*
+- *Wellness belegen: Jacuzzi | Name | jetzt | 15:00* (Start "jetzt" oder "14:00"; Ende "15:00" oder "heute 15:00")
+- Optional Kino-Titel als 5. Teil: *Wellness belegen: Kino | Name | 20:00 | 22:30 | Avatar*`;
 
 /**
  * @returns {Promise<{ command: string | null, antwort: string | null }>}
  */
-async function naturalLanguageToCommand(userText, _meta) {
+function expandWellnessSenderInCommand(command, senderName) {
+  if (!command || !senderName) return command;
+  const sender = String(senderName).trim().split(/\s+/)[0];
+  if (!sender) return command;
+  return String(command)
+    .replace(/\bSENDER\b/gi, sender)
+    .replace(/\bWHO_SELF\b/gi, sender);
+}
+
+async function naturalLanguageToCommand(userText, meta = {}) {
   const key = (process.env.OPENAI_API_KEY || "").trim();
   if (!key) {
     return { command: null, antwort: null };
@@ -121,6 +136,10 @@ async function naturalLanguageToCommand(userText, _meta) {
   if (!text) {
     return { command: null, antwort: null };
   }
+  const senderName = meta?.senderName ? String(meta.senderName).trim() : "";
+  const userContent = senderName
+    ? `Absender (WhatsApp-Name): ${senderName}\nNutze diesen Namen bei "ich/mir/mich" oder als SENDER im Befehl.\n\nNachricht:\n${text}`
+    : text;
 
   const res = await fetch("https://api.openai.com/v1/chat/completions", {
     method: "POST",
@@ -135,7 +154,7 @@ async function naturalLanguageToCommand(userText, _meta) {
       response_format: { type: "json_object" },
       messages: [
         { role: "system", content: SYSTEM_PROMPT },
-        { role: "user", content: text },
+        { role: "user", content: userContent },
       ],
     }),
   });
@@ -161,9 +180,10 @@ async function naturalLanguageToCommand(userText, _meta) {
     logger.warn("llm parse content fail", { content: String(content).slice(0, 200) });
     return { command: null, antwort: null };
   }
-  const command = typeof parsed.command === "string" && parsed.command.trim()
+  let command = typeof parsed.command === "string" && parsed.command.trim()
     ? parsed.command.trim().slice(0, MAX_CMD_CHARS)
     : null;
+  if (command) command = expandWellnessSenderInCommand(command, senderName);
   const antwort = typeof parsed.antwort === "string" && parsed.antwort.trim()
     ? parsed.antwort.trim()
     : null;

@@ -1960,9 +1960,159 @@ async function buildWellnessFreiReply(resource) {
   return `${meta.emoji} *${meta.label}* ist belegt ${when} (*${range}*) – ${who}`;
 }
 
+function zurichDateParts(d = new Date()) {
+  const parts = new Intl.DateTimeFormat("en-GB", {
+    timeZone: "Europe/Zurich",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).formatToParts(d);
+  const p = (t) => +parts.find((x) => x.type === t).value;
+  return { y: p("year"), m: p("month"), d: p("day") };
+}
+
+function parseWellnessTimeOnDate(token, baseDate = new Date()) {
+  const t = String(token || "").trim().toLowerCase();
+  if (!t || t === "jetzt" || t === "now") return new Date();
+  let base = baseDate;
+  const { date } = extractDate(t);
+  if (date) base = date;
+  const { hh, mi, cleaned } = extractTime(t);
+  let hour = hh;
+  let minute = mi;
+  if (hour === null) {
+    const bare = (cleaned || t).match(/^(\d{1,2})(?:[:.:h](\d{2}))?$/);
+    if (!bare) return null;
+    hour = +bare[1];
+    minute = bare[2] ? +bare[2] : 0;
+  }
+  const { y, m, d } = zurichDateParts(base);
+  return zurichWallToUtcDate(y, m, d, hour, minute);
+}
+
+function normalizeWellnessResource(raw) {
+  const s = String(raw || "").trim().toLowerCase();
+  if (/jacuzzi|whirlpool|hot\s*tub/.test(s)) return "jacuzzi";
+  if (/sauna/.test(s)) return "sauna";
+  if (/kino|cinema/.test(s)) return "kino";
+  return null;
+}
+
+function isWellnessBookingIntent(raw) {
+  const s = String(raw || "").trim();
+  if (/^Wellness\s+belegen:/i.test(s)) return true;
+  if (!/\b(jacuzzi|whirlpool|sauna|kino)\b/i.test(s)) return false;
+  if (/\b(frei\??|available|libre)\b/i.test(s) && !/\b(bis|von|ab)\s*\d/i.test(s)) return false;
+  return (
+    /\b(besetzt|belegt|reservier\w*|buche\w*|blockier\w*)\b/i.test(s) ||
+    /\b(von\s+mir|für\s+mich)\b/i.test(s) ||
+    /\b(?:von|ab)\s+\d{1,2}\b.*\bbis\b/i.test(s) ||
+    /\bbis\s+\d{1,2}\b/i.test(s)
+  );
+}
+
+/** @returns {{ resource: string, who: string, startAt: Date, endAt: Date, title?: string } | null} */
+function parseWellnessBookingCommand(raw) {
+  const s = String(raw || "").trim();
+  if (!s) return null;
+
+  const llm = s.match(/^Wellness\s+belegen:\s*(.+)$/i);
+  if (llm) {
+    const parts = llm[1].split("|").map((p) => p.trim());
+    if (parts.length >= 4) {
+      const resource = normalizeWellnessResource(parts[0]);
+      const who = parts[1];
+      const startAt = parseWellnessTimeOnDate(parts[2]);
+      const endAt = parseWellnessTimeOnDate(parts[3]);
+      const title = parts[4] || "";
+      if (resource && who && startAt && endAt) {
+        return { resource, who, startAt, endAt, title };
+      }
+    }
+    return null;
+  }
+
+  if (!isWellnessBookingIntent(s)) return null;
+
+  const resource = normalizeWellnessResource(s);
+  if (!resource) return null;
+
+  let who = "WHO_SELF";
+  if (/\b(von\s+mir|für\s+mich)\b/i.test(s)) {
+    who = "WHO_SELF";
+  } else {
+    const vonFuer = s.match(/\b(?:von|für|for)\s+([A-Za-zÄÖÜäöüß][\wäöüÄÖÜß.-]*)/i);
+    if (vonFuer) {
+      const w = vonFuer[1].toLowerCase();
+      who = w === "mir" || w === "mich" ? "WHO_SELF" : vonFuer[1];
+    }
+  }
+
+  let startAt = new Date();
+  let endAt = null;
+  const vonBis = s.match(
+    /\b(?:von|ab|from)\s+(\d{1,2})(?:[:.:h](\d{2}))?\s*(?:uhr|h)?\s*(?:bis|-|–|to)\s+(\d{1,2})(?:[:.:h](\d{2}))?\s*(?:uhr|h)?/i
+  );
+  const nurBis = s.match(/\b(?:bis|until)\s+(\d{1,2})(?:[:.:h](\d{2}))?\s*(?:uhr|h)?/i);
+  const { y, m, d } = zurichDateParts();
+
+  if (vonBis) {
+    startAt = zurichWallToUtcDate(y, m, d, +vonBis[1], vonBis[2] ? +vonBis[2] : 0);
+    endAt = zurichWallToUtcDate(y, m, d, +vonBis[3], vonBis[4] ? +vonBis[4] : 0);
+  } else if (nurBis) {
+    endAt = zurichWallToUtcDate(y, m, d, +nurBis[1], nurBis[2] ? +nurBis[2] : 0);
+  } else {
+    return null;
+  }
+
+  let title = "";
+  if (resource === "kino") {
+    const tm = s.match(/\bkino\s+(.+?)\s+(?:besetzt|belegt|reservier|von|für|bis)/i);
+    if (tm) title = cleanTail(tm[1]);
+  }
+
+  return { resource, who, startAt, endAt, title };
+}
+
+function resolveWellnessBookingWho(whoToken, resident, senderName) {
+  const w = String(whoToken || "").trim();
+  if (!w || w === "WHO_SELF" || /^(ich|mir|mich|me)$/i.test(w)) {
+    return resident || resolveResident(senderName, true) || senderName || "WG";
+  }
+  return resolveResident(w, true) || w;
+}
+
+async function findWellnessBookingConflict(resource, startMs, endMs) {
+  const snap = await db.collection("wellnessBookings").where("resource", "==", resource).get();
+  for (const doc of snap.docs) {
+    const d = doc.data();
+    const s = wellnessTsMs(d.startAt);
+    const e = wellnessTsMs(d.endAt);
+    if (s != null && e != null && s < endMs && e > startMs) {
+      return { id: doc.id, ...d };
+    }
+  }
+  return null;
+}
+
+async function createWellnessBooking({ resource, who, startAt, endAt, title, createdBy }) {
+  const entry = {
+    resource,
+    who,
+    title: title || "",
+    startAt: startAt instanceof Date ? startAt.toISOString() : startAt,
+    endAt: endAt instanceof Date ? endAt.toISOString() : endAt,
+    createdBy: createdBy || who,
+    createdAt: FieldValue.serverTimestamp(),
+  };
+  const ref = await db.collection("wellnessBookings").add(entry);
+  return { id: ref.id, ...entry };
+}
+
 function parseWellnessQuery(raw) {
   const s = String(raw || "").trim();
   const low = s.toLowerCase();
+  if (isWellnessBookingIntent(s)) return null;
   if (
     /\b(jacuzzi|whirlpool|hot\s*tub)\b.*\b(warm|temperatur|temp|heiss|heiß)\b/i.test(s) ||
     /\b(warm|temperatur)\b.*\b(jacuzzi|whirlpool)\b/i.test(s) ||
@@ -1972,7 +2122,7 @@ function parseWellnessQuery(raw) {
   }
   for (const key of ["kino", "sauna", "jacuzzi"]) {
     if (
-      new RegExp(`\\b${key}\\b.*\\b(frei|frei\\?|available|libre|belegt|status)\\b`, "i").test(s) ||
+      new RegExp(`\\b${key}\\b.*\\b(frei|frei\\?|available|libre|status)\\b`, "i").test(s) ||
       new RegExp(`\\b(frei|frei\\?|status)\\b.*\\b${key}\\b`, "i").test(s) ||
       new RegExp(`^${key}\\s+frei\\??$`, "i").test(low)
     ) {
@@ -2167,7 +2317,8 @@ const HELP_TEXT =
   `💧 "gegossen" / "gegossen Wohnzimmer"\n\n` +
   `*Wellness (Website WG-Kalender)*\n` +
   `🛁 "Jacuzzi warm?" / "Ist der Jacuzzi warm?"\n` +
-  `🎬 "Kino frei?" · 🧖 "Sauna frei?" · 🛁 "Jacuzzi frei?"\n\n` +
+  `🎬 "Kino frei?" · 🧖 "Sauna frei?" · 🛁 "Jacuzzi frei?"\n` +
+  `📅 "Jacuzzi besetzt von mir bis 15 Uhr" · "Sauna für Andy von 18 bis 20"\n\n` +
   `*Anwesenheit*\n` +
   `✅ "Bin da" / "Bin weg 1.5."\n` +
   `📋 "Wer ist da?"\n\n` +
@@ -2805,6 +2956,46 @@ async function dispatch(ctx) {
     }
     const lines = due.map((c) => `• *${c.task}*`).join("\n");
     await reply(`🌿 Mehrere Aufgaben fällig – welche?\n\n${lines}\n\n*z.B. garten erledigt …*`);
+    return true;
+  }
+
+  // 13b) Wellness belegen (Jacuzzi / Sauna / Kino)
+  const wellnessBook = parseWellnessBookingCommand(rawInput);
+  if (wellnessBook) {
+    const resident = await resolveResidentFromWhatsApp(from, senderName);
+    const who = resolveWellnessBookingWho(wellnessBook.who, resident, senderName);
+    const startMs = wellnessBook.startAt.getTime();
+    const endMs = wellnessBook.endAt.getTime();
+    if (endMs <= startMs) {
+      await reply("⏰ *Ende muss nach Start liegen.*\n\n*z.B. Jacuzzi besetzt von mir bis 15 Uhr*");
+      return true;
+    }
+    if (endMs <= Date.now()) {
+      await reply("⏰ Die Endzeit liegt in der Vergangenheit. Bitte Uhrzeit prüfen.");
+      return true;
+    }
+    const conflict = await findWellnessBookingConflict(wellnessBook.resource, startMs, endMs);
+    if (conflict) {
+      const meta = WELLNESS_RESOURCES[wellnessBook.resource] || { emoji: "📅", label: wellnessBook.resource };
+      const range = fmtWellnessTimeRange(conflict.startAt, conflict.endAt);
+      await reply(
+        `${meta.emoji} *${meta.label}* ist in der Zeit schon belegt (*${range}* – ${conflict.who || "?"}).\n\nAuf der Website unter Kalender → Belegung anpassen.`
+      );
+      return true;
+    }
+    await createWellnessBooking({
+      ...wellnessBook,
+      who,
+      createdBy: resident || who,
+    });
+    const meta = WELLNESS_RESOURCES[wellnessBook.resource] || { emoji: "📅", label: wellnessBook.resource };
+    const when = fmtWellnessDateLabel(wellnessBook.startAt);
+    const range = fmtWellnessTimeRange(wellnessBook.startAt, wellnessBook.endAt);
+    const titleLine =
+      wellnessBook.resource === "kino" && wellnessBook.title ? `\n🎬 *${wellnessBook.title}*` : "";
+    await reply(
+      `${meta.emoji} *${meta.label}* eingetragen – *${who}*\n📅 ${when}, *${range}*${titleLine}\n\n${WEBSITE_URL}/#kalender`
+    );
     return true;
   }
 
