@@ -285,14 +285,8 @@
         </div>
         <div class="field">
           <label for="evFlyer">Flyer (optional)</label>
-          <div class="ev-flyer-actions">
-            <button type="button" class="btn btn-primary" id="evGenerateFlyer">📄 Flyer generieren</button>
-            <label class="btn btn-ghost ev-flyer-upload-btn">
-              ⬆️ Bild hochladen
-              <input id="evFlyer" type="file" accept="image/*" hidden />
-            </label>
-          </div>
-          <p class="form-note">«Flyer generieren» erstellt ein Plakat im Haus-am-See-Look aus Titel, Datum &amp; Beschreibung – wie beim Sommerfest.</p>
+          <input id="evFlyer" type="file" accept="image/*" />
+          <p class="form-note">Bild-Flyer wird automatisch verkleinert. PDF? Einfach als Screenshot/Export hochladen.</p>
         </div>
         <div id="evFlyerPreview" class="flyer-preview hidden">
           <img id="evFlyerImg" alt="Flyer-Vorschau" />

@@ -230,7 +230,7 @@ async function resolvePoolAndDevice(cached = {}) {
 /**
  * @returns {{ tempC: number, measuredAt: string, ph?: number, poolId: string, deviceSerial: string, raw?: object } | null}
  */
-async function fetchLatestTemperature(cached = {}) {
+async function fetchLatestTemperature(cached = {}, { skipRelease = false } = {}) {
   if (!blueriiotEnabled()) return null;
 
   const { poolId, deviceSerial } = await resolvePoolAndDevice(cached);
@@ -251,10 +251,11 @@ async function fetchLatestTemperature(cached = {}) {
     measuredAtBefore: tsBefore ? new Date(tsBefore).toISOString() : null,
     measuredAtAfter: null,
     timestampChanged: false,
+    skipped: !!skipRelease,
   };
 
   let resp = respBefore;
-  if (releaseEventEnabled()) {
+  if (!skipRelease && releaseEventEnabled()) {
     releaseMeta.attempted = true;
     const releaseResult = await tryReleaseLastUnprocessedEvent(deviceSerial);
     releaseMeta.ok = releaseResult.ok;
