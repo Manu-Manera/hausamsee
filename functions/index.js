@@ -5301,19 +5301,70 @@ function jacuzziWaterAmpelLabel(level) {
 }
 
 function buildJacuzziWaterMetricLine(key, status) {
-  if (status[key] == null) return null;
-  const level = status[`${key}Ampel`] || "unknown";
+  if (key === "tempC") {
+    if (status.tempC == null || Number.isNaN(Number(status.tempC))) return null;
+    const level =
+      status.tempAmpel ||
+      jacuzziWaterAmpelLevel(
+        status.tempC,
+        status.tempOkMin ?? 30,
+        status.tempOkMax ?? 40,
+        status.tempWarnLow ?? 5,
+        status.tempWarnHigh ?? 50
+      );
+    const icon = level === "ok" ? "🟢" : level === "warn" ? "🟡" : level === "bad" ? "🔴" : "⚪";
+    const warm = Number(status.tempC) >= (status.warmThresholdC ?? JACUZZI_WARM_TEMP_C);
+    const range =
+      (status.tempOkMin != null && status.tempOkMax != null)
+        ? ` (Soll ${status.tempOkMin}–${status.tempOkMax} °C)`
+        : " (Soll 30–40 °C)";
+    return `${icon} *Temperatur:* ${Number(status.tempC).toFixed(1)} °C${warm ? " ♨️" : ""} – ${jacuzziWaterAmpelLabel(level)}${range}`;
+  }
+  const field = key === "orp" ? "orp" : key;
+  if (status[field] == null) return null;
+  const level = status[`${field}Ampel`] || "unknown";
   const icon = level === "ok" ? "🟢" : level === "warn" ? "🟡" : level === "bad" ? "🔴" : "⚪";
-  const label = key === "ph" ? "pH" : "Chlorgehalt";
+  const label = field === "ph" ? "pH" : "Chlorgehalt";
   const value =
-    key === "ph"
+    field === "ph"
       ? Number(status.ph).toFixed(1)
       : `${Math.round(Number(status.orp))} mV`;
   const range =
-    status[`${key}OkMin`] != null && status[`${key}OkMax`] != null
-      ? ` (Soll ${status[`${key}OkMin`]}–${status[`${key}OkMax`]}${key === "orp" ? " mV" : ""})`
+    status[`${field}OkMin`] != null && status[`${field}OkMax`] != null
+      ? ` (Soll ${status[`${field}OkMin`]}–${status[`${field}OkMax`]}${field === "orp" ? " mV" : ""})`
       : "";
   return `${icon} *${label}:* ${value} – ${jacuzziWaterAmpelLabel(level)}${range}`;
+}
+
+function buildJacuzziWaterAlertText(status) {
+  const tempAmpel = jacuzziWaterAmpelLevel(
+    status.tempC,
+    status.tempOkMin ?? 30,
+    status.tempOkMax ?? 40,
+    status.tempWarnLow ?? 5,
+    status.tempWarnHigh ?? 50
+  );
+  const phAmpel = jacuzziWaterAmpelLevel(
+    status.ph,
+    status.phOkMin,
+    status.phOkMax,
+    status.phWarnLow,
+    status.phWarnHigh
+  );
+  const orpAmpel = jacuzziWaterAmpelLevel(
+    status.orp,
+    status.orpOkMin,
+    status.orpOkMax,
+    status.orpWarnLow,
+    status.orpWarnHigh
+  );
+  const enriched = { ...status, tempAmpel, phAmpel, orpAmpel };
+  const lines = ["🛁 *Jacuzzi · Wasserqualität*", ""];
+  for (const key of ["tempC", "ph", "orp"]) {
+    const line = buildJacuzziWaterMetricLine(key, enriched);
+    if (line) lines.push(line);
+  }
+  return lines.join("\n");
 }
 
 async function getJacuzziWhatsappRecipients() {
@@ -5386,17 +5437,7 @@ async function maybeSendJacuzziWaterAlerts(status, prev = {}) {
     return;
   }
 
-  const lines = ["🛁 *Jacuzzi · Wasserqualität*", ""];
-  if (status.tempC != null) {
-    const warm = Number(status.tempC) >= JACUZZI_WARM_TEMP_C;
-    lines.push(`🌡️ Temperatur: ${Number(status.tempC).toFixed(1)} °C${warm ? " ♨️" : ""}`);
-  }
-  for (const key of alerts) {
-    const line = buildJacuzziWaterMetricLine(key, enriched);
-    if (line) lines.push(line);
-  }
-  lines.push("", "_Nur für WG-Mitglieder mit persönlichem Login & Opt-in im Jacuzzi-Tab._");
-  const text = lines.join("\n");
+  const text = buildJacuzziWaterAlertText(enriched);
 
   for (const { name, phone } of recipients) {
     try {
