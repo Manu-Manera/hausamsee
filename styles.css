@@ -2808,6 +2808,54 @@ textarea { resize: vertical; font-family: inherit; }
   gap: 8px;
   margin-bottom: 8px;
 }
+.jacuzzi-hero-toggle {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  width: 100%;
+  margin: 0;
+  padding: 0;
+  border: none;
+  background: transparent;
+  cursor: pointer;
+  text-align: left;
+  font: inherit;
+  color: inherit;
+}
+.jacuzzi-hero-toggle:focus-visible {
+  outline: 2px solid var(--terracotta);
+  outline-offset: 3px;
+  border-radius: var(--r-sm);
+}
+.jacuzzi-hero-toggle-main {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 6px 10px;
+  min-width: 0;
+}
+.jacuzzi-hero-brief {
+  font-family: 'Fraunces', Georgia, serif;
+  font-size: 1rem;
+  font-weight: 600;
+  color: var(--terracotta-dark);
+  line-height: 1.2;
+}
+.jacuzzi-hero-chevron {
+  flex-shrink: 0;
+  font-size: 0.85rem;
+  color: var(--text-muted);
+  line-height: 1;
+}
+.jacuzzi-hero-body-panel {
+  margin-top: 10px;
+  padding-top: 10px;
+  border-top: 1px solid var(--card-border);
+}
+.jacuzzi-hero.is-collapsed .jacuzzi-hero-card {
+  padding-bottom: 14px;
+}
 .jacuzzi-hero-label {
   font-size: 0.72rem;
   font-weight: 700;

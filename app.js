@@ -478,6 +478,8 @@ const auth = {
     renderSettingsBewohnerRoster();
     syncKeychainUserFields();
     syncJacuzziWhatsappOpt();
+    renderWellnessBelegung();
+    renderJacuzziPanel();
   }
 };
 
@@ -5148,8 +5150,10 @@ let wellnessBookingsCache = [];
 let jacuzziReadingsCache = [];
 let jacuzziStatusCache = null;
 const JACUZZI_VERLAUF_LIMIT = 10;
+const JACUZZI_HERO_EXPANDED_KEY = "has_jacuzzi_hero_open";
 let jacuzziVerlaufOpen = false;
 let jacuzziHeroVerlaufOpen = false;
+let jacuzziHeroExpanded = localStorage.getItem(JACUZZI_HERO_EXPANDED_KEY) === "1";
 
 function wellnessTimestampMs(v) {
   if (!v) return null;
@@ -5269,7 +5273,7 @@ const JACUZZI_GAUGE_META = {
     markerFmt: (v) => Number(v).toLocaleString("de-CH", { minimumFractionDigits: 1, maximumFractionDigits: 1 }),
   },
   orp: {
-    label: "ORP",
+    label: "Chlorgehalt",
     field: "orp",
     gaugeMin: 300,
     gaugeMax: 1000,
@@ -5446,12 +5450,22 @@ function buildJacuzziReadingsHtml(limit = JACUZZI_VERLAUF_LIMIT) {
       }
       if (r.orp != null && !Number.isNaN(Number(r.orp))) {
         const lvl = jacuzziAmpelLevel(jacuzziMetricFromStatus(r, "orp"));
-        extras.push(`<span class="jacuzzi-reading-extra is-${lvl}">${Math.round(Number(r.orp))} mV</span>`);
+        extras.push(`<span class="jacuzzi-reading-extra is-${lvl}">Chlorgehalt ${Math.round(Number(r.orp))} mV</span>`);
       }
       const extrasHtml = extras.length ? `<span class="jacuzzi-reading-extras">${extras.join("")}</span>` : "";
       return `<div class="jacuzzi-reading-row"><span class="jacuzzi-reading-when">${escapeHtml(when)}</span><strong>${Number(r.tempC).toFixed(1)} °C</strong>${extrasHtml}<span class="jacuzzi-reading-src">${escapeHtml(src)}</span></div>`;
     })
     .join("");
+}
+
+function jacuzziHeroBrief(status) {
+  const warm = isJacuzziWarm(status);
+  const temp = status?.tempC != null ? Number(status.tempC) : null;
+  if (temp != null && !Number.isNaN(temp)) {
+    const t = temp.toLocaleString("de-CH", { minimumFractionDigits: 1, maximumFractionDigits: 1 });
+    return warm ? `Warm ♨️ · ${t} °C` : `${t} °C`;
+  }
+  return warm ? "Warm ♨️" : "Keine Messung";
 }
 
 function renderJacuzziHero() {
@@ -5460,25 +5474,35 @@ function renderJacuzziHero() {
 
   const status = jacuzziStatusCache;
   const warm = isJacuzziWarm(status);
+  const brief = jacuzziHeroBrief(status);
   const verlaufCount = Math.min(jacuzziReadingsCache.length, JACUZZI_VERLAUF_LIMIT);
   const verlaufLabel = jacuzziHeroVerlaufOpen ? "Verlauf ausblenden" : `Verlauf (${verlaufCount || "0"})`;
   const verlaufPanel = jacuzziHeroVerlaufOpen
     ? `<div class="jacuzzi-hero-verlauf" id="jacuzziHeroVerlaufPanel">${buildJacuzziReadingsHtml(JACUZZI_VERLAUF_LIMIT)}</div>`
     : "";
+  const expandedBody = jacuzziHeroExpanded
+    ? `
+      <div class="jacuzzi-hero-body-panel" id="jacuzziHeroBodyPanel">
+        ${buildJacuzziConnectDashboard(status, { compact: true })}
+        <button type="button" class="jacuzzi-verlauf-btn jacuzzi-hero-verlauf-btn" id="jacuzziHeroVerlaufBtn" aria-expanded="${jacuzziHeroVerlaufOpen ? "true" : "false"}" aria-controls="jacuzziHeroVerlaufPanel">
+          📊 ${escapeHtml(verlaufLabel)}
+        </button>
+        ${verlaufPanel}
+        <p class="jacuzzi-hero-foot"><a href="#kalender">Kalender → Jacuzzi</a> · Gustav: <em>Jacuzzi warm?</em></p>
+      </div>`
+    : "";
 
-  el.className = `jacuzzi-hero${warm ? " is-warm" : ""}`;
+  el.className = `jacuzzi-hero${warm ? " is-warm" : ""}${jacuzziHeroExpanded ? " is-expanded" : " is-collapsed"}`;
   el.innerHTML = `
     <div class="jacuzzi-hero-card">
-      <div class="jacuzzi-hero-top">
-        <span class="jacuzzi-hero-label">🛁 Jacuzzi</span>
-        ${warm ? '<span class="jacuzzi-status-chip warm">Warm ♨️</span>' : ""}
-      </div>
-      ${buildJacuzziConnectDashboard(status, { compact: true })}
-      <button type="button" class="jacuzzi-verlauf-btn jacuzzi-hero-verlauf-btn" id="jacuzziHeroVerlaufBtn" aria-expanded="${jacuzziHeroVerlaufOpen ? "true" : "false"}" aria-controls="jacuzziHeroVerlaufPanel">
-        📊 ${escapeHtml(verlaufLabel)}
+      <button type="button" class="jacuzzi-hero-toggle" id="jacuzziHeroToggle" aria-expanded="${jacuzziHeroExpanded ? "true" : "false"}" aria-controls="jacuzziHeroBodyPanel">
+        <span class="jacuzzi-hero-toggle-main">
+          <span class="jacuzzi-hero-label">🛁 Jacuzzi</span>
+          <span class="jacuzzi-hero-brief">${escapeHtml(brief)}</span>
+        </span>
+        <span class="jacuzzi-hero-chevron" aria-hidden="true">${jacuzziHeroExpanded ? "▾" : "▸"}</span>
       </button>
-      ${verlaufPanel}
-      <p class="jacuzzi-hero-foot"><a href="#kalender">Kalender → Jacuzzi</a> · Gustav: <em>Jacuzzi warm?</em></p>
+      ${expandedBody}
     </div>
   `;
 }
@@ -5493,8 +5517,10 @@ function renderJacuzziPanel() {
   const temp = status?.tempC != null ? Number(status.tempC) : null;
   const booking = getActiveWellnessBooking("jacuzzi");
 
+  const whoSuffix =
+    auth.isMember && booking?.who ? ` – ${escapeHtml(booking.who)}` : "";
   let belegHtml = booking
-    ? `<p class="wellness-belegung-detail">📅 Belegt ${fmtWellnessDateLabel(booking.startAt)} (${fmtWellnessTimeRange(booking.startAt, booking.endAt)}) – ${escapeHtml(booking.who || "?")}</p>`
+    ? `<p class="wellness-belegung-detail">📅 Belegt ${fmtWellnessDateLabel(booking.startAt)} (${fmtWellnessTimeRange(booking.startAt, booking.endAt)})${whoSuffix}</p>`
     : `<p class="wellness-belegung-detail">📅 Gerade frei – Gustav: <em>Jacuzzi warm?</em></p>`;
   const warmChip =
     temp != null && !Number.isNaN(temp) && warm
@@ -5610,14 +5636,28 @@ function setupJacuzziVerlaufToggles() {
     renderJacuzziPanel();
   });
   $("jacuzziHeroWidget")?.addEventListener("click", (e) => {
+    if (e.target.closest("a")) return;
     if (e.target.closest("#jacuzziHeroVerlaufBtn")) {
       jacuzziHeroVerlaufOpen = !jacuzziHeroVerlaufOpen;
       renderJacuzziPanel();
+      return;
+    }
+    if (e.target.closest("#jacuzziHeroToggle")) {
+      jacuzziHeroExpanded = !jacuzziHeroExpanded;
+      localStorage.setItem(JACUZZI_HERO_EXPANDED_KEY, jacuzziHeroExpanded ? "1" : "0");
+      if (!jacuzziHeroExpanded) jacuzziHeroVerlaufOpen = false;
+      renderJacuzziHero();
     }
   });
   $("jacuzziWhatsappCheckbox")?.addEventListener("change", (e) => {
     void saveJacuzziWhatsappPref(e.target.checked);
   });
+}
+
+function wellnessWhoLine(booking) {
+  if (!auth.isMember) return "";
+  const who = booking?.who?.trim();
+  return who ? ` · ${escapeHtml(who)}` : "";
 }
 
 function renderWellnessBelegung() {
@@ -5634,9 +5674,9 @@ function renderWellnessBelegung() {
       if (!active) {
         detail = "Frei – per WhatsApp: <em>" + meta.label + " frei?</em>";
       } else if (key === "kino" && active.title) {
-        detail = `${fmtWellnessDateLabel(active.startAt)} <strong>${escapeHtml(active.title)}</strong> · ${fmtWellnessTimeRange(active.startAt, active.endAt)} · ${escapeHtml(active.who || "")}`;
+        detail = `${fmtWellnessDateLabel(active.startAt)} <strong>${escapeHtml(active.title)}</strong> · ${fmtWellnessTimeRange(active.startAt, active.endAt)}${wellnessWhoLine(active)}`;
       } else {
-        detail = `${fmtWellnessDateLabel(active.startAt)} · ${fmtWellnessTimeRange(active.startAt, active.endAt)} · ${escapeHtml(active.who || "")}`;
+        detail = `${fmtWellnessDateLabel(active.startAt)} · ${fmtWellnessTimeRange(active.startAt, active.endAt)}${wellnessWhoLine(active)}`;
       }
       return `
         <article class="wellness-belegung-card ${cls}">
@@ -5663,7 +5703,7 @@ function renderWellnessBelegung() {
       const title = b.title ? ` · ${escapeHtml(b.title)}` : "";
       return `
         <div class="wellness-booking-item${active ? " is-active" : ""}">
-          <span>${meta.emoji} <strong>${meta.label}</strong>${title} · ${fmtWellnessDateLabel(b.startAt)} ${fmtWellnessTimeRange(b.startAt, b.endAt)} · ${escapeHtml(b.who || "")}</span>
+          <span>${meta.emoji} <strong>${meta.label}</strong>${title} · ${fmtWellnessDateLabel(b.startAt)} ${fmtWellnessTimeRange(b.startAt, b.endAt)}${wellnessWhoLine(b)}</span>
           ${auth.isMember ? `<button type="button" class="mini-btn danger" data-wellness-delete="${b.id}">Entfernen</button>` : ""}
         </div>`;
     })

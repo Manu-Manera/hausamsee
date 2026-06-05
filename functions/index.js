@@ -5304,7 +5304,7 @@ function buildJacuzziWaterMetricLine(key, status) {
   if (status[key] == null) return null;
   const level = status[`${key}Ampel`] || "unknown";
   const icon = level === "ok" ? "🟢" : level === "warn" ? "🟡" : level === "bad" ? "🔴" : "⚪";
-  const label = key === "ph" ? "pH" : "Chlor (Redox)";
+  const label = key === "ph" ? "pH" : "Chlorgehalt";
   const value =
     key === "ph"
       ? Number(status.ph).toFixed(1)
