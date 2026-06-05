@@ -2515,6 +2515,115 @@ textarea { resize: vertical; font-family: inherit; }
   color: white;
 }
 
+.wellness-subhead {
+  font-family: 'Fraunces', Georgia, serif;
+  font-size: 1.1rem;
+  margin: 28px 0 12px;
+  color: var(--cocoa);
+}
+.jacuzzi-status-card {
+  padding: 22px 24px;
+  border-radius: var(--r-md);
+  background: var(--card);
+  border: 1px solid var(--card-border);
+  box-shadow: var(--card-shadow);
+  margin-bottom: 8px;
+}
+.jacuzzi-status-card.is-warm {
+  border-color: rgba(198, 122, 80, 0.45);
+  background: linear-gradient(135deg, rgba(255, 248, 240, 0.95), rgba(253, 249, 242, 0.9));
+}
+.jacuzzi-status-main {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 8px 16px;
+  margin-bottom: 8px;
+}
+.jacuzzi-status-temp {
+  font-family: 'Fraunces', Georgia, serif;
+  font-size: 2.4rem;
+  font-weight: 700;
+  color: var(--terracotta-dark);
+  line-height: 1;
+}
+.jacuzzi-status-chip {
+  font-size: 0.78rem;
+  font-weight: 700;
+  padding: 5px 10px;
+  border-radius: 999px;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+.jacuzzi-status-chip.warm { background: #fff3e0; color: #bf360c; }
+.jacuzzi-status-chip.cool { background: #e3f2fd; color: #1565c0; }
+.jacuzzi-status-chip.unknown { background: #f5f5f5; color: #666; }
+.jacuzzi-readings-wrap {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  max-height: 220px;
+  overflow-y: auto;
+}
+.jacuzzi-reading-row {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  font-size: 0.88rem;
+  padding: 8px 12px;
+  background: rgba(233, 220, 192, 0.25);
+  border-radius: var(--r-sm);
+}
+.wellness-belegung-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+  gap: 14px;
+  margin-bottom: 20px;
+}
+.wellness-belegung-card {
+  padding: 18px 20px;
+  border-radius: var(--r-md);
+  background: var(--card);
+  border: 1px solid var(--card-border);
+  box-shadow: var(--card-shadow);
+}
+.wellness-belegung-card.is-busy {
+  border-color: rgba(198, 122, 80, 0.35);
+}
+.wellness-belegung-card.is-free {
+  border-color: rgba(107, 142, 90, 0.35);
+}
+.wellness-belegung-card h4 {
+  margin: 0 0 8px;
+  font-size: 1.15rem;
+}
+.wellness-belegung-detail {
+  margin: 0;
+  font-size: 0.9rem;
+  color: var(--text-soft);
+  line-height: 1.45;
+}
+.wellness-bookings-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.wellness-booking-item {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 12px 14px;
+  background: var(--card);
+  border: 1px solid var(--card-border);
+  border-radius: var(--r-sm);
+  font-size: 0.9rem;
+}
+.wellness-booking-item.is-active {
+  border-color: var(--terracotta);
+  border-width: 2px;
+}
 .anwesend-btn button:disabled {
   cursor: not-allowed;
   opacity: 0.55;

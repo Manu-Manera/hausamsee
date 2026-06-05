@@ -10,6 +10,7 @@ import {
   onSnapshot,
   orderBy,
   query,
+  limit,
   where,
   serverTimestamp,
   setDoc,
@@ -318,6 +319,9 @@ const localStore = {
   memberPasswords: JSON.parse(localStorage.getItem("has_memberPasswords") || "{}"),
   memberPrefs: JSON.parse(localStorage.getItem("has_memberPrefs") || "{}"),
   movedOut: JSON.parse(localStorage.getItem("has_movedOut") || "[]"),
+  wellnessBookings: JSON.parse(localStorage.getItem("has_wellnessBookings") || "[]"),
+  jacuzziReadings: JSON.parse(localStorage.getItem("has_jacuzziReadings") || "[]"),
+  jacuzziStatus: JSON.parse(localStorage.getItem("has_jacuzziStatus") || "null"),
 };
 function saveLocal(key, value) { localStorage.setItem(`has_${key}`, JSON.stringify(value)); }
 
@@ -5115,6 +5119,314 @@ async function setAnwesend(name, status, bis = null) {
 }
 
 /* ==========================================================================
+   Wellness · Jacuzzi-Temp & Belegung (Sauna / Jacuzzi / Kino)
+   ========================================================================== */
+
+const WELLNESS_RESOURCES = {
+  sauna: { emoji: "🧖", label: "Sauna" },
+  jacuzzi: { emoji: "🛁", label: "Jacuzzi" },
+  kino: { emoji: "🎬", label: "Kino" },
+};
+
+const JACUZZI_WARM_TEMP_C = 36;
+
+let wellnessBookingsCache = [];
+let jacuzziReadingsCache = [];
+let jacuzziStatusCache = null;
+
+function wellnessTimestampMs(v) {
+  if (!v) return null;
+  if (typeof v.toDate === "function") return v.toDate().getTime();
+  if (typeof v === "number") return v;
+  const d = new Date(v);
+  return Number.isNaN(d.getTime()) ? null : d.getTime();
+}
+
+function getActiveWellnessBooking(resource, nowMs = Date.now()) {
+  return wellnessBookingsCache.find((b) => {
+    if (b.resource !== resource) return false;
+    const start = wellnessTimestampMs(b.startAt);
+    const end = wellnessTimestampMs(b.endAt);
+    return start != null && end != null && start <= nowMs && end > nowMs;
+  }) || null;
+}
+
+function fmtWellnessTimeRange(startAt, endAt) {
+  const opts = { hour: "2-digit", minute: "2-digit", timeZone: "Europe/Zurich" };
+  const s = new Date(startAt).toLocaleTimeString("de-CH", opts);
+  const e = new Date(endAt).toLocaleTimeString("de-CH", opts);
+  return `${s}–${e}`;
+}
+
+function fmtWellnessDateLabel(startAt) {
+  const start = new Date(startAt);
+  const today0 = startOfDayLocal(new Date());
+  const day0 = startOfDayLocal(start);
+  if (day0 === today0) return "heute";
+  const tomorrow0 = today0 + 86400000;
+  if (day0 === tomorrow0) return "morgen";
+  return start.toLocaleDateString("de-CH", {
+    weekday: "short",
+    day: "numeric",
+    month: "short",
+    timeZone: "Europe/Zurich",
+  });
+}
+
+function isJacuzziWarm(status) {
+  const temp = status?.tempC != null ? Number(status.tempC) : null;
+  const threshold = status?.warmThresholdC != null ? Number(status.warmThresholdC) : JACUZZI_WARM_TEMP_C;
+  return temp != null && !Number.isNaN(temp) && temp >= threshold;
+}
+
+function renderJacuzziPanel() {
+  const card = $("jacuzziStatusCard");
+  const list = $("jacuzziReadingsList");
+  if (!card) return;
+
+  const status = jacuzziStatusCache;
+  const warm = isJacuzziWarm(status);
+  const temp = status?.tempC != null ? Number(status.tempC) : null;
+  const booking = getActiveWellnessBooking("jacuzzi");
+  const updatedMs = wellnessTimestampMs(status?.updatedAt);
+
+  let chip = '<span class="jacuzzi-status-chip unknown">Keine Messung</span>';
+  let tempHtml = '<span class="jacuzzi-status-temp">— °C</span>';
+  if (temp != null && !Number.isNaN(temp)) {
+    chip = warm
+      ? '<span class="jacuzzi-status-chip warm">Warm ♨️</span>'
+      : '<span class="jacuzzi-status-chip cool">Wird warm…</span>';
+    tempHtml = `<span class="jacuzzi-status-temp">${temp.toFixed(1)} °C</span>`;
+  }
+
+  const updatedStr = updatedMs
+    ? new Date(updatedMs).toLocaleString("de-CH", {
+        day: "2-digit",
+        month: "2-digit",
+        hour: "2-digit",
+        minute: "2-digit",
+        timeZone: "Europe/Zurich",
+      })
+    : "";
+
+  let belegHtml = booking
+    ? `<p class="wellness-belegung-detail">📅 Belegt ${fmtWellnessDateLabel(booking.startAt)} (${fmtWellnessTimeRange(booking.startAt, booking.endAt)}) – ${escapeHtml(booking.who || "?")}</p>`
+    : `<p class="wellness-belegung-detail">📅 Gerade frei – Gustav: <em>Jacuzzi warm?</em></p>`;
+
+  card.className = `jacuzzi-status-card${warm ? " is-warm" : ""}`;
+  card.innerHTML = `
+    <div class="jacuzzi-status-main">${tempHtml}${chip}</div>
+    ${updatedStr ? `<p class="form-note" style="margin:0 0 8px;">Stand: ${escapeHtml(updatedStr)}${status?.source ? ` · ${escapeHtml(status.source)}` : ""}</p>` : ""}
+    ${belegHtml}
+  `;
+
+  if (!list) return;
+  const readings = [...jacuzziReadingsCache]
+    .sort((a, b) => (wellnessTimestampMs(b.at) || 0) - (wellnessTimestampMs(a.at) || 0))
+    .slice(0, 24);
+  if (!readings.length) {
+    list.innerHTML = `<p class="form-note">Noch keine Messungen – manuell eintragen oder Bluetti-Bridge.</p>`;
+    return;
+  }
+  list.innerHTML = readings
+    .map((r) => {
+      const ms = wellnessTimestampMs(r.at);
+      const when = ms
+        ? new Date(ms).toLocaleString("de-CH", {
+            day: "2-digit",
+            month: "2-digit",
+            hour: "2-digit",
+            minute: "2-digit",
+            timeZone: "Europe/Zurich",
+          })
+        : "—";
+      return `<div class="jacuzzi-reading-row"><span>${when}</span><strong>${Number(r.tempC).toFixed(1)} °C</strong><span>${escapeHtml(r.source || "")}</span></div>`;
+    })
+    .join("");
+}
+
+function renderWellnessBelegung() {
+  const grid = $("wellnessBelegungGrid");
+  const list = $("wellnessBookingsList");
+  if (!grid) return;
+
+  const nowMs = Date.now();
+  grid.innerHTML = Object.entries(WELLNESS_RESOURCES)
+    .map(([key, meta]) => {
+      const active = getActiveWellnessBooking(key, nowMs);
+      const cls = active ? "is-busy" : "is-free";
+      let detail;
+      if (!active) {
+        detail = "Frei – per WhatsApp: <em>" + meta.label + " frei?</em>";
+      } else if (key === "kino" && active.title) {
+        detail = `${fmtWellnessDateLabel(active.startAt)} <strong>${escapeHtml(active.title)}</strong> · ${fmtWellnessTimeRange(active.startAt, active.endAt)} · ${escapeHtml(active.who || "")}`;
+      } else {
+        detail = `${fmtWellnessDateLabel(active.startAt)} · ${fmtWellnessTimeRange(active.startAt, active.endAt)} · ${escapeHtml(active.who || "")}`;
+      }
+      return `
+        <article class="wellness-belegung-card ${cls}">
+          <h4>${meta.emoji} ${meta.label}</h4>
+          <p class="wellness-belegung-detail">${active ? "Belegt: " : ""}${detail}</p>
+        </article>`;
+    })
+    .join("");
+
+  if (!list) return;
+  const upcoming = [...wellnessBookingsCache]
+    .filter((b) => (wellnessTimestampMs(b.endAt) || 0) > nowMs)
+    .sort((a, b) => (wellnessTimestampMs(a.startAt) || 0) - (wellnessTimestampMs(b.startAt) || 0));
+
+  if (!upcoming.length) {
+    list.innerHTML = `<p class="form-note">Keine Einträge – unten Belegung hinzufügen.</p>`;
+    return;
+  }
+
+  list.innerHTML = upcoming
+    .map((b) => {
+      const meta = WELLNESS_RESOURCES[b.resource] || { emoji: "📍", label: b.resource };
+      const active = getActiveWellnessBooking(b.resource, nowMs)?.id === b.id;
+      const title = b.title ? ` · ${escapeHtml(b.title)}` : "";
+      return `
+        <div class="wellness-booking-item${active ? " is-active" : ""}">
+          <span>${meta.emoji} <strong>${meta.label}</strong>${title} · ${fmtWellnessDateLabel(b.startAt)} ${fmtWellnessTimeRange(b.startAt, b.endAt)} · ${escapeHtml(b.who || "")}</span>
+          ${auth.isMember ? `<button type="button" class="mini-btn danger" data-wellness-delete="${b.id}">Entfernen</button>` : ""}
+        </div>`;
+    })
+    .join("");
+
+  list.querySelectorAll("[data-wellness-delete]").forEach((btn) => {
+    btn.addEventListener("click", () => void deleteWellnessBooking(btn.dataset.wellnessDelete));
+  });
+}
+
+function setWellnessFormDefaults() {
+  const start = $("wellnessStart");
+  const end = $("wellnessEnd");
+  if (!start || !end) return;
+  const now = new Date();
+  const pad = (n) => String(n).padStart(2, "0");
+  const toLocal = (d) =>
+    `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+  if (!start.value) {
+    const s = new Date(now);
+    s.setMinutes(0, 0, 0);
+    s.setHours(s.getHours() + 1);
+    start.value = toLocal(s);
+  }
+  if (!end.value) {
+    const e = new Date(now);
+    e.setMinutes(0, 0, 0);
+    e.setHours(e.getHours() + 3);
+    end.value = toLocal(e);
+  }
+}
+
+async function saveJacuzziReading(tempC, source = "manual") {
+  const now = new Date().toISOString();
+  const status = {
+    tempC,
+    warmThresholdC: JACUZZI_WARM_TEMP_C,
+    targetTempC: 38,
+    updatedAt: now,
+    source,
+  };
+  const reading = { tempC, at: now, source };
+  if (firebaseReady) {
+    await setDoc(doc(db, "config", "jacuzzi"), status, { merge: true });
+    await addDoc(collection(db, "jacuzziReadings"), reading);
+  } else {
+    jacuzziStatusCache = status;
+    localStore.jacuzziStatus = status;
+    saveLocal("jacuzziStatus", status);
+    reading.id = "local_" + Date.now();
+    jacuzziReadingsCache.unshift(reading);
+    localStore.jacuzziReadings = jacuzziReadingsCache;
+    saveLocal("jacuzziReadings", jacuzziReadingsCache);
+    renderJacuzziPanel();
+  }
+  showToast(isJacuzziWarm(status) ? "🛁♨️ Warm gespeichert." : "🛁 Temperatur gespeichert.", "success");
+}
+
+async function deleteWellnessBooking(id) {
+  if (!requireMember("Belegung löschen")) return;
+  if (!confirm("Belegung wirklich entfernen?")) return;
+  if (firebaseReady) {
+    await deleteDoc(doc(db, "wellnessBookings", id));
+  } else {
+    wellnessBookingsCache = wellnessBookingsCache.filter((b) => b.id !== id);
+    localStore.wellnessBookings = wellnessBookingsCache;
+    saveLocal("wellnessBookings", wellnessBookingsCache);
+    renderWellnessBelegung();
+    renderJacuzziPanel();
+  }
+  showToast("Entfernt.", "success");
+}
+
+$("jacuzziReadingForm")?.addEventListener("submit", async (e) => {
+  e.preventDefault();
+  if (!requireAuth("Temperatur speichern")) return;
+  const tempC = parseFloat($("jacuzziTempInput").value);
+  if (Number.isNaN(tempC)) return;
+  const warm = tempC >= JACUZZI_WARM_TEMP_C;
+  try {
+    await saveJacuzziReading(tempC, "manual");
+    e.target.reset();
+  } catch (err) {
+    showToast(`Speichern fehlgeschlagen: ${err.message || err}`, "error");
+  }
+});
+
+$("wellnessBookingForm")?.addEventListener("submit", async (e) => {
+  e.preventDefault();
+  if (!requireMember("Belegung speichern")) return;
+  const resource = $("wellnessResource").value;
+  const who = $("wellnessWho").value.trim();
+  const title = $("wellnessTitle").value.trim();
+  const startLocal = $("wellnessStart").value;
+  const endLocal = $("wellnessEnd").value;
+  if (!resource || !who || !startLocal || !endLocal) return;
+  const startAt = new Date(startLocal).toISOString();
+  const endAt = new Date(endLocal).toISOString();
+  if (new Date(endAt) <= new Date(startAt)) {
+    showToast("Ende muss nach Start liegen.", "error");
+    return;
+  }
+  const entry = {
+    resource,
+    who,
+    title: title || "",
+    startAt,
+    endAt,
+    createdBy: auth.member || "WG",
+    createdAt: Date.now(),
+  };
+  try {
+    if (firebaseReady) {
+      await addDoc(collection(db, "wellnessBookings"), { ...entry, createdAt: serverTimestamp() });
+    } else {
+      entry.id = "local_" + Date.now();
+      wellnessBookingsCache.push(entry);
+      localStore.wellnessBookings = wellnessBookingsCache;
+      saveLocal("wellnessBookings", wellnessBookingsCache);
+      renderWellnessBelegung();
+      renderJacuzziPanel();
+    }
+    e.target.reset();
+    setWellnessFormDefaults();
+    showToast("Belegung gespeichert.", "success");
+  } catch (err) {
+    showToast(`Speichern fehlgeschlagen: ${err.message || err}`, "error");
+  }
+});
+
+$("wellnessResource")?.addEventListener("change", () => {
+  const isKino = $("wellnessResource")?.value === "kino";
+  $("wellnessTitleField")?.classList.toggle("hidden", !isKino);
+});
+
+setWellnessFormDefaults();
+
+/* ==========================================================================
    Gästebuch · kreativ (Text, Draw, Photo, GIF, Voice, Link)
    ========================================================================== */
 
@@ -8571,6 +8883,9 @@ function setupListeners() {
     gartenPlanCache = normalizeGartenPlan(localStore.gartenPlan);
     giessplanCache = localStore.giessplan || [];
     gartenTodoCache = localStore.gartentodos || [];
+    wellnessBookingsCache = localStore.wellnessBookings || [];
+    jacuzziReadingsCache = localStore.jacuzziReadings || [];
+    jacuzziStatusCache = localStore.jacuzziStatus;
     renderEvents();
     renderAufgaben();
     renderGiessplan();
@@ -8579,6 +8894,8 @@ function setupListeners() {
     populateGartenTodoWhoSelect();
     renderTermine();
     renderAnwesend();
+    renderJacuzziPanel();
+    renderWellnessBelegung();
     renderGaestebuch();
     renderGallery();
     renderPlaylist();
@@ -8708,6 +9025,22 @@ function setupListeners() {
     snap.docs.forEach(d => { bewohnertexteCache[d.id] = d.data(); });
     renderBewohner();
   }, (err) => console.warn("bewohnertexte listener:", err.message));
+
+  onSnapshot(doc(db, "config", "jacuzzi"), (snap) => {
+    jacuzziStatusCache = snap.exists() ? snap.data() : null;
+    renderJacuzziPanel();
+  }, (err) => console.warn("jacuzzi status listener:", err.message));
+
+  onSnapshot(query(collection(db, "jacuzziReadings"), orderBy("at", "desc"), limit(48)), (snap) => {
+    jacuzziReadingsCache = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
+    renderJacuzziPanel();
+  }, (err) => console.warn("jacuzziReadings listener:", err.message));
+
+  onSnapshot(query(collection(db, "wellnessBookings"), orderBy("startAt", "asc")), (snap) => {
+    wellnessBookingsCache = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
+    renderWellnessBelegung();
+    renderJacuzziPanel();
+  }, (err) => console.warn("wellnessBookings listener:", err.message));
 }
 
 /* ==========================================================================

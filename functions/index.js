@@ -1850,6 +1850,133 @@ function schadenKuemmererTag(kuemmerer) {
   return kuemmerer === "vermieter" ? " · 🏠 Schelly" : " · 🏡 WG";
 }
 
+/* ==========================================================================
+   Wellness · Jacuzzi-Temp & Belegung Sauna / Kino
+   ========================================================================== */
+
+const WELLNESS_RESOURCES = {
+  sauna: { emoji: "🧖", label: "Sauna" },
+  jacuzzi: { emoji: "🛁", label: "Jacuzzi" },
+  kino: { emoji: "🎬", label: "Kino" },
+};
+
+const JACUZZI_WARM_TEMP_C = 36;
+
+function wellnessTsMs(v) {
+  if (!v) return null;
+  if (typeof v.toDate === "function") return v.toDate().getTime();
+  if (typeof v === "number") return v;
+  const d = new Date(v);
+  return Number.isNaN(d.getTime()) ? null : d.getTime();
+}
+
+function fmtWellnessTimeRange(startAt, endAt) {
+  const opts = { hour: "2-digit", minute: "2-digit", timeZone: "Europe/Zurich" };
+  const s = new Date(startAt).toLocaleTimeString("de-CH", opts);
+  const e = new Date(endAt).toLocaleTimeString("de-CH", opts);
+  return `${s}–${e}`;
+}
+
+function fmtWellnessDateLabel(startAt) {
+  const start = new Date(startAt);
+  const today = startOfDay(new Date());
+  const day = startOfDay(start);
+  if (day.getTime() === today.getTime()) return "heute";
+  const tomorrow = new Date(today);
+  tomorrow.setDate(tomorrow.getDate() + 1);
+  if (day.getTime() === tomorrow.getTime()) return "morgen";
+  return start.toLocaleDateString("de-CH", {
+    weekday: "short",
+    day: "numeric",
+    month: "short",
+    timeZone: "Europe/Zurich",
+  });
+}
+
+async function getJacuzziStatusDoc() {
+  const snap = await db.doc("config/jacuzzi").get();
+  return snap.exists ? snap.data() : null;
+}
+
+async function getActiveWellnessBooking(resource) {
+  const snap = await db.collection("wellnessBookings").where("resource", "==", resource).get();
+  const nowMs = Date.now();
+  let best = null;
+  snap.forEach((doc) => {
+    const d = doc.data();
+    const start = wellnessTsMs(d.startAt);
+    const end = wellnessTsMs(d.endAt);
+    if (start == null || end == null || start > nowMs || end <= nowMs) return;
+    best = { id: doc.id, ...d };
+  });
+  return best;
+}
+
+async function buildJacuzziWarmReply() {
+  const status = await getJacuzziStatusDoc();
+  const booking = await getActiveWellnessBooking("jacuzzi");
+  const temp = status?.tempC != null ? Number(status.tempC) : null;
+  const threshold = status?.warmThresholdC != null ? Number(status.warmThresholdC) : JACUZZI_WARM_TEMP_C;
+  const lines = [];
+  if (temp != null && !Number.isNaN(temp)) {
+    if (temp >= threshold) {
+      lines.push(`🛁♨️ *Jacuzzi ist warm* (${temp.toFixed(1)} °C) – rein damit! 🌊`);
+    } else {
+      lines.push(`🛁 *Jacuzzi wird noch warm* (${temp.toFixed(1)} °C, Ziel ca. ${status?.targetTempC || 38} °C)`);
+    }
+    if (status?.updatedAt) {
+      lines.push(`Stand: ${fmtTimeZurich(new Date(status.updatedAt))} Uhr`);
+    }
+  } else {
+    lines.push("🛁 Keine aktuelle Temperatur – auf der Website oder per Bluetti-Bridge.");
+  }
+  if (booking) {
+    const when = fmtWellnessDateLabel(booking.startAt);
+    const range = fmtWellnessTimeRange(booking.startAt, booking.endAt);
+    lines.push(`📅 Belegt ${when} (*${range}*) – ${booking.who || "?"}`);
+  } else {
+    lines.push("📅 Gerade niemand eingetragen – *frei*!");
+  }
+  return lines.join("\n");
+}
+
+async function buildWellnessFreiReply(resource) {
+  const meta = WELLNESS_RESOURCES[resource] || { emoji: "📍", label: resource };
+  const booking = await getActiveWellnessBooking(resource);
+  if (!booking) {
+    return `${meta.emoji} *${meta.label} ist frei!* 🎉`;
+  }
+  const when = fmtWellnessDateLabel(booking.startAt);
+  const range = fmtWellnessTimeRange(booking.startAt, booking.endAt);
+  const who = booking.who || "jemand";
+  if (resource === "kino" && booking.title) {
+    return `${meta.emoji} Im *Kino* ${when} wird *${booking.title}* von *${range}* geschaut – ${who}`;
+  }
+  return `${meta.emoji} *${meta.label}* ist belegt ${when} (*${range}*) – ${who}`;
+}
+
+function parseWellnessQuery(raw) {
+  const s = String(raw || "").trim();
+  const low = s.toLowerCase();
+  if (
+    /\b(jacuzzi|whirlpool|hot\s*tub)\b.*\b(warm|temperatur|temp|heiss|heiß)\b/i.test(s) ||
+    /\b(warm|temperatur)\b.*\b(jacuzzi|whirlpool)\b/i.test(s) ||
+    /^jacuzzi\s*warm\??$/i.test(low)
+  ) {
+    return { type: "jacuzzi_warm" };
+  }
+  for (const key of ["kino", "sauna", "jacuzzi"]) {
+    if (
+      new RegExp(`\\b${key}\\b.*\\b(frei|frei\\?|available|libre|belegt|status)\\b`, "i").test(s) ||
+      new RegExp(`\\b(frei|frei\\?|status)\\b.*\\b${key}\\b`, "i").test(s) ||
+      new RegExp(`^${key}\\s+frei\\??$`, "i").test(low)
+    ) {
+      return { type: "frei", resource: key };
+    }
+  }
+  return null;
+}
+
 async function listOffeneSchaeden(limit = 10) {
   const snap = await db.collection("schaeden").get();
   const items = [];
@@ -2033,6 +2160,9 @@ const HELP_TEXT =
   `*Garten To-Do / Giessplan (Website WG-Kalender)*\n` +
   `🌿 "garten erledigt" / "garten erledigt Rasen hinten"\n` +
   `💧 "gegossen" / "gegossen Wohnzimmer"\n\n` +
+  `*Wellness (Website WG-Kalender)*\n` +
+  `🛁 "Jacuzzi warm?" / "Ist der Jacuzzi warm?"\n` +
+  `🎬 "Kino frei?" · 🧖 "Sauna frei?" · 🛁 "Jacuzzi frei?"\n\n` +
   `*Anwesenheit*\n` +
   `✅ "Bin da" / "Bin weg 1.5."\n` +
   `📋 "Wer ist da?"\n\n` +
@@ -2671,6 +2801,19 @@ async function dispatch(ctx) {
     const lines = due.map((c) => `• *${c.task}*`).join("\n");
     await reply(`🌿 Mehrere Aufgaben fällig – welche?\n\n${lines}\n\n*z.B. garten erledigt …*`);
     return true;
+  }
+
+  // 13c) Wellness: Jacuzzi warm / Sauna·Kino·Jacuzzi frei?
+  const wellnessQ = parseWellnessQuery(rawInput);
+  if (wellnessQ) {
+    if (wellnessQ.type === "jacuzzi_warm") {
+      await reply(await buildJacuzziWarmReply());
+      return true;
+    }
+    if (wellnessQ.type === "frei" && wellnessQ.resource) {
+      await reply(await buildWellnessFreiReply(wellnessQ.resource));
+      return true;
+    }
   }
 
   // 14a) Steckdosen-Status / Liste
@@ -4517,6 +4660,38 @@ exports.checkGartenRegenPolster = onSchedule(
     }
   }
 );
+
+/** Bluetti-Bridge / manuelles Script: Temperatur in Firestore schreiben */
+exports.jacuzziReading = onRequest(async (req, res) => {
+  res.set("Access-Control-Allow-Origin", "*");
+  if (req.method === "OPTIONS") {
+    res.set("Access-Control-Allow-Methods", "GET, POST");
+    res.set("Access-Control-Allow-Headers", "Content-Type");
+    return res.status(204).send("");
+  }
+  const secret = req.query.secret || req.body?.secret;
+  if (secret !== process.env.SIRI_SECRET) {
+    return res.status(401).json({ error: "Unauthorized" });
+  }
+  const tempC = parseFloat(req.query.tempC ?? req.body?.tempC);
+  if (Number.isNaN(tempC) || tempC < 0 || tempC > 60) {
+    return res.status(400).json({ error: "tempC (0–60) required" });
+  }
+  const now = new Date().toISOString();
+  const source = String(req.body?.source || req.query?.source || "bluetti").slice(0, 32);
+  await db.doc("config/jacuzzi").set(
+    {
+      tempC,
+      warmThresholdC: JACUZZI_WARM_TEMP_C,
+      targetTempC: 38,
+      updatedAt: now,
+      source,
+    },
+    { merge: true }
+  );
+  await db.collection("jacuzziReadings").add({ tempC, at: now, source });
+  return res.json({ ok: true, tempC, warm: tempC >= JACUZZI_WARM_TEMP_C });
+});
 
 exports.testPolsterAlert = onRequest(async (req, res) => {
   res.set("Access-Control-Allow-Origin", "*");

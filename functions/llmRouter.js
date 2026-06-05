@@ -78,6 +78,8 @@ Beispiele:
 - Lights on/Lumieres/Lichterkette an -> *Lichterkette an*
 - Pump/Pompe/Pumpe -> *Pumpe an/aus/X min*
 - Watered indoor plants / Zimmerpflanzen gegossen -> *Giessplan gegossen* or *Giessplan gegossen: Wohnzimmer*
+- Jacuzzi warm / hot tub temperature -> *Jacuzzi warm?*
+- Sauna/Kino/Jacuzzi free / frei / available -> *Kino frei?* / *Sauna frei?* / *Jacuzzi frei?*
 - Water garden/Arrose jardin/Garten bewässern/Giesse die Blumen -> Startet Garten-Sequenz (Bewässerungscomputer + Pumpe)
 - Stop watering/Stop arrosage/Bewässerung stopp/Garten aus -> Stoppt Garten-Bewässerung
 - Who's cleaning?/Qui nettoie?/Wer putzt? -> *Wer putzt?*

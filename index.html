@@ -16,7 +16,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,400;0,9..144,600;0,9..144,700;1,9..144,400&family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet" />
-  <link rel="stylesheet" href="styles.css?v=20260604e" />
+  <link rel="stylesheet" href="styles.css?v=20260605a" />
   <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Ctext y='.9em' font-size='90'%3E🏡%3C/text%3E%3C/svg%3E" />
 </head>
 <body>
@@ -315,6 +315,8 @@
         <button class="tab" data-tab="giessplan" data-wg-only>🌱 Giessplan</button>
         <button class="tab active" data-tab="termine">📅 Termine</button>
         <button class="tab" data-tab="anwesend" data-wg-only>🏡 Anwesenheit</button>
+        <button class="tab" data-tab="jacuzzi">🛁 Jacuzzi</button>
+        <button class="tab" data-tab="wellness">🧖 Belegung</button>
       </div>
 
       <div class="kalender-panel hidden" id="tabAufgaben" data-wg-only>
@@ -482,6 +484,65 @@
         <p class="section-lead" style="text-align:left;">Wer ist am kommenden Wochenende da?</p>
         <div class="anwesend-grid" id="anwesendGrid"></div>
         <p class="form-note" data-wg-only-hint>Nur WG-Mitglieder können ihren Status ändern.</p>
+      </div>
+
+      <div class="kalender-panel hidden" id="tabJacuzzi">
+        <p class="giess-hint">Temperatur vom Bluetti-Heizer (oder manuell). Gustav antwortet auf <em>«Jacuzzi warm?»</em> per WhatsApp.</p>
+        <div class="jacuzzi-status-card" id="jacuzziStatusCard" aria-live="polite"></div>
+        <h3 class="wellness-subhead">Letzte Messungen</h3>
+        <div class="jacuzzi-readings-wrap" id="jacuzziReadingsList"></div>
+        <details class="admin-toggle" data-wg-only>
+          <summary>➕ Temperatur eintragen</summary>
+          <form id="jacuzziReadingForm" class="form-card inline">
+            <div class="field">
+              <label for="jacuzziTempInput">Temperatur (°C)</label>
+              <input type="number" id="jacuzziTempInput" min="15" max="45" step="0.1" required placeholder="z. B. 38.5" />
+            </div>
+            <button type="submit" class="btn btn-primary">Speichern</button>
+          </form>
+          <p class="form-note">Automatisch: kleines Script mit <a href="https://github.com/bluetti-official/bluetti-bluetooth-lib" target="_blank" rel="noopener">Bluetti Bluetooth Lib</a> am Heizer → POST an <code>jacuzziReading</code> (siehe Functions).</p>
+        </details>
+      </div>
+
+      <div class="kalender-panel hidden" id="tabWellness">
+        <p class="giess-hint">Sauna, Jacuzzi und Kino – wer nutzt was wann? Gustav: <em>«Kino frei?»</em>, <em>«Sauna frei?»</em>, <em>«Jacuzzi frei?»</em></p>
+        <div class="wellness-belegung-grid" id="wellnessBelegungGrid"></div>
+        <details class="admin-toggle" data-wg-only open>
+          <summary>➕ Belegung eintragen</summary>
+          <form id="wellnessBookingForm" class="form-card">
+            <div class="row">
+              <div class="field">
+                <label for="wellnessResource">Bereich</label>
+                <select id="wellnessResource" required>
+                  <option value="sauna">🧖 Sauna</option>
+                  <option value="jacuzzi">🛁 Jacuzzi</option>
+                  <option value="kino">🎬 Kino</option>
+                </select>
+              </div>
+              <div class="field">
+                <label for="wellnessWho">Wer / Gruppe</label>
+                <input id="wellnessWho" required placeholder="z. B. Corina &amp; Friends" />
+              </div>
+            </div>
+            <div class="field" id="wellnessTitleField">
+              <label for="wellnessTitle">Titel (Kino-Film o. ä.)</label>
+              <input id="wellnessTitle" placeholder="z. B. Das grosse Krabbeln" />
+            </div>
+            <div class="row">
+              <div class="field">
+                <label for="wellnessStart">Von</label>
+                <input type="datetime-local" id="wellnessStart" required />
+              </div>
+              <div class="field">
+                <label for="wellnessEnd">Bis</label>
+                <input type="datetime-local" id="wellnessEnd" required />
+              </div>
+            </div>
+            <button type="submit" class="btn btn-primary">Belegung speichern</button>
+          </form>
+        </details>
+        <h3 class="wellness-subhead">Kommende &amp; laufende</h3>
+        <div class="wellness-bookings-list" id="wellnessBookingsList"></div>
       </div>
     </div>
   </section>
@@ -1287,6 +1348,6 @@
   <!-- Toast -->
   <div id="toast" class="toast hidden"></div>
 
-  <script type="module" src="app.js?v=20260604e"></script>
+  <script type="module" src="app.js?v=20260605a"></script>
 </body>
 </html>
