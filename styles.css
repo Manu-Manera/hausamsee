@@ -2525,16 +2525,241 @@ textarea { resize: vertical; font-family: inherit; }
   color: var(--cocoa);
 }
 .jacuzzi-status-card {
-  padding: 22px 24px;
+  padding: 0;
   border-radius: var(--r-md);
-  background: var(--card);
-  border: 1px solid var(--card-border);
-  box-shadow: var(--card-shadow);
+  background: transparent;
+  border: none;
+  box-shadow: none;
   margin-bottom: 8px;
 }
-.jacuzzi-status-card.is-warm {
-  border-color: rgba(198, 122, 80, 0.45);
-  background: linear-gradient(135deg, rgba(255, 248, 240, 0.95), rgba(253, 249, 242, 0.9));
+.jacuzzi-status-card.bc-dashboard-wrap.is-warm .bc-dashboard {
+  border-color: rgba(198, 122, 80, 0.35);
+}
+.jacuzzi-warm-banner {
+  margin: 0 0 12px;
+  padding: 10px 14px;
+  border-radius: var(--r-sm);
+  background: linear-gradient(135deg, #fff3e0, #ffe0b2);
+  color: #bf360c;
+  font-weight: 700;
+  font-size: 0.95rem;
+  text-align: center;
+}
+/* Blue Connect–Style Gauges (Grün = Gut, statt Blau) */
+.bc-dashboard {
+  background: #eceff1;
+  border-radius: 14px;
+  padding: 12px 12px 14px;
+  border: 1px solid rgba(0, 0, 0, 0.06);
+}
+.bc-dashboard.is-compact {
+  background: rgba(236, 239, 241, 0.65);
+  padding: 8px 8px 10px;
+  border-radius: 12px;
+}
+.bc-legend {
+  display: flex;
+  justify-content: center;
+  gap: 18px;
+  flex-wrap: wrap;
+  margin-bottom: 10px;
+  font-size: 0.78rem;
+  color: #546e7a;
+}
+.bc-legend.is-compact {
+  gap: 10px;
+  margin-bottom: 8px;
+  font-size: 0.68rem;
+}
+.bc-legend-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+.bc-legend-dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+.bc-legend.is-compact .bc-legend-dot {
+  width: 8px;
+  height: 8px;
+}
+.bc-legend-dot.is-bad { background: #e53935; }
+.bc-legend-dot.is-warn { background: #fb8c00; }
+.bc-legend-dot.is-ok { background: #43a047; }
+.bc-dashboard-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 8px 10px;
+  margin-bottom: 10px;
+  background: rgba(255, 255, 255, 0.72);
+  border-radius: 8px;
+  font-size: 0.82rem;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: #607d8b;
+}
+.bc-dashboard-src {
+  font-size: 0.72rem;
+  font-weight: 600;
+  text-transform: none;
+  letter-spacing: 0;
+  color: #90a4ae;
+}
+.bc-gauge-stack {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.bc-dashboard.is-compact .bc-gauge-stack {
+  gap: 7px;
+}
+.bc-gauge-card {
+  background: #fff;
+  border-radius: 12px;
+  padding: 14px 14px 18px;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.06);
+}
+.bc-gauge-card.is-compact {
+  padding: 10px 10px 14px;
+  border-radius: 10px;
+}
+.bc-gauge-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 22px;
+}
+.bc-gauge-card.is-compact .bc-gauge-head {
+  margin-bottom: 16px;
+}
+.bc-gauge-title {
+  font-size: 1.05rem;
+  font-weight: 600;
+  color: #37474f;
+}
+.bc-gauge-card.is-compact .bc-gauge-title {
+  font-size: 0.88rem;
+}
+.bc-gauge-meta {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 0.82rem;
+  color: #fb8c00;
+}
+.bc-gauge-card.is-compact .bc-gauge-meta {
+  font-size: 0.72rem;
+}
+.bc-gauge-src {
+  font-size: 0.9rem;
+  opacity: 0.85;
+}
+.bc-gauge-body {
+  position: relative;
+  padding-top: 18px;
+}
+.bc-gauge-card.is-compact .bc-gauge-body {
+  padding-top: 14px;
+}
+.bc-gauge-markers {
+  position: relative;
+  height: 16px;
+  margin-bottom: 4px;
+}
+.bc-gauge-marker {
+  position: absolute;
+  transform: translateX(-50%);
+  font-size: 0.72rem;
+  color: #90a4ae;
+  white-space: nowrap;
+}
+.bc-gauge-card.is-compact .bc-gauge-marker {
+  font-size: 0.62rem;
+}
+.bc-gauge-track {
+  position: relative;
+  height: 18px;
+  border-radius: 4px;
+  overflow: visible;
+  background: #cfd8dc;
+}
+.bc-gauge-card.is-compact .bc-gauge-track {
+  height: 14px;
+}
+.bc-gauge-seg {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+}
+.bc-gauge-seg.is-bad { background: #e53935; }
+.bc-gauge-seg.is-warn { background: #fb8c00; }
+.bc-gauge-seg.is-ok { background: #43a047; }
+.bc-gauge-bubble {
+  position: absolute;
+  bottom: calc(100% + 8px);
+  transform: translateX(-50%);
+  padding: 5px 10px;
+  border-radius: 8px;
+  font-size: 0.95rem;
+  font-weight: 700;
+  color: #fff;
+  white-space: nowrap;
+  line-height: 1.2;
+  z-index: 2;
+}
+.bc-gauge-card.is-compact .bc-gauge-bubble {
+  font-size: 0.78rem;
+  padding: 4px 8px;
+  bottom: calc(100% + 6px);
+}
+.bc-gauge-bubble::after {
+  content: "";
+  position: absolute;
+  left: 50%;
+  bottom: -6px;
+  transform: translateX(-50%);
+  border: 6px solid transparent;
+  border-top-color: inherit;
+  border-bottom: none;
+}
+.bc-gauge-bubble.is-ok {
+  background: #43a047;
+}
+.bc-gauge-bubble.is-ok::after {
+  border-top-color: #43a047;
+}
+.bc-gauge-bubble.is-warn {
+  background: #fb8c00;
+}
+.bc-gauge-bubble.is-warn::after {
+  border-top-color: #fb8c00;
+}
+.bc-gauge-bubble.is-bad {
+  background: #e53935;
+}
+.bc-gauge-bubble.is-bad::after {
+  border-top-color: #e53935;
+}
+.bc-gauge-bubble.is-unknown {
+  background: #78909c;
+}
+.bc-gauge-bubble.is-unknown::after {
+  border-top-color: #78909c;
+}
+.bc-empty {
+  margin: 0;
+  padding: 12px;
+  text-align: center;
+}
+.bc-dashboard-wrap .wellness-belegung-detail {
+  margin-top: 14px;
 }
 .jacuzzi-status-main {
   display: flex;

@@ -5237,69 +5237,191 @@ function jacuzziAmpelLevel(metric) {
 }
 
 function jacuzziAmpelLabel(level) {
-  if (level === "ok") return "Im Soll";
-  if (level === "warn") return "Grenzbereich";
-  if (level === "bad") return "Kritisch";
+  if (level === "ok") return "Gut";
+  if (level === "warn") return "Warnung";
+  if (level === "bad") return "Schlecht";
   return "Keine Daten";
 }
 
-function fmtJacuzziMetricRange(metric) {
-  if (!metric || metric.okMin == null || metric.okMax == null) return "";
-  const unit = metric.unit || "";
-  return `Soll ${metric.okMin}–${metric.okMax}${unit}`;
+const JACUZZI_GAUGE_META = {
+  tempC: {
+    label: "Temperatur",
+    field: "tempC",
+    gaugeMin: 0,
+    gaugeMax: 50,
+    warnLow: 5,
+    okMin: 30,
+    okMax: 40,
+    warnHigh: 50,
+    format: (v) => `${Number(v).toLocaleString("de-CH", { minimumFractionDigits: 1, maximumFractionDigits: 1 })} °C`,
+    markerFmt: (v) => String(Math.round(v)),
+  },
+  ph: {
+    label: "pH-Wert",
+    field: "ph",
+    gaugeMin: 5,
+    gaugeMax: 10,
+    warnLow: 6.6,
+    okMin: 7.2,
+    okMax: 7.6,
+    warnHigh: 8.4,
+    format: (v) => Number(v).toLocaleString("de-CH", { minimumFractionDigits: 1, maximumFractionDigits: 1 }),
+    markerFmt: (v) => Number(v).toLocaleString("de-CH", { minimumFractionDigits: 1, maximumFractionDigits: 1 }),
+  },
+  orp: {
+    label: "ORP",
+    field: "orp",
+    gaugeMin: 300,
+    gaugeMax: 1000,
+    warnLow: 400,
+    okMin: 550,
+    okMax: 650,
+    warnHigh: 900,
+    format: (v) => `${Math.round(Number(v)).toLocaleString("de-CH")} mV`,
+    markerFmt: (v) => String(Math.round(v)),
+  },
+};
+
+function jacuzziGaugeMetric(key, status = {}) {
+  const meta = JACUZZI_GAUGE_META[key];
+  if (!meta) return null;
+  const field = meta.field;
+  const raw = status?.[field];
+  if (raw == null || Number.isNaN(Number(raw))) return null;
+  const fromStatus = (suffix) => {
+    if (key === "tempC") return null;
+    const v = status?.[`${field}${suffix}`];
+    return v != null ? Number(v) : null;
+  };
+  return {
+    value: Number(raw),
+    label: meta.label,
+    gaugeMin: fromStatus("GaugeMin") ?? meta.gaugeMin,
+    gaugeMax: fromStatus("GaugeMax") ?? meta.gaugeMax,
+    warnLow: fromStatus("WarnLow") ?? meta.warnLow,
+    okMin: fromStatus("OkMin") ?? meta.okMin,
+    okMax: fromStatus("OkMax") ?? meta.okMax,
+    warnHigh: fromStatus("WarnHigh") ?? meta.warnHigh,
+    format: meta.format,
+    markerFmt: meta.markerFmt,
+  };
 }
 
-function buildJacuzziMetricChip({ label, metric, formatValue, compact = false }) {
+function fmtJacuzziRelative(v) {
+  const ms = wellnessTimestampMs(v);
+  if (!ms) return "";
+  const diffSec = Math.round((ms - Date.now()) / 1000);
+  const rtf = new Intl.RelativeTimeFormat("de-CH", { numeric: "auto" });
+  const steps = [
+    ["year", 60 * 60 * 24 * 365],
+    ["month", 60 * 60 * 24 * 30],
+    ["day", 60 * 60 * 24],
+    ["hour", 60 * 60],
+    ["minute", 60],
+  ];
+  for (const [unit, sec] of steps) {
+    if (Math.abs(diffSec) >= sec || unit === "minute") {
+      return rtf.format(Math.round(diffSec / sec), unit);
+    }
+  }
+  return "";
+}
+
+function jacuzziGaugePct(metric, value) {
+  const span = metric.gaugeMax - metric.gaugeMin;
+  if (!span) return 50;
+  return Math.max(0, Math.min(100, ((value - metric.gaugeMin) / span) * 100));
+}
+
+function jacuzziGaugeSegments(metric) {
+  const min = metric.gaugeMin;
+  const max = metric.gaugeMax;
+  const pct = (v) => jacuzziGaugePct(metric, v);
+  const defs = [
+    { cls: "bad", from: min, to: metric.warnLow },
+    { cls: "warn", from: metric.warnLow, to: metric.okMin },
+    { cls: "ok", from: metric.okMin, to: metric.okMax },
+    { cls: "warn", from: metric.okMax, to: metric.warnHigh },
+    { cls: "bad", from: metric.warnHigh, to: max },
+  ];
+  return defs
+    .filter((s) => s.from != null && s.to != null && s.to > s.from)
+    .map((s) => ({
+      cls: s.cls,
+      left: pct(s.from),
+      width: pct(s.to) - pct(s.from),
+    }));
+}
+
+function jacuzziGaugeMarkers(metric) {
+  const pts = [metric.warnLow, metric.okMin, metric.okMax, metric.warnHigh].filter((v) => v != null);
+  const uniq = [...new Set(pts.map((v) => Number(v)))].sort((a, b) => a - b);
+  return uniq.map((v) => ({
+    value: v,
+    left: jacuzziGaugePct(metric, v),
+    label: metric.markerFmt(v),
+  }));
+}
+
+function buildJacuzziGaugeCard(key, status, measuredAt, { compact = false } = {}) {
+  const metric = jacuzziGaugeMetric(key, status);
   if (!metric) return "";
   const level = jacuzziAmpelLevel(metric);
-  const valueStr = formatValue(metric.value);
-  const rangeStr = fmtJacuzziMetricRange(metric);
-  const statusStr = jacuzziAmpelLabel(level);
-  if (compact) {
-    return `
-      <div class="jacuzzi-metric is-${level}" title="${escapeHtml(rangeStr || statusStr)}">
-        <span class="jacuzzi-metric-dot" aria-hidden="true"></span>
-        <span class="jacuzzi-metric-label">${escapeHtml(label)}</span>
-        <span class="jacuzzi-metric-value">${escapeHtml(valueStr)}</span>
-      </div>`;
-  }
+  const pos = jacuzziGaugePct(metric, metric.value);
+  const rel = fmtJacuzziRelative(measuredAt);
+  const segments = jacuzziGaugeSegments(metric)
+    .map(
+      (s) =>
+        `<div class="bc-gauge-seg is-${s.cls}" style="left:${s.left.toFixed(2)}%;width:${s.width.toFixed(2)}%"></div>`
+    )
+    .join("");
+  const markers = jacuzziGaugeMarkers(metric)
+    .map((m) => `<span class="bc-gauge-marker" style="left:${m.left.toFixed(2)}%">${escapeHtml(m.label)}</span>`)
+    .join("");
   return `
-    <div class="jacuzzi-metric is-${level}">
-      <div class="jacuzzi-metric-head">
-        <span class="jacuzzi-metric-dot" aria-hidden="true"></span>
-        <span class="jacuzzi-metric-label">${escapeHtml(label)}</span>
-        <span class="jacuzzi-metric-status">${escapeHtml(statusStr)}</span>
+    <article class="bc-gauge-card${compact ? " is-compact" : ""}">
+      <div class="bc-gauge-head">
+        <span class="bc-gauge-title">${escapeHtml(metric.label)}</span>
+        <span class="bc-gauge-meta">${rel ? `<span class="bc-gauge-age">${escapeHtml(rel)}</span>` : ""}<span class="bc-gauge-src" title="Blue Riiot Cloud">☁️</span></span>
       </div>
-      <div class="jacuzzi-metric-value">${escapeHtml(valueStr)}</div>
-      ${rangeStr ? `<div class="jacuzzi-metric-range">${escapeHtml(rangeStr)}</div>` : ""}
+      <div class="bc-gauge-body">
+        <div class="bc-gauge-markers">${markers}</div>
+        <div class="bc-gauge-track" role="img" aria-label="${escapeHtml(metric.label)}: ${escapeHtml(metric.format(metric.value))}, ${escapeHtml(jacuzziAmpelLabel(level))}">
+          ${segments}
+          <div class="bc-gauge-bubble is-${level}" style="left:${pos.toFixed(2)}%">
+            <span>${escapeHtml(metric.format(metric.value))}</span>
+          </div>
+        </div>
+      </div>
+    </article>`;
+}
+
+function buildJacuzziConnectLegend(compact = false) {
+  return `
+    <div class="bc-legend${compact ? " is-compact" : ""}" aria-hidden="true">
+      <span class="bc-legend-item"><span class="bc-legend-dot is-bad"></span>Schlecht</span>
+      <span class="bc-legend-item"><span class="bc-legend-dot is-warn"></span>Warnung</span>
+      <span class="bc-legend-item"><span class="bc-legend-dot is-ok"></span>Gut</span>
     </div>`;
 }
 
-function buildJacuzziWaterMetricsHtml(status, { compact = false } = {}) {
-  const phMetric = jacuzziMetricFromStatus(status, "ph");
-  const orpMetric = jacuzziMetricFromStatus(status, "orp");
-  if (!phMetric && !orpMetric) return "";
-
-  const chips = [
-    phMetric
-      ? buildJacuzziMetricChip({
-          label: "pH",
-          metric: { ...phMetric, unit: "" },
-          formatValue: (v) => Number(v).toFixed(1),
-          compact,
-        })
-      : "",
-    orpMetric
-      ? buildJacuzziMetricChip({
-          label: "Chlor (Redox)",
-          metric: { ...orpMetric, unit: " mV" },
-          formatValue: (v) => `${Math.round(Number(v))} mV`,
-          compact,
-        })
-      : "",
-  ].join("");
-
-  return `<div class="jacuzzi-water-metrics${compact ? " is-compact" : ""}">${chips}</div>`;
+function buildJacuzziConnectDashboard(status, { compact = false } = {}) {
+  const at = status?.updatedAt;
+  const cards = ["tempC", "ph", "orp"]
+    .map((key) => buildJacuzziGaugeCard(key, status, at, { compact }))
+    .filter(Boolean);
+  if (!cards.length) {
+    return `<p class="form-note bc-empty">Noch keine Messungen aus der Blue&nbsp;Riiot-Cloud.</p>`;
+  }
+  const header = compact
+    ? ""
+    : `<div class="bc-dashboard-head"><span class="bc-dashboard-brand">Blue Connect</span>${status?.source ? `<span class="bc-dashboard-src">${escapeHtml(jacuzziSourceLabel(status.source))}</span>` : ""}</div>`;
+  return `
+    <div class="bc-dashboard${compact ? " is-compact" : ""}">
+      ${buildJacuzziConnectLegend(compact)}
+      ${header}
+      <div class="bc-gauge-stack">${cards.join("")}</div>
+    </div>`;
 }
 
 function getJacuzziReadingsSorted(limit = JACUZZI_VERLAUF_LIMIT) {
@@ -5338,19 +5460,6 @@ function renderJacuzziHero() {
 
   const status = jacuzziStatusCache;
   const warm = isJacuzziWarm(status);
-  const temp = status?.tempC != null ? Number(status.tempC) : null;
-  const updatedStr = status?.updatedAt ? fmtJacuzziWhen(status.updatedAt) : "";
-  const hasTemp = temp != null && !Number.isNaN(temp);
-
-  let chip = '<span class="jacuzzi-status-chip unknown">Keine Messung</span>';
-  let tempHtml = '<span class="jacuzzi-hero-temp">— °C</span>';
-  if (hasTemp) {
-    chip = warm
-      ? '<span class="jacuzzi-status-chip warm">Warm ♨️</span>'
-      : '<span class="jacuzzi-status-chip cool">Wird warm…</span>';
-    tempHtml = `<span class="jacuzzi-hero-temp">${temp.toFixed(1)} °C</span>`;
-  }
-
   const verlaufCount = Math.min(jacuzziReadingsCache.length, JACUZZI_VERLAUF_LIMIT);
   const verlaufLabel = jacuzziHeroVerlaufOpen ? "Verlauf ausblenden" : `Verlauf (${verlaufCount || "0"})`;
   const verlaufPanel = jacuzziHeroVerlaufOpen
@@ -5362,13 +5471,9 @@ function renderJacuzziHero() {
     <div class="jacuzzi-hero-card">
       <div class="jacuzzi-hero-top">
         <span class="jacuzzi-hero-label">🛁 Jacuzzi</span>
-        <span class="jacuzzi-hero-updated">${updatedStr ? `Stand ${escapeHtml(updatedStr)}` : "Wird geladen …"}</span>
+        ${warm ? '<span class="jacuzzi-status-chip warm">Warm ♨️</span>' : ""}
       </div>
-      <div class="jacuzzi-hero-body">
-        ${tempHtml}
-        ${chip}
-      </div>
-      ${buildJacuzziWaterMetricsHtml(status, { compact: true })}
+      ${buildJacuzziConnectDashboard(status, { compact: true })}
       <button type="button" class="jacuzzi-verlauf-btn jacuzzi-hero-verlauf-btn" id="jacuzziHeroVerlaufBtn" aria-expanded="${jacuzziHeroVerlaufOpen ? "true" : "false"}" aria-controls="jacuzziHeroVerlaufPanel">
         📊 ${escapeHtml(verlaufLabel)}
       </button>
@@ -5387,29 +5492,19 @@ function renderJacuzziPanel() {
   const warm = isJacuzziWarm(status);
   const temp = status?.tempC != null ? Number(status.tempC) : null;
   const booking = getActiveWellnessBooking("jacuzzi");
-  const updatedMs = wellnessTimestampMs(status?.updatedAt);
-
-  let chip = '<span class="jacuzzi-status-chip unknown">Keine Messung</span>';
-  let tempHtml = '<span class="jacuzzi-status-temp">— °C</span>';
-  if (temp != null && !Number.isNaN(temp)) {
-    chip = warm
-      ? '<span class="jacuzzi-status-chip warm">Warm ♨️</span>'
-      : '<span class="jacuzzi-status-chip cool">Wird warm…</span>';
-    tempHtml = `<span class="jacuzzi-status-temp">${temp.toFixed(1)} °C</span>`;
-  }
-
-  const updatedStr = updatedMs ? fmtJacuzziWhen(status.updatedAt) : "";
-  const waterMetricsHtml = buildJacuzziWaterMetricsHtml(status);
 
   let belegHtml = booking
     ? `<p class="wellness-belegung-detail">📅 Belegt ${fmtWellnessDateLabel(booking.startAt)} (${fmtWellnessTimeRange(booking.startAt, booking.endAt)}) – ${escapeHtml(booking.who || "?")}</p>`
     : `<p class="wellness-belegung-detail">📅 Gerade frei – Gustav: <em>Jacuzzi warm?</em></p>`;
+  const warmChip =
+    temp != null && !Number.isNaN(temp) && warm
+      ? `<div class="jacuzzi-warm-banner">♨️ Jacuzzi ist warm (${temp.toFixed(1).replace(".", ",")} °C)</div>`
+      : "";
 
-  card.className = `jacuzzi-status-card${warm ? " is-warm" : ""}`;
+  card.className = `jacuzzi-status-card bc-dashboard-wrap${warm ? " is-warm" : ""}`;
   card.innerHTML = `
-    <div class="jacuzzi-status-main">${tempHtml}${chip}</div>
-    ${updatedStr ? `<p class="form-note" style="margin:0 0 8px;">Stand: ${escapeHtml(updatedStr)}${status?.source ? ` · ${escapeHtml(jacuzziSourceLabel(status.source))}` : ""}</p>` : ""}
-    ${waterMetricsHtml}
+    ${warmChip}
+    ${buildJacuzziConnectDashboard(status)}
     ${belegHtml}
   `;
 
