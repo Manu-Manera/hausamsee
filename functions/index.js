@@ -1959,6 +1959,111 @@ async function getActiveWellnessBooking(resource) {
   return best;
 }
 
+function jacuzziEnrichedStatus(status = {}) {
+  const tempAmpel = jacuzziWaterAmpelLevel(
+    status.tempC,
+    status.tempOkMin ?? 30,
+    status.tempOkMax ?? 40,
+    status.tempWarnLow ?? 5,
+    status.tempWarnHigh ?? 50
+  );
+  const phAmpel = jacuzziWaterAmpelLevel(
+    status.ph,
+    status.phOkMin,
+    status.phOkMax,
+    status.phWarnLow,
+    status.phWarnHigh
+  );
+  const orpAmpel = jacuzziWaterAmpelLevel(
+    status.orp,
+    status.orpOkMin,
+    status.orpOkMax,
+    status.orpWarnLow,
+    status.orpWarnHigh
+  );
+  return { ...status, tempAmpel, phAmpel, orpAmpel };
+}
+
+function buildJacuzziGaugeBar(value, gaugeMin, gaugeMax) {
+  const min = Number(gaugeMin);
+  const max = Number(gaugeMax);
+  const v = Number(value);
+  if (Number.isNaN(v) || Number.isNaN(min) || Number.isNaN(max) || max <= min) return "";
+  const pct = Math.max(0, Math.min(1, (v - min) / (max - min)));
+  const filled = Math.round(pct * 12);
+  return `${"▓".repeat(filled)}${"░".repeat(12 - filled)}`;
+}
+
+function buildJacuzziGaugeBarForKey(key, status) {
+  if (key === "tempC") {
+    return buildJacuzziGaugeBar(
+      status.tempC,
+      status.tempGaugeMin ?? 0,
+      status.tempGaugeMax ?? 50
+    );
+  }
+  if (key === "ph") {
+    return buildJacuzziGaugeBar(status.ph, status.phGaugeMin ?? 5, status.phGaugeMax ?? 10);
+  }
+  if (key === "orp") {
+    return buildJacuzziGaugeBar(status.orp, status.orpGaugeMin ?? 300, status.orpGaugeMax ?? 1000);
+  }
+  return "";
+}
+
+async function buildJacuzziFullReply() {
+  const status = await getJacuzziStatusDoc();
+  const booking = await getActiveWellnessBooking("jacuzzi");
+  const enriched = jacuzziEnrichedStatus(status || {});
+  const lines = ["🛁 *Jacuzzi · Übersicht*", "", "*Wasserqualität* (Blue Connect):", ""];
+
+  let hasMetric = false;
+  for (const key of ["tempC", "ph", "orp"]) {
+    const metricLine = buildJacuzziWaterMetricLine(key, enriched);
+    if (!metricLine) continue;
+    hasMetric = true;
+    lines.push(metricLine);
+    const bar = buildJacuzziGaugeBarForKey(key, enriched);
+    if (bar) lines.push(bar);
+    lines.push("");
+  }
+
+  if (!hasMetric) {
+    lines.push(
+      blueriiot.blueriiotEnabled()
+        ? "Noch keine Messwerte in der Cloud – nach Handy-Messung Sync alle 5 Min."
+        : "Keine Messwerte – Blue-Riiot-Sync in functions/.env aktivieren.",
+      ""
+    );
+  } else {
+    lines.push("_🟢 Gut · 🟡 Warnung · 🔴 Schlecht_", "");
+  }
+
+  const temp = enriched.tempC != null ? Number(enriched.tempC) : null;
+  const threshold = enriched.warmThresholdC != null ? Number(enriched.warmThresholdC) : JACUZZI_WARM_TEMP_C;
+  if (temp != null && !Number.isNaN(temp)) {
+    lines.push(
+      temp >= threshold
+        ? `♨️ *Warm genug zum Baden* (${temp.toFixed(1)} °C)`
+        : `⏳ *Wird noch warm* (${temp.toFixed(1)} °C, Ziel ca. ${enriched.targetTempC || 38} °C)`
+    );
+  }
+
+  if (booking) {
+    const when = fmtWellnessDateLabel(booking.startAt);
+    const range = fmtWellnessTimeRange(booking.startAt, booking.endAt);
+    lines.push(`📅 Belegt ${when} (*${range}*) – ${booking.who || "?"}`);
+  } else {
+    lines.push("📅 Gerade *frei*!");
+  }
+
+  if (enriched.updatedAt) {
+    lines.push(`🕐 Stand: ${fmtTimeZurich(new Date(enriched.updatedAt))} Uhr`);
+  }
+  lines.push("", `📊 Gauges auf der Website: ${WEBSITE_URL}/#kalender`);
+  return lines.join("\n");
+}
+
 async function buildJacuzziWarmReply() {
   const status = await getJacuzziStatusDoc();
   const booking = await getActiveWellnessBooking("jacuzzi");
@@ -2165,6 +2270,14 @@ function parseWellnessQuery(raw) {
     /^jacuzzi\s*warm\??$/i.test(low)
   ) {
     return { type: "jacuzzi_warm" };
+  }
+  if (
+    /^jacuzzi\s*\??$/i.test(low) ||
+    /^whirlpool\s*\??$/i.test(low) ||
+    /^hot\s*tub\s*\??$/i.test(low) ||
+    /^jacuzzi\s*(?:status|info|übersicht|uebersicht)\s*\??$/i.test(low)
+  ) {
+    return { type: "jacuzzi_status" };
   }
   for (const key of ["kino", "sauna", "jacuzzi"]) {
     if (
@@ -2600,6 +2713,7 @@ const HELP_TEXT =
   `🌿 "garten erledigt" / "garten erledigt Rasen hinten"\n` +
   `💧 "gegossen" / "gegossen Wohnzimmer"\n\n` +
   `*Wellness (Website WG-Kalender)*\n` +
+  `🛁 "Jacuzzi?" – Übersicht mit Wasserqualität (Temp, pH, Chlorgehalt)\n` +
   `🛁 "Jacuzzi warm?" / "Ist der Jacuzzi warm?"\n` +
   `🎬 "Kino frei?" · 🧖 "Sauna frei?" · 🛁 "Jacuzzi frei?"\n` +
   `📅 "Jacuzzi besetzt von mir bis 15 Uhr" · "Sauna für Andy von 18 bis 20"\n\n` +
@@ -3362,6 +3476,10 @@ async function dispatch(ctx) {
   // 13c) Wellness: Jacuzzi warm / Sauna·Kino·Jacuzzi frei?
   const wellnessQ = parseWellnessQuery(rawInput);
   if (wellnessQ) {
+    if (wellnessQ.type === "jacuzzi_status") {
+      await reply(await buildJacuzziFullReply());
+      return true;
+    }
     if (wellnessQ.type === "jacuzzi_warm") {
       await reply(await buildJacuzziWarmReply());
       return true;
@@ -5337,28 +5455,7 @@ function buildJacuzziWaterMetricLine(key, status) {
 }
 
 function buildJacuzziWaterAlertText(status) {
-  const tempAmpel = jacuzziWaterAmpelLevel(
-    status.tempC,
-    status.tempOkMin ?? 30,
-    status.tempOkMax ?? 40,
-    status.tempWarnLow ?? 5,
-    status.tempWarnHigh ?? 50
-  );
-  const phAmpel = jacuzziWaterAmpelLevel(
-    status.ph,
-    status.phOkMin,
-    status.phOkMax,
-    status.phWarnLow,
-    status.phWarnHigh
-  );
-  const orpAmpel = jacuzziWaterAmpelLevel(
-    status.orp,
-    status.orpOkMin,
-    status.orpOkMax,
-    status.orpWarnLow,
-    status.orpWarnHigh
-  );
-  const enriched = { ...status, tempAmpel, phAmpel, orpAmpel };
+  const enriched = jacuzziEnrichedStatus(status);
   const lines = ["🛁 *Jacuzzi · Wasserqualität*", ""];
   for (const key of ["tempC", "ph", "orp"]) {
     const line = buildJacuzziWaterMetricLine(key, enriched);
