@@ -87,6 +87,8 @@ Beispiele:
 - Pump/Pompe/Pumpe -> *Pumpe an/aus/X min*
 - Watered indoor plants / Zimmerpflanzen gegossen -> *Giessplan gegossen* or *Giessplan gegossen: Wohnzimmer*
 - Jacuzzi? / hot tub status / jacuzzi overview -> *Jacuzzi?* (full status with water quality gauges)
+- Wasserqualität / pH / Chlorgehalt / ORP / water quality / qualité de l'eau (auch ohne Wort "Jacuzzi") -> *Jacuzzi?*
+- Follow-up nach Jacuzzi-Gespräch ("Wie ist die Wasserqualität?", "und die Temperatur?") -> *Jacuzzi?* bzw. *Jacuzzi warm?*
 - Jacuzzi warm / hot tub temperature -> *Jacuzzi warm?*
 - Sauna/Kino/Jacuzzi free / frei / available -> *Kino frei?* / *Sauna frei?* / *Jacuzzi frei?*
 - Reserve / block / belegt / besetzt Jacuzzi/Sauna/Kino -> *Wellness belegen: Ressource | Wer | Start | Ende*
@@ -96,25 +98,41 @@ Beispiele:
 - Water garden/Arrose jardin/Garten bewässern/Giesse die Blumen -> Startet Garten-Sequenz (Bewässerungscomputer + Pumpe)
 - Stop watering/Stop arrosage/Bewässerung stopp/Garten aus -> Stoppt Garten-Bewässerung
 - Who's cleaning?/Qui nettoie?/Wer putzt? -> *Wer putzt?*
+- Wann muss ich was machen / meine Aufgaben / was steht bei mir an / next task -> *Meine Aufgaben?*
+- Wer muss was / Aufgaben Übersicht / was steht an (WG) -> *Aufgaben?*
+- Dein Tag / Morgen-Übersicht -> *Dein Tag an* (Opt-in) oder *Dein Tag* (Vorschau)
+- Einkaufsliste: Pfeffer auf die Liste / Was fehlt? / Pfeffer erledigt
+- Mitbringen Event: Salat -> *Mitbringen Spieleabend: Salat* / *Wer bringt was Spieleabend?*
+- Kino heute Film -> *Kino heute Avatar*
+- Bewerber Lisa -> Status anzeigen; Bewerber Status Lisa: eingeladen -> aktualisieren
+- Umfrage mit Deadline -> *Umfrage: Titel | wann | bis Donnerstag*
+- WLAN/Müll/Notfall -> Haus-Wiki (*WLAN?*, *Müll?*)
 - Yes Event/Oui Event/Ja Event -> *Ja Event*
 - No Event/Non Event/Nein Event -> *Nein Event*
 - Maybe/Vielleicht Event -> *Vielleicht Event*
 - Poll/Sondage/Umfrage questions ("Spieleabend morgen?", "game night tomorrow?") -> *Umfrage: Titel | wann* (extract title + when from question)
 - Poll summary / how's it looking / wie sieht's aus -> *Umfrage Status: Titel*
 - Text poll instead of buttons -> *Umfrage Text: Titel | wann*
-- Weather/Meteo/Wetter/Regnet es?/Is it raining?/Il pleut? -> *Wetter*
+- Weather/Meteo/Wetter/Wie wird das Wetter?/Regnet es?/Is it raining?/Il pleut? -> *Wetter*
+- Wie hoch ist die Miete? / rent / loyer -> *Miete?* (Website-Inserat)
 
 ## Prioritaet
 1) Bot-Aktion erkannt -> "command" setzen, "antwort": null
 2) Hilfe/Begruessung -> "command": null, "antwort": freche Antwort in User-Sprache MIT Website-Link
-3) Smalltalk/Frage ohne Bot-Bezug -> "command": null, "antwort" in User-Sprache (frech, witzig, positiv!)
+3) Allgemeine Fragen & ChatGPT-Modus: Rezepte, Erklaerungen, Coding, Smalltalk, Brainstorming, Wissen ohne Haus-Befehl -> "command": null, "antwort" in User-Sprache (fundiert und hilfreich wie ChatGPT, mit Gustavs Humor – nicht nur ein Satz!)
 4) Info fehlt -> "command": null, freche Rueckfrage in "antwort"
+
+## KONVERSATION
+Wenn Chat-Verlauf mitgeliefert wird: beziehe dich auf fruehere Nachrichten (z. B. "noch einer", "und morgen?", "erklaer das einfacher").
 
 ## Befehlskatalog (command immer Deutsch)
 - *Events*; *Neues Event: Titel Datum Uhrzeit | Beschreibung*; *Event loeschen: Titel*
 - *Schaeden*; *Schaden: Titel | Ort | niedrig/mittel/hoch*; *Schaden erledigt: Titel*  
 - *Wer ist da?*; *Bin da*; *Bin weg*; *[Name] ist weg*
 - *Wer putzt?*; *Putz: Name Datum Aufgabe*
+- *Meine Aufgaben?* (Giessplan, Garten, Putz, Schäden, Erinnerungen + Kalender-Samstag)
+- *Miete?* (Zimmerpreis vom Website-Inserat)
+- *Aufgaben?* (WG-Übersicht aller offenen Aufgaben)
 - *Pumpe an*; *Pumpe aus*; *Pumpe X min*; *Pumpen* (Einzelgeraet)
 - *Lichterkette an*; *Lichterkette aus*
 - *Giessplan gegossen*; *Giessplan gegossen: Bereich* (Innenpflanzen – wie auf der Webseite «Gegossen»)
@@ -143,6 +161,20 @@ function expandWellnessSenderInCommand(command, senderName) {
     .replace(/\bWHO_SELF\b/gi, sender);
 }
 
+function buildUserContent(userText, senderName) {
+  const text = String(userText || "").trim().slice(0, MAX_USER_CHARS);
+  if (!text) return "";
+  return senderName
+    ? `Absender (WhatsApp-Name): ${senderName}\nNutze diesen Namen bei "ich/mir/mich" oder als SENDER im Befehl.\n\nNachricht:\n${text}`
+    : text;
+}
+
+function historyToMessages(history) {
+  return (history || [])
+    .filter((m) => m && (m.role === "user" || m.role === "assistant") && m.content)
+    .map((m) => ({ role: m.role, content: String(m.content).slice(0, MAX_USER_CHARS) }));
+}
+
 async function naturalLanguageToCommand(userText, meta = {}) {
   const key = (process.env.OPENAI_API_KEY || "").trim();
   if (!key) {
@@ -154,9 +186,8 @@ async function naturalLanguageToCommand(userText, meta = {}) {
     return { command: null, antwort: null };
   }
   const senderName = meta?.senderName ? String(meta.senderName).trim() : "";
-  const userContent = senderName
-    ? `Absender (WhatsApp-Name): ${senderName}\nNutze diesen Namen bei "ich/mir/mich" oder als SENDER im Befehl.\n\nNachricht:\n${text}`
-    : text;
+  const userContent = buildUserContent(text, senderName);
+  const prior = historyToMessages(meta.history);
 
   const res = await fetch("https://api.openai.com/v1/chat/completions", {
     method: "POST",
@@ -171,6 +202,7 @@ async function naturalLanguageToCommand(userText, meta = {}) {
       response_format: { type: "json_object" },
       messages: [
         { role: "system", content: SYSTEM_PROMPT },
+        ...prior,
         { role: "user", content: userContent },
       ],
     }),
@@ -178,7 +210,10 @@ async function naturalLanguageToCommand(userText, meta = {}) {
   const raw = await res.text();
   if (!res.ok) {
     logger.warn("OpenAI error", { status: res.status, body: raw.slice(0, 500) });
-    throw new Error(`OpenAI HTTP ${res.status}`);
+    const err = new Error(`OpenAI HTTP ${res.status}`);
+    err.status = res.status;
+    if (res.status === 429) err.code = "insufficient_quota";
+    throw err;
   }
   let data;
   try {
@@ -207,4 +242,84 @@ async function naturalLanguageToCommand(userText, meta = {}) {
   return { command, antwort: antwort ? antwort.slice(0, MAX_ANTWORT_CHARS) : null };
 }
 
-module.exports = { isLlmEnabled, isLlmRulesFirst, naturalLanguageToCommand };
+const CHAT_SYSTEM_PROMPT = `Du bist *Gustav* 🦆 – WhatsApp-Assistent der WG "Haus am See" (Schweiz) und gleichzeitig ein vollwertiger ChatGPT-ähnlicher Helfer.
+
+## Faehigkeiten
+- Erklaere Themen verstaendlich, beantworte Wissensfragen, hilf bei Rezepten, Ideen, Code, Uebersetzungen, Smalltalk.
+- Du kennst das Haus am See; bei Haus-Aktionen (Events, Putzplan, Jacuzzi, Pumpen, …) verweise auf WhatsApp-Befehle oder ${WEBSITE_URL}
+- Für «wann muss ich was machen» / persönliche To-dos: Nutzer soll *Meine Aufgaben?* schreiben (echte Daten von der Website)
+- Erfinde keine ausgefuehrten Haus-Aktionen – du antwortest hier nur im Chat.
+
+## Stil
+- Duze, locker, positiv, 2–4 Emojis, nicht uebertrieben.
+- Antworte IMMER in der Sprache des Users (DE, EN, FR; bei Dialekt Zueri/St. Gallen im gleichen Dialekt).
+- WhatsApp-Format: *fett* mit Sternchen, keine Ueberschriften mit #.
+- Sei fundiert und hilfreich – wie ChatGPT, nicht nur ein Einzeiler.
+
+## Verlauf
+Wenn fruehere Nachrichten mitgeliefert werden, beziehe dich darauf (Follow-ups, "noch einer", "kurz zusammenfassen", …).
+
+Antworte NUR mit dem Nachrichtentext, kein JSON.`;
+
+/**
+ * Reiner Chat-Modus wenn kein Haus-Befehl erkannt wurde (ChatGPT-Fallback).
+ * @returns {Promise<string | null>}
+ */
+async function generalChatReply(userText, meta = {}) {
+  const key = (process.env.OPENAI_API_KEY || "").trim();
+  if (!key) return null;
+  const model = (process.env.OPENAI_MODEL || DEFAULT_MODEL).trim() || DEFAULT_MODEL;
+  const text = String(userText || "").trim().slice(0, MAX_USER_CHARS);
+  if (!text) return null;
+  const senderName = meta?.senderName ? String(meta.senderName).trim() : "";
+  const userContent = buildUserContent(text, senderName);
+  const prior = historyToMessages(meta.history);
+
+  const res = await fetch("https://api.openai.com/v1/chat/completions", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${key}`,
+    },
+    body: JSON.stringify({
+      model,
+      temperature: 0.65,
+      max_tokens: MAX_TOKENS,
+      messages: [
+        { role: "system", content: CHAT_SYSTEM_PROMPT },
+        ...prior,
+        { role: "user", content: userContent },
+      ],
+    }),
+  });
+  const raw = await res.text();
+  if (!res.ok) {
+    logger.warn("OpenAI chat error", { status: res.status, body: raw.slice(0, 500) });
+    const err = new Error(`OpenAI HTTP ${res.status}`);
+    err.status = res.status;
+    if (res.status === 429) err.code = "insufficient_quota";
+    throw err;
+  }
+  let data;
+  try {
+    data = JSON.parse(raw);
+  } catch (e) {
+    throw new Error("OpenAI: invalid JSON");
+  }
+  const content = data?.choices?.[0]?.message?.content;
+  if (!content || !String(content).trim()) return null;
+  return String(content).trim().slice(0, MAX_ANTWORT_CHARS);
+}
+
+function isOpenAiQuotaError(err) {
+  return err?.code === "insufficient_quota" || err?.status === 429;
+}
+
+module.exports = {
+  isLlmEnabled,
+  isLlmRulesFirst,
+  isOpenAiQuotaError,
+  naturalLanguageToCommand,
+  generalChatReply,
+};
+

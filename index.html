@@ -319,6 +319,7 @@
       </div>
 
       <div class="kalender-panel hidden" id="tabAufgaben" data-wg-only>
+        <div class="gustav-hub" id="gustavHubPanel" aria-live="polite"></div>
         <p class="giess-hint">Gemeinsame To-do-Liste für alle: fällig ab Datum, optional wiederkehrend mit <strong>Reihenfolge &amp; Tausch</strong> und Verlauf (wie Garten To-Do).</p>
         <div class="gartentodo-grid aufgaben-grid" id="aufgabenGrid"></div>
         <details class="admin-toggle" data-wg-only open>
@@ -487,6 +488,12 @@
 
       <div class="kalender-panel hidden" id="tabJacuzzi">
         <div class="jacuzzi-hero jacuzzi-kalender" id="jacuzziHeroWidget" aria-live="polite"></div>
+        <div class="jacuzzi-measure-row hidden" id="jacuzziMeasureRow" data-wg-only>
+          <button type="button" class="btn btn-primary" id="jacuzziMeasureNowBtn">📡 Jetzt messen</button>
+          <p class="form-note jacuzzi-measure-hint" id="jacuzziMeasureHint">
+            Zuerst in der <strong>Blue Connect App</strong> am Jacuzzi messen (Bluetooth), dann hier tippen – Gustav lädt die Werte aus der Cloud.
+          </p>
+        </div>
         <div class="jacuzzi-whatsapp-opt hidden" id="jacuzziWhatsappOpt" data-wg-only>
           <label class="jacuzzi-whatsapp-label">
             <input type="checkbox" id="jacuzziWhatsappCheckbox" disabled />
@@ -728,8 +735,49 @@
               <input id="profilePhone" type="tel" maxlength="20" placeholder="+41 79 123 45 67" autocomplete="tel" />
               <p class="form-note" style="font-size:0.8rem;margin-top:4px;">Nur für WG-Mitglieder sichtbar. Für Giessplan-Erinnerungen etc.</p>
             </div>
+            <div class="field">
+              <label for="profileBirthDate">🎂 Geburtstag (MM-TT oder JJJJ-MM-TT)</label>
+              <input id="profileBirthDate" type="text" maxlength="12" placeholder="z. B. 15.03 oder 1990-03-15" />
+            </div>
             <button type="submit" class="btn btn-primary">Profil speichern</button>
           </form>
+        </div>
+
+        <div class="settings-card" id="einkaufslisteCard" data-wg-only>
+          <h3>🛒 Einkaufsliste</h3>
+          <p class="form-note" style="margin-bottom:8px;">Auch per WhatsApp: «Pfeffer auf die Liste», «Was fehlt?», «Pfeffer erledigt»</p>
+          <form id="einkaufslisteForm" class="einkaufsliste-form inline">
+            <input id="einkaufslisteInput" placeholder="z. B. Pfeffer" maxlength="80" required />
+            <button type="submit" class="btn btn-primary small">Hinzufügen</button>
+          </form>
+          <div id="einkaufslisteList"></div>
+        </div>
+
+        <div class="settings-card" id="hausWikiCard" data-wg-only>
+          <h3>📖 Haus-Wiki</h3>
+          <p class="form-note" style="margin-bottom:10px;">Gustav kennt diese Infos – oder frag per WhatsApp: «WLAN?», «Müll?»</p>
+          <div id="hausWikiList" class="haus-wiki-grid"></div>
+        </div>
+
+        <div class="settings-card" id="deinTagSettingsCard" data-wg-only>
+          <h3>☀️ Dein Tag (WhatsApp)</h3>
+          <p class="form-note" style="margin-bottom:10px;">
+            Persönliche Morgen-Zusammenfassung: Wetter, Aufgaben, Events. Gustav schickt sie nur an deine Nummer.
+          </p>
+          <label class="jacuzzi-whatsapp-label">
+            <input type="checkbox" id="deinTagEnabledCheckbox" disabled />
+            <span>Dein Tag aktivieren</span>
+          </label>
+          <div class="field" style="margin-top:10px;">
+            <label for="deinTagCadenceSelect">Turnus</label>
+            <select id="deinTagCadenceSelect" disabled>
+              <option value="daily">Täglich (7:30)</option>
+              <option value="weekdays">Werktags</option>
+              <option value="weekly">Wöchentlich (Montag)</option>
+              <option value="every2days">Alle 2 Tage</option>
+            </select>
+          </div>
+          <p class="form-note" id="deinTagSettingsHint" style="margin-top:8px;"></p>
         </div>
 
         <div class="settings-card">

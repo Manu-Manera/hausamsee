@@ -18,10 +18,11 @@
  *  (case-insensitive). In Privatchats reagiert er immer.
  *  Optional: OPENAI_API_KEY → LLM interpretiert Nachrichten zuerst (Kontext → Befehl), dann
  *  regelbasiert; GUSTAV_LLM_RULES_FIRST=1 kehrt die Reihenfolge um.
+ *  Mit OPENAI_API_KEY ist Gustav auch ChatGPT-ähnlicher Assistent (Chat-Verlauf pro Nummer).
  */
 
 const { onRequest } = require("firebase-functions/v2/https");
-const { onDocumentCreated } = require("firebase-functions/v2/firestore");
+const { onDocumentCreated, onDocumentUpdated } = require("firebase-functions/v2/firestore");
 const { onSchedule } = require("firebase-functions/v2/scheduler");
 const { setGlobalOptions } = require("firebase-functions/v2");
 const { initializeApp } = require("firebase-admin/app");
@@ -33,6 +34,14 @@ const logger = require("firebase-functions/logger");
 const PLUG_PROVIDER = (process.env.PLUG_PROVIDER || "tuya").toLowerCase();
 const plugs = require(PLUG_PROVIDER === "meross" ? "./meross" : "./tuya");
 const llmRouter = require("./llmRouter");
+const chatHistory = require("./chatHistory");
+const tasksOverview = require("./tasksOverview");
+const deinTag = require("./deinTag");
+const einkaufsliste = require("./einkaufsliste");
+const hausWiki = require("./hausWiki");
+const birthdays = require("./birthdays");
+const gustavExtras = require("./gustavExtras");
+const { saturday10Iso } = require("./calendarIcs");
 const blueriiot = require("./blueriiot");
 
 initializeApp();
@@ -223,6 +232,49 @@ async function sendWhatsApp(to, text, phoneIdOpt) {
 }
 
 /** WhatsApp Interactive Reply Buttons (max. 3, Titel je max. 20 Zeichen). */
+/** WhatsApp CTA-URL-Button (öffnet Link, z. B. Google Calendar). */
+async function sendWhatsAppCtaUrl(to, { body, displayText, url, footer }, phoneIdOpt) {
+  const { token } = cfg();
+  const phoneId = await resolveWhatsAppPhoneId(phoneIdOpt);
+  if (!token || !phoneId || !url) {
+    return { ok: false, reason: "no_token_or_phone_id_or_url" };
+  }
+  const apiUrl = `https://graph.facebook.com/v20.0/${phoneId}/messages`;
+  const interactive = {
+    type: "cta_url",
+    body: { text: String(body || "").slice(0, 1024) },
+    action: {
+      name: "cta_url",
+      parameters: {
+        display_text: String(displayText || "Öffnen").slice(0, 20),
+        url: String(url).slice(0, 2000),
+      },
+    },
+  };
+  if (footer) interactive.footer = { text: String(footer).slice(0, 60) };
+  try {
+    const res = await fetch(apiUrl, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+      body: JSON.stringify({
+        messaging_product: "whatsapp",
+        to,
+        type: "interactive",
+        interactive,
+      }),
+    });
+    const bodyText = await res.text().catch(() => "");
+    if (!res.ok) {
+      logger.warn("sendWhatsAppCtaUrl failed", { status: res.status, body: bodyText.slice(0, 300) });
+      return { ok: false, status: res.status, error: bodyText };
+    }
+    return { ok: true };
+  } catch (e) {
+    logger.error("sendWhatsAppCtaUrl", e);
+    return { ok: false, reason: "fetch_failed" };
+  }
+}
+
 async function sendWhatsAppInteractiveButtons(to, { body, footer, buttons }, phoneIdOpt) {
   const { token } = cfg();
   const phoneId = await resolveWhatsAppPhoneId(phoneIdOpt);
@@ -327,6 +379,24 @@ function resolveResident(input, onlyAdults = false) {
   if (starts) return starts;
   const contains = pool.find((n) => n.toLowerCase().includes(needle));
   return contains || null;
+}
+
+async function updateMemberPrefField(name, fields) {
+  if (!name || !ADULTS.includes(name)) return;
+  await db.collection("config").doc("memberPrefs").set(
+    { [name]: { ...fields, updatedAt: FieldValue.serverTimestamp() } },
+    { merge: true }
+  );
+}
+
+async function getMemberPrefs(name) {
+  try {
+    const snap = await db.collection("config").doc("memberPrefs").get();
+    const data = snap.exists ? snap.data() : {};
+    return name ? data[name] || {} : data;
+  } catch {
+    return {};
+  }
 }
 
 /** Speichert WhatsApp-Nummer eines Bewohners für spätere proaktive Nachrichten */
@@ -1471,9 +1541,47 @@ function isPumpListCommand(raw) {
   return /^(pumpen?|pumps?|pompes?|steckdosen|smartplugs?|plugs?|prises?|bewässerung|bewaesserung)\s*(?:status|liste|list|\?)?\s*[?.!]*$/i.test(String(raw).trim());
 }
 
-// Wetter-Befehl erkennen (DE/EN/FR)
+// Wetter-Befehl erkennen (DE/EN/FR) – auch natürliche Fragen
 function isWetterCommand(raw) {
-  return /^(wetter|weather|meteo|wie\s+ist\s+(das\s+)?wetter|what'?s?\s+the\s+weather|quel\s+temps|regnet\s+es|is\s+it\s+raining|il\s+pleut|sonne|sun|soleil)\s*[?.!]*$/i.test(String(raw).trim());
+  const s = String(raw || "").trim();
+  if (!s) return false;
+  const low = s.toLowerCase();
+  if (
+    /^(wetter|weather|meteo|wie\s+ist\s+(das\s+)?wetter|wie\s+wird\s+(das\s+)?wetter|what'?s?\s+the\s+weather|how'?s?\s+the\s+weather|quel\s+temps|regnet\s+es|is\s+it\s+raining|il\s+pleut|sonne|sun|soleil|wettervorhersage|forecast)\s*[?.!]*$/i.test(s)
+  ) {
+    return true;
+  }
+  return (
+    /\b(wetter|weather|meteo|regen|rain|forecast|vorhersage|temperatur|grad)\b/i.test(low) &&
+    /\b(wie|was|wird|how|what|quel|morgen|heute|weekend|wochenende)\b/i.test(low)
+  );
+}
+
+function isMieteQuery(raw) {
+  const s = String(raw || "").trim();
+  const low = s.toLowerCase();
+  return (
+    /\b(wie\s+hoch|was\s+kostet|how\s+much|combien)\b.*\b(miete|rent|loyer)\b/i.test(s) ||
+    /\b(miete|rent|loyer)\s*(kosten?|preis|höhe|hohe)?\s*\??$/i.test(low) ||
+    /\b(zimmerpreis|wg[- ]?miete)\b/i.test(low)
+  );
+}
+
+async function buildMieteReply() {
+  try {
+    const snap = await db.doc("config/roomOffer").get();
+    const ro = snap.exists ? snap.data() : null;
+    if (ro?.miete) {
+      const bits = [`💰 *Zimmer-Miete:* ${ro.miete}`];
+      if (ro.groesse) bits.push(`📐 ${ro.groesse}`);
+      if (ro.freiAb) bits.push(`📅 Frei ab ${ro.freiAb}`);
+      bits.push("", `🌐 ${WEBSITE_URL}/#zimmer`);
+      return bits.join("\n");
+    }
+  } catch (e) {
+    logger.warn("buildMieteReply", e);
+  }
+  return null;
 }
 
 /** Nächster Soll-Giesstermin (wie Scheduler), nur Datum 0:00 lokal. */
@@ -2260,7 +2368,7 @@ async function createWellnessBooking({ resource, who, startAt, endAt, title, cre
   return { id: ref.id, ...entry };
 }
 
-function parseWellnessQuery(raw) {
+function parseWellnessQuery(raw, history) {
   const s = String(raw || "").trim();
   const low = s.toLowerCase();
   if (isWellnessBookingIntent(s)) return null;
@@ -2275,9 +2383,33 @@ function parseWellnessQuery(raw) {
     /^jacuzzi\s*\??$/i.test(low) ||
     /^whirlpool\s*\??$/i.test(low) ||
     /^hot\s*tub\s*\??$/i.test(low) ||
-    /^jacuzzi\s*(?:status|info|übersicht|uebersicht)\s*\??$/i.test(low)
+    /^jacuzzi\s*(?:status|info|übersicht|uebersicht)\s*\??$/i.test(low) ||
+    /\b(wasserqualit[aä]t|wasser\s*qualit[aä]t)\b/i.test(s) ||
+    /\bwie\s+ist\s+(die\s+)?wasser/i.test(low) ||
+    /\b(wasserqualit|ph|chlorgehalt|chlor\s*gehalt|orp|blue\s*connect)\b.*\b(jacuzzi|whirlpool|pool)\b/i.test(s) ||
+    /\b(jacuzzi|whirlpool|pool)\b.*\b(wasserqualit|ph|chlorgehalt|chlor|orp)\b/i.test(s) ||
+    /\b(water\s*quality|chlorine\s*level|how\s+is\s+the\s+water)\b/i.test(low) ||
+    /\b(qualit[eé]\s+(de\s+l[''])?eau|chlore|ph)\b.*\b(jacuzzi|spa)\b/i.test(low)
   ) {
     return { type: "jacuzzi_status" };
+  }
+  const recent = (history || [])
+    .slice(-4)
+    .map((m) => String(m?.content || ""))
+    .join(" ")
+    .toLowerCase();
+  const jacuzziCtx = /\b(jacuzzi|whirlpool|hot\s*tub|wasserqualit|🛁)\b/i.test(recent);
+  if (jacuzziCtx) {
+    if (/\b(wasserqualit|wasser\s*qualit|ph|chlor|chlorgehalt|orp|blue\s*connect)\b/i.test(low)) {
+      return { type: "jacuzzi_status" };
+    }
+    if (/\b(wie\s+ist|wie\s+sieht|und\s+die|what\s+about|how\s+about)\b/i.test(low) &&
+        /\b(wasser|qualit|temp|temperatur|warm)\b/i.test(low)) {
+      if (/\b(warm|temperatur|temp|heiss|heiß)\b/i.test(low) && !/\b(wasserqualit|ph|chlor)\b/i.test(low)) {
+        return { type: "jacuzzi_warm" };
+      }
+      return { type: "jacuzzi_status" };
+    }
   }
   for (const key of ["kino", "sauna", "jacuzzi"]) {
     if (
@@ -2329,11 +2461,19 @@ function parsePollStartCommand(raw) {
   const title = parts[0];
   if (!title) return null;
   const whenLabel = parts[1] || "";
+  let deadlineLabel = "";
+  for (let i = 2; i < parts.length; i++) {
+    const p = parts[i];
+    if (!p) continue;
+    const pl = p.toLowerCase();
+    if (pl === "text" || pl === "buttons" || pl === "button") continue;
+    if (/\bbis\b/i.test(p)) deadlineLabel = p.trim();
+  }
   const modePart = (parts[2] || "").toLowerCase();
   if (modePart === "text") mode = "text";
   if (modePart === "buttons" || modePart === "button") mode = "buttons";
   const question = whenLabel ? `${title} ${whenLabel}?` : `${title}?`;
-  return { title, whenLabel, mode, question };
+  return { title, whenLabel, mode, question, deadlineLabel };
 }
 
 function parsePollStatusCommand(raw) {
@@ -2422,6 +2562,9 @@ function buildPollSummary(poll) {
     modeHint,
     `\n🌐 ${WEBSITE_URL}/#events`,
   ];
+  if (poll.closesAt) {
+    lines.splice(3, 0, `⏰ Antworten bis ${fmtDateTime(poll.closesAt)}`);
+  }
   return lines.filter((x) => x !== "").join("\n");
 }
 
@@ -2442,10 +2585,26 @@ async function recordPollResponse(pollId, from, senderName, choice) {
   return { poll, name, choice };
 }
 
+function parsePollClosesAt(deadlineLabel) {
+  const s = String(deadlineLabel || "").trim();
+  if (!s) return null;
+  const { date, cleaned } = extractDate(s);
+  if (!date) return null;
+  const y = date.getUTCFullYear();
+  const mo = date.getUTCMonth() + 1;
+  const da = date.getUTCDate();
+  const { hh, mi } = extractTime(cleaned);
+  const h = hh === null ? 23 : hh;
+  const min = mi === null && hh === null ? 59 : mi;
+  const dUtc = zurichWallToUtcDate(y, mo, da, h, min);
+  return dUtc.toISOString();
+}
+
 async function startPoll(opts) {
-  const { title, whenLabel, question, mode, from, organizerName, phoneId } = opts;
+  const { title, whenLabel, question, mode, from, organizerName, phoneId, deadlineLabel } = opts;
   const ref = db.collection("polls").doc();
   const eventDate = inferPollEventDate(whenLabel);
+  const closesAt = parsePollClosesAt(deadlineLabel);
   const eventId = await createEvent(
     {
       title,
@@ -2466,6 +2625,7 @@ async function startPoll(opts) {
     organizerName: organizerName || "",
     createdAt: FieldValue.serverTimestamp(),
     responses: {},
+    ...(closesAt ? { closesAt } : {}),
   };
   await ref.set(poll);
   const pollId = ref.id;
@@ -2473,10 +2633,11 @@ async function startPoll(opts) {
   const targets = recipients.length ? [...new Set(recipients)] : [from];
   const orgLabel = organizerName ? ` von *${organizerName}*` : "";
   const whenLine = whenLabel ? `\n📅 ${whenLabel}` : "";
+  const deadlineLine = closesAt ? `\n⏰ Antworten bis ${fmtDateTime(closesAt)}` : "";
   const linkLine = `\n\n🌐 ${WEBSITE_URL}/#events`;
 
   if (mode === "buttons") {
-    const body = `📊 *Umfrage${orgLabel}*\n\n${poll.question}${whenLine}\n\nTippt einen Button 👇`;
+    const body = `📊 *Umfrage${orgLabel}*\n\n${poll.question}${whenLine}${deadlineLine}\n\nTippt einen Button 👇`;
     for (const to of targets) {
       await sendWhatsAppInteractiveButtons(
         to,
@@ -2496,7 +2657,7 @@ async function startPoll(opts) {
   }
 
   const text =
-    `📊 *Umfrage${orgLabel}*\n\n*${poll.question}*${whenLine}\n\n` +
+    `📊 *Umfrage${orgLabel}*\n\n*${poll.question}*${whenLine}${deadlineLine}\n\n` +
     `Antwortet mit:\n✅ *Ja ${title}*\n❌ *Nein ${title}*\n🤔 *Vielleicht ${title}*` +
     linkLine;
   for (const to of targets) {
@@ -2527,6 +2688,62 @@ async function handlePollButtonReply(ctx) {
   const label = choice.charAt(0).toUpperCase() + choice.slice(1);
   await reply(`${emoji} Notiert: *${label}* für *${result.poll.title}*`);
   return true;
+}
+
+async function handleRemindButtonReply(ctx) {
+  const { from, buttonId, reply } = ctx;
+  const m = String(buttonId || "").match(/^remind_([a-f0-9]+)$/i);
+  if (!m) return false;
+  const pending = await gustavExtras.consumeRemindButtonToken(db, m[1]);
+  if (!pending) {
+    await reply("🤷 Diese Erinnerung ist abgelaufen – schreib *Meine Aufgaben?* neu.");
+    return true;
+  }
+  const owner = String(from || "").replace(/\D/g, "");
+  if (pending.from && owner && pending.from !== owner) {
+    await reply("🔒 Diese Erinnerung gehört einem anderen Chat.");
+    return true;
+  }
+  await addErinnerung({ date: pending.date, text: pending.text }, from);
+  await reply(`🔔 Erinnerung gesetzt für ${fmtDateTime(pending.date)}:\n*${pending.text}*`);
+  return true;
+}
+
+async function buildDeinTagPreview(resident, from) {
+  let weatherLine = null;
+  try {
+    const w = await fetchCurrentWeather();
+    weatherLine = formatWeatherText(w, "de").split("\n").slice(0, 2).join("\n");
+  } catch {
+    /* optional */
+  }
+  let tasksSnippet = "_nichts Fälliges_";
+  try {
+    const tr = await tasksOverview.buildTasksOverviewReply({ db, resident, from, scope: "mine" });
+    const lines = tr.text.split("\n").filter((l) => /^[•🔥📅⏭️]/.test(l) || l.startsWith("   _"));
+    if (lines.length) tasksSnippet = lines.slice(0, 8).join("\n");
+  } catch {
+    /* optional */
+  }
+  const events = await listUpcomingEvents(3);
+  let wellnessLine = null;
+  try {
+    const kino = await buildWellnessFreiReply("kino");
+    wellnessLine = String(kino || "").split("\n")[0];
+  } catch {
+    /* optional */
+  }
+  const { data } = await getAnwesenheit();
+  const da = ADULTS.filter((n) => data[n] === "da");
+  const anwLine = da.length ? `🏠 Wochenende: ${da.join(", ")} da` : null;
+  return deinTag.buildDeinTagMessage({
+    resident,
+    weatherLine,
+    tasksText: tasksSnippet,
+    events,
+    wellnessLine,
+    anwesenheitLine: anwLine,
+  });
 }
 
 async function listOffeneSchaeden(limit = 10) {
@@ -2708,7 +2925,14 @@ const HELP_TEXT =
   `📅 "Events"\n\n` +
   `*Aufgaben (Putz & Haus)*\n` +
   `➕ "Putz: Manu 20.4. Küche"\n` +
-  `📋 "Wer putzt?"\n\n` +
+  `📋 "Wer putzt?" · "Meine Aufgaben?" (deine To-dos) · "Aufgaben?" (WG-Übersicht)\n` +
+  `☀️ "Dein Tag an" / "Dein Tag werktags" / "Dein Tag aus" (Morgen-Zusammenfassung)\n` +
+  `🛒 "Pfeffer auf die Liste" · "Was fehlt?" · "Pfeffer erledigt"\n` +
+  `🥗 "Mitbringen Spieleabend: Salat" · "Wer bringt was Spieleabend?"\n` +
+  `🎬 "Kino heute Avatar"\n` +
+  `🚪 "Bewerber Lisa" · "Bewerber Status Lisa: eingeladen"\n` +
+  `📊 "Umfrage: Titel | morgen | bis Donnerstag"\n` +
+  `📖 "WLAN?" · "Müll?" (Haus-Wiki)\n\n` +
   `*Garten To-Do / Giessplan (Website WG-Kalender)*\n` +
   `🌿 "garten erledigt" / "garten erledigt Rasen hinten"\n` +
   `💧 "gegossen" / "gegossen Wohnzimmer"\n\n` +
@@ -2909,6 +3133,15 @@ async function dispatch(ctx) {
   // 0) Hilfe-Befehl → wird vom LLM behandelt (erkennt Sprache automatisch)
   //    Nicht mehr regelbasiert, damit das LLM in der richtigen Sprache antworten kann
 
+  // 0.4) Miete / Zimmerpreis (Website-Inserat)
+  if (isMieteQuery(rawInput)) {
+    const mieteText = await buildMieteReply();
+    if (mieteText) {
+      await reply(mieteText);
+      return true;
+    }
+  }
+
   // 0.5) Wetter-Befehl
   if (isWetterCommand(rawInput)) {
     try {
@@ -2920,6 +3153,111 @@ async function dispatch(ctx) {
       logger.error("Wetter-Abfrage fehlgeschlagen", e);
       await reply("🌡️ Ups, konnte das Wetter gerade nicht abrufen. Versuch's später nochmal!");
     }
+    return true;
+  }
+
+  // 0.55) Haus-Wiki (WLAN, Müll, Notfall, …)
+  const wikiQ = hausWiki.parseWikiQuery(rawInput);
+  if (wikiQ) {
+    const wikiText = await hausWiki.buildWikiReply(db, wikiQ);
+    if (wikiText) {
+      await reply(wikiText);
+      return true;
+    }
+  }
+
+  // 0.56) Dein Tag – Einstellungen / Vorschau
+  const deinTagCmd = deinTag.parseDeinTagSettingsCommand(rawInput);
+  if (deinTagCmd) {
+    const resident = await resolveResidentFromWhatsApp(from, senderName);
+    if (!resident) {
+      await reply("🤷 Dich konnte ich nicht zuordnen – Nummer im WG-Profil hinterlegen.");
+      return true;
+    }
+    if (deinTagCmd.action === "off") {
+      await updateMemberPrefField(resident, { deinTag: { enabled: false, cadence: "daily" } });
+      await reply("☀️ *Dein Tag* ist aus. Schreib *Dein Tag an* zum Aktivieren.");
+      return true;
+    }
+    if (deinTagCmd.action === "on") {
+      const cadence = deinTag.normalizeCadence(deinTagCmd.cadence);
+      await updateMemberPrefField(resident, { deinTag: { enabled: true, cadence } });
+      await reply(`☀️ *Dein Tag* ist an – ${deinTag.cadenceLabel(cadence)}.`);
+      return true;
+    }
+    if (deinTagCmd.action === "status") {
+      const prefs = await getMemberPrefs(resident);
+      const dt = prefs.deinTag || {};
+      const on = dt.enabled ? `an (${deinTag.cadenceLabel(deinTag.normalizeCadence(dt.cadence))})` : "aus";
+      await reply(`☀️ *Dein Tag:* ${on}\n\n*Dein Tag an* · *täglich* · *werktags* · *wöchentlich* · *alle 2 Tage* · *aus*`);
+      return true;
+    }
+    if (deinTagCmd.action === "preview") {
+      const text = await buildDeinTagPreview(resident, from);
+      await reply(text);
+      return true;
+    }
+  }
+
+  // 0.57) Einkaufsliste
+  const einkauf = einkaufsliste.parseEinkaufCommand(rawInput);
+  if (einkauf) {
+    const who = (await resolveResidentFromWhatsApp(from, senderName)) || senderName || "";
+    if (einkauf.action === "list") {
+      const items = await einkaufsliste.listOpenItems(db);
+      await reply(einkaufsliste.formatListReply(items));
+      return true;
+    }
+    if (einkauf.action === "add") {
+      const r = await einkaufsliste.addItem(db, einkauf.item, who);
+      if (r?.duplicate) await reply(`🛒 *${r.item.item}* steht schon auf der Liste.`);
+      else await reply(`🛒 *${einkauf.item}* auf die Einkaufsliste – danke ${who}!`);
+      return true;
+    }
+    if (einkauf.action === "done") {
+      const r = await einkaufsliste.markItemDone(db, einkauf.item, who);
+      if (!r.found) await reply(`🤷 «${einkauf.item}» nicht auf der offenen Liste.`);
+      else await reply(`✅ *${r.item}* – erledigt!`);
+      return true;
+    }
+    if (einkauf.action === "remove") {
+      const r = await einkaufsliste.removeItem(db, einkauf.item);
+      if (!r.found) await reply(`🤷 «${einkauf.item}» nicht gefunden.`);
+      else await reply(`🗑️ *${r.item}* von der Liste entfernt.`);
+      return true;
+    }
+  }
+
+  // 0.58) Kino heute FILM
+  const kinoHeute = gustavExtras.parseKinoHeuteCommand(rawInput);
+  if (kinoHeute) {
+    const resident = await resolveResidentFromWhatsApp(from, senderName);
+    const who = resident || senderName || "Gast";
+    const conflict = await findWellnessBookingConflict("kino", kinoHeute.startAt.getTime(), kinoHeute.endAt.getTime());
+    if (conflict) {
+      await reply(`🎬 Kino ist belegt (${conflict.who}${conflict.title ? ` · ${conflict.title}` : ""}).`);
+      return true;
+    }
+    await createWellnessBooking({
+      resource: "kino",
+      who,
+      title: kinoHeute.title,
+      startAt: kinoHeute.startAt.toISOString(),
+      endAt: kinoHeute.endAt.toISOString(),
+      createdBy: from,
+    });
+    await reply(
+      `🎬 *Kino heute:* ${kinoHeute.title}\n👤 ${who}\n🕗 ${fmtTimeZurich(kinoHeute.startAt)} – ${fmtTimeZurich(kinoHeute.endAt)}\n\n${WEBSITE_URL}/#kalender`
+    );
+    return true;
+  }
+
+  // 0.59) Geburtstag eintragen
+  const residentForBday = await resolveResidentFromWhatsApp(from, senderName);
+  const bdaySet = birthdays.parseBirthdaySetCommand(rawInput, residentForBday);
+  if (bdaySet) {
+    await updateMemberPrefField(bdaySet.resident, { birthDate: bdaySet.birthDate });
+    await reply(`🎂 Geburtstag gespeichert: *${bdaySet.birthDate}* – die WG bekommt eine Erinnerung!`);
     return true;
   }
 
@@ -3157,7 +3495,48 @@ async function dispatch(ctx) {
     return true;
   }
 
-  // 12a) Bewerber auflisten
+  // 11e) Wer bringt was / Mitbringen
+  const bring = gustavExtras.parseBringCommand(rawInput);
+  if (bring) {
+    const ev = await findEventByTitle(bring.eventHint);
+    if (!ev) {
+      await reply(`🤷 Kein Event zu «${bring.eventHint}» – erst Event anlegen oder Titel prüfen.`);
+      return true;
+    }
+    const who = (await resolveResidentFromWhatsApp(from, senderName)) || senderName || "Gast";
+    if (bring.action === "add") {
+      await gustavExtras.addBringItem(db, {
+        eventId: ev.id,
+        eventTitle: ev.title,
+        who,
+        item: bring.item,
+      });
+      await reply(`🥗 Notiert: *${who}* bringt *${bring.item}* zu *${ev.title}*.`);
+      return true;
+    }
+    const items = await gustavExtras.listBringItems(db, ev.id);
+    await reply(gustavExtras.formatBringList(ev.title, items));
+    return true;
+  }
+
+  // 12a) Bewerber Status / Einzelperson
+  const bewStatus = gustavExtras.parseBewerberStatusCommand(rawInput);
+  if (bewStatus) {
+    const k = await findKandidatByName(bewStatus.name);
+    if (!k) {
+      await reply(`🤷 Keine:r Bewerber:in «${bewStatus.name}» gefunden.`);
+      return true;
+    }
+    if (bewStatus.action === "set") {
+      await db.collection("kandidaten").doc(k.id).update({ status: bewStatus.status });
+      await reply(`🚪 *${k.name}* → ${gustavExtras.STATUS_LABEL[bewStatus.status] || bewStatus.status}`);
+      return true;
+    }
+    await reply(gustavExtras.formatBewerberDetail(k));
+    return true;
+  }
+
+  // 12b) Bewerber auflisten
   if (isBewerberListCommand(rawInput)) {
     const items = await listOffeneKandidaten(15);
     if (!items.length) {
@@ -3473,8 +3852,52 @@ async function dispatch(ctx) {
     return true;
   }
 
+  // 13b2) Meine Aufgaben / WG-Aufgaben (Giessplan, Garten, Putz, Schäden, Erinnerungen)
+  const tasksQ = tasksOverview.parseMyTasksQuery(rawInput);
+  if (tasksQ) {
+    const scope = tasksQ.scope;
+    const resident =
+      scope === "mine" ? await resolveResidentFromWhatsApp(from, senderName) : null;
+    const result = await tasksOverview.buildTasksOverviewReply({ db, resident, from, scope });
+    await reply(result.text);
+    if (result.calendar?.googleUrl) {
+      const cta = await sendWhatsAppCtaUrl(
+        from,
+        {
+          body: `📅 *Samstag ${result.calendar.label}*, 10:00 Uhr – deine Aufgaben als Kalender-Termin:`,
+          displayText: "📅 Samstag eintragen",
+          url: result.calendar.googleUrl,
+          footer: "Haus am See",
+        },
+        replyPhoneId
+      );
+      if (!cta.ok && result.calendar.icsUrl) {
+        await reply(`📅 Kalender (iPhone/Mac): ${result.calendar.icsUrl}`);
+      }
+    }
+    if (result.remind?.taskTitle && result.remind.saturday) {
+      const dateIso = saturday10Iso(new Date(result.remind.saturday));
+      const token = await gustavExtras.createRemindButtonToken(db, {
+        from,
+        text: result.remind.taskTitle,
+        dateIso,
+        resident: resident || "",
+      });
+      await sendWhatsAppInteractiveButtons(
+        from,
+        {
+          body: `🔔 Soll ich dich auf WhatsApp erinnern?\n*${result.remind.taskTitle}* – Samstag 10:00`,
+          footer: "Gustav",
+          buttons: [{ id: `remind_${token}`, title: "🔔 Ja, erinnern" }],
+        },
+        replyPhoneId
+      );
+    }
+    return true;
+  }
+
   // 13c) Wellness: Jacuzzi warm / Sauna·Kino·Jacuzzi frei?
-  const wellnessQ = parseWellnessQuery(rawInput);
+  const wellnessQ = parseWellnessQuery(rawInput, ctx.history);
   if (wellnessQ) {
     if (wellnessQ.type === "jacuzzi_status") {
       await reply(await buildJacuzziFullReply());
@@ -3758,6 +4181,14 @@ exports.whatsappWebhook = onRequest(
               });
               if (handledPoll) continue;
             }
+            if (buttonReplyId && String(buttonReplyId).startsWith("remind_")) {
+              const handledRemind = await handleRemindButtonReply({
+                from,
+                buttonId: buttonReplyId,
+                reply: answer,
+              });
+              if (handledRemind) continue;
+            }
             text = msg.interactive?.button_reply?.title || msg.interactive?.list_reply?.title || "";
           }
           else if (type === "audio") text = "[Sprachnachricht]";
@@ -3828,14 +4259,23 @@ exports.whatsappWebhook = onRequest(
             continue;
           }
           
+          // Chat-Verlauf zurücksetzen (vor LLM)
+          if (!mediaId && /^(chat neu|neuer chat|forget|vergiss|reset chat|neustart)\b/i.test(String(effectiveText || "").trim())) {
+            await chatHistory.clearChatHistory(from);
+            await answer("🦆 Chat-Verlauf gelöscht – frisch gestartet! Frag mich einfach alles. 🧠✨");
+            continue;
+          }
+
           // LLM: nur Text; in Gruppen nur @gustav / @bot o. Standard: LLM **zuerst** (Kontext), dann regelbasiert.
           // Optional: GUSTAV_LLM_RULES_FIRST=1 → alte Reihenfolge.
           const allowLlm = !mediaId && (isPrivate || mention.addressed);
           const useLlm = allowLlm && llmRouter.isLlmEnabled();
           const rulesFirst = llmRouter.isLlmRulesFirst();
+          const history = useLlm ? await chatHistory.loadChatHistory(from) : [];
 
           let plan = { command: null, antwort: null };
           let handled = false;
+          let chatReplyText = null;
 
           if (mediaId) {
             handled = await dispatch({
@@ -3845,15 +4285,17 @@ exports.whatsappWebhook = onRequest(
               caption: effectiveCaption,
               mediaId,
               phoneId: replyPhoneId,
+              history,
             });
           } else if (useLlm && !rulesFirst) {
             try {
-              plan = await llmRouter.naturalLanguageToCommand(effectiveText, { senderName });
+              plan = await llmRouter.naturalLanguageToCommand(effectiveText, { senderName, history });
               await debugLog("llm_interpret", {
                 from,
                 order: "llm_first",
                 hasCommand: !!plan.command,
                 hasAntwort: !!plan.antwort,
+                historyLen: history.length,
                 preview: JSON.stringify(plan).slice(0, 2000),
               });
               if (plan.command) {
@@ -3864,11 +4306,12 @@ exports.whatsappWebhook = onRequest(
                   caption: "",
                   mediaId: null,
                   phoneId: replyPhoneId,
+                  history,
                 });
               }
             } catch (llmErr) {
               logger.error("llm_interpret", llmErr);
-              await debugLog("llm_error", { error: String(llmErr?.message || llmErr) });
+              await debugLog("llm_error", { error: String(llmErr?.message || llmErr), code: llmErr?.code || null });
             }
             if (!handled) {
               handled = await dispatch({
@@ -3878,9 +4321,11 @@ exports.whatsappWebhook = onRequest(
                 caption: "",
                 mediaId: null,
                 phoneId: replyPhoneId,
+                history,
               });
             }
             if (!handled && plan.antwort) {
+              chatReplyText = plan.antwort;
               await answer(plan.antwort);
               handled = true;
             }
@@ -3892,15 +4337,17 @@ exports.whatsappWebhook = onRequest(
               caption: "",
               mediaId: null,
               phoneId: replyPhoneId,
+              history,
             });
             if (!handled) {
               try {
-                plan = await llmRouter.naturalLanguageToCommand(effectiveText, { senderName });
+                plan = await llmRouter.naturalLanguageToCommand(effectiveText, { senderName, history });
                 await debugLog("llm_interpret", {
                   from,
                   order: "rules_first",
                   hasCommand: !!plan.command,
                   hasAntwort: !!plan.antwort,
+                  historyLen: history.length,
                   preview: JSON.stringify(plan).slice(0, 2000),
                 });
                 if (plan.command) {
@@ -3911,9 +4358,11 @@ exports.whatsappWebhook = onRequest(
                     caption: "",
                     mediaId: null,
                     phoneId: replyPhoneId,
+                    history,
                   });
                 }
                 if (!handled && plan.antwort) {
+                  chatReplyText = plan.antwort;
                   await answer(plan.antwort);
                   handled = true;
                 }
@@ -3930,12 +4379,47 @@ exports.whatsappWebhook = onRequest(
               caption: "",
               mediaId: null,
               phoneId: replyPhoneId,
+              history,
             });
           }
 
+          let llmQuotaExhausted = false;
+
+          if (!handled && useLlm) {
+            try {
+              const chatReply = await llmRouter.generalChatReply(effectiveText, { senderName, history });
+              if (chatReply) {
+                chatReplyText = chatReply;
+                await answer(chatReply);
+                handled = true;
+                await debugLog("llm_chat_fallback", { from, preview: chatReply.slice(0, 200) });
+              }
+            } catch (chatErr) {
+              logger.error("llm_chat_fallback", chatErr);
+              await debugLog("llm_chat_error", { error: String(chatErr?.message || chatErr), code: chatErr?.code || null });
+              if (llmRouter.isOpenAiQuotaError(chatErr)) llmQuotaExhausted = true;
+            }
+          }
+
+          if (chatReplyText) {
+            await chatHistory.appendChatHistory(from, effectiveText, chatReplyText);
+          }
+
           if (!handled) {
-            await debugLog("no_match", { from, text: effectiveText });
-            await answer(HELP_TEXT);
+            await debugLog("no_match", { from, text: effectiveText, useLlm, llmQuotaExhausted });
+            if (llmQuotaExhausted) {
+              await answer(
+                "🦆 Mein *ChatGPT-Modus* ist offline – das OpenAI-Guthaben ist aufgebraucht.\n\n" +
+                  "Haus-Befehle gehen weiter: *Wetter*, *Meine Aufgaben?*, *Jacuzzi?*, *Wer putzt?* …\n\n" +
+                  "Oder *Hilfe* für die Liste."
+              );
+            } else {
+              await answer(
+                useLlm
+                  ? "🦆 Hmm, da bin ich gerade überfragt – versuch's nochmal oder schreib *Hilfe* für Haus-Befehle."
+                  : HELP_TEXT
+              );
+            }
           }
         }
       }
@@ -5216,6 +5700,84 @@ exports.checkBewaesserung = onSchedule(
    Scheduler: Daily Digest – Montag 8:00 in die WG-Gruppe(n)
    ========================================================================== */
 
+/* ==========================================================================
+   Scheduler: Dein Tag – persönliche Zusammenfassung (Opt-in)
+   ========================================================================== */
+
+exports.checkDeinTag = onSchedule(
+  { schedule: "every day 07:30", timeZone: "Europe/Zurich" },
+  async () => {
+    const prefsSnap = await db.collection("config").doc("memberPrefs").get();
+    const allPrefs = prefsSnap.exists ? prefsSnap.data() : {};
+    const now = new Date();
+    let sent = 0;
+    for (const name of ADULTS) {
+      const dt = allPrefs[name]?.deinTag;
+      if (!dt?.enabled) continue;
+      const cadence = deinTag.normalizeCadence(dt.cadence);
+      if (!deinTag.shouldSendDeinTagToday(cadence, now)) continue;
+      if (!deinTag.shouldSendDeinTagInterval(dt.lastSentAt, cadence, now)) continue;
+      const phone = await getBewohnerPhone(name);
+      if (!phone) continue;
+      const text = await buildDeinTagPreview(name, phone);
+      const ok = await sendWhatsApp(phone, text);
+      if (ok) {
+        sent++;
+        await updateMemberPrefField(name, {
+          deinTag: { ...dt, enabled: true, cadence, lastSentAt: now.toISOString() },
+        });
+      }
+    }
+    if (sent) logger.info(`Dein Tag: ${sent} Zusammenfassungen gesendet`);
+  }
+);
+
+/* ==========================================================================
+   Scheduler: Umfragen mit Deadline schliessen
+   ========================================================================== */
+
+exports.checkPollDeadlines = onSchedule(
+  { schedule: "every 30 minutes", timeZone: "Europe/Zurich" },
+  async () => {
+    const nowISO = new Date().toISOString();
+    const snap = await db.collection("polls").where("status", "==", "open").get();
+    for (const doc of snap.docs) {
+      const p = doc.data();
+      if (!p.closesAt || String(p.closesAt) > nowISO) continue;
+      await doc.ref.update({ status: "closed", closedAt: FieldValue.serverTimestamp() });
+      const summary = buildPollSummary({ ...p, status: "closed" });
+      const orgPhone = p.createdByPhone;
+      if (orgPhone) await sendWhatsApp(orgPhone, `⏰ *Umfrage geschlossen:* ${p.title}\n\n${summary}`);
+      logger.info(`Poll deadline closed: ${doc.id} ${p.title}`);
+    }
+  }
+);
+
+/* ==========================================================================
+   Scheduler: Geburtstage (morgen + heute)
+   ========================================================================== */
+
+exports.checkBirthdays = onSchedule(
+  { schedule: "every day 08:00", timeZone: "Europe/Zurich" },
+  async () => {
+    const prefsSnap = await db.collection("config").doc("memberPrefs").get();
+    const allPrefs = prefsSnap.exists ? prefsSnap.data() : {};
+    const now = new Date();
+    const year = +now.toLocaleDateString("en-CA", { timeZone: "Europe/Zurich", year: "numeric" });
+    for (const name of BEWOHNER) {
+      const bd = birthdays.parseBirthDate(allPrefs[name]?.birthDate);
+      if (!bd) continue;
+      const tomorrow = birthdays.isBirthdayOn(now, bd, 1);
+      const today = birthdays.isBirthdayOn(now, bd, 0);
+      if (!tomorrow && !today) continue;
+      const age = birthdays.ageTurning(bd, year + (tomorrow ? 1 : 0));
+      const msg = birthdays.buildBirthdayMessage(name, { tomorrow, age });
+      await broadcast(msg);
+      logger.info(`Birthday alert: ${name} ${tomorrow ? "tomorrow" : "today"}`);
+    }
+  }
+);
+
 exports.dailyDigest = onSchedule(
   { schedule: "every monday 08:00", timeZone: "Europe/Zurich" },
   async () => {
@@ -5550,81 +6112,164 @@ async function maybeSendJacuzziWaterAlerts(status, prev = {}) {
   await db.doc("config/jacuzzi").set(alertMeta, { merge: true });
 }
 
+/** Blue Riiot Cloud: letzte Messung holen und in Firestore schreiben. */
+async function runBlueriiotSyncOnce({ force = false } = {}) {
+  if (!blueriiot.blueriiotEnabled()) {
+    return { ok: false, reason: "disabled" };
+  }
+
+  let cached = {};
+  try {
+    const cfgSnap = await db.doc("config/blueriiot").get();
+    if (cfgSnap.exists) cached = cfgSnap.data() || {};
+  } catch (e) {
+    logger.warn("runBlueriiotSyncOnce: config/blueriiot", e?.message);
+  }
+
+  let reading;
+  try {
+    reading = await blueriiot.fetchLatestTemperature(cached);
+  } catch (e) {
+    logger.error("runBlueriiotSyncOnce: API", e?.message || e);
+    await db.doc("config/blueriiot").set(
+      { lastError: String(e.message || e), lastSyncAt: new Date().toISOString() },
+      { merge: true }
+    );
+    return { ok: false, reason: "api_error", error: String(e.message || e) };
+  }
+
+  if (!reading || Number.isNaN(reading.tempC)) {
+    logger.info("runBlueriiotSyncOnce: keine Temperatur");
+    return { ok: false, reason: "no_reading", releaseMeta: reading?.releaseMeta };
+  }
+
+  const prevSnap = await db.doc("config/jacuzzi").get();
+  const prev = prevSnap.exists ? prevSnap.data() : {};
+  const waterExtras = jacuzziMetricExtras(reading);
+  const sameTimestamp = prev.blueriiotMeasuredAt === reading.measuredAt;
+  const needsWaterUpdate = waterExtras.orp != null && prev.orp == null;
+  if (sameTimestamp && !needsWaterUpdate && !force) {
+    return { ok: true, unchanged: true, reading, prev };
+  }
+
+  const status = await persistJacuzziReading({
+    tempC: reading.tempC,
+    at: reading.measuredAt,
+    source: "blueriiot",
+    extras: {
+      blueriiotMeasuredAt: reading.measuredAt,
+      poolId: reading.poolId,
+      deviceSerial: reading.deviceSerial,
+      ...waterExtras,
+    },
+  });
+
+  await maybeSendJacuzziWaterAlerts(status, prev);
+
+  const blueriiotPatch = {
+    poolId: reading.poolId,
+    deviceSerial: reading.deviceSerial,
+    lastSyncAt: new Date().toISOString(),
+    lastMeasuredAt: reading.measuredAt,
+    lastTempC: reading.tempC,
+    lastError: null,
+  };
+  if (reading.releaseMeta) {
+    blueriiotPatch.lastReleaseEvent = {
+      ...reading.releaseMeta,
+      at: new Date().toISOString(),
+    };
+  }
+  await db.doc("config/blueriiot").set(blueriiotPatch, { merge: true });
+
+  logger.info(`Blue Riiot: ${reading.tempC}°C @ ${reading.measuredAt}`, reading.releaseMeta || {});
+  return { ok: true, unchanged: false, reading, status, prev };
+}
+
+function buildJacuzziMeasureStatusMessage(result) {
+  if (!result?.ok) {
+    if (result?.reason === "disabled") {
+      return "Blue Riiot-Sync ist auf dem Server deaktiviert.";
+    }
+    if (result?.reason === "api_error") {
+      return `API-Fehler: ${result.error || "unbekannt"}`;
+    }
+    if (result?.reason === "no_reading") {
+      return "Keine Messung gefunden – zuerst in der Blue Connect App messen (Bluetooth am Jacuzzi), dann erneut tippen.";
+    }
+    return "Messung fehlgeschlagen.";
+  }
+  const r = result.reading;
+  const parts = [`${Number(r.tempC).toFixed(1)} °C`];
+  if (r.ph?.value != null) parts.push(`pH ${Number(r.ph.value).toFixed(1)}`);
+  if (r.orp?.value != null) parts.push(`Chlor ${Math.round(Number(r.orp.value))} mV`);
+  if (result.unchanged) {
+    return `Keine neuere Messung als zuletzt (${parts.join(" · ")}). Bitte zuerst in Blue Connect messen.`;
+  }
+  return `Aktualisiert: ${parts.join(" · ")}`;
+}
+
+/** Website-Button «Jetzt messen»: measureRequest auf config/jacuzzi */
+exports.onJacuzziMeasureRequest = onDocumentUpdated("config/jacuzzi", async (event) => {
+  const before = event.data.before?.data()?.measureRequest;
+  const after = event.data.after?.data()?.measureRequest;
+  const beforeAt = before?.at?.toMillis?.() ?? before?.at ?? null;
+  const afterAt = after?.at?.toMillis?.() ?? after?.at ?? null;
+  if (!afterAt || beforeAt === afterAt) return;
+
+  const by = after.by || "";
+  const result = await runBlueriiotSyncOnce({ force: true });
+  const message = buildJacuzziMeasureStatusMessage(result);
+  const patch = {
+    measureRequestStatus: {
+      at: new Date().toISOString(),
+      by,
+      ok: !!result?.ok && !result?.unchanged,
+      unchanged: !!result?.unchanged,
+      message,
+      tempC: result?.reading?.tempC ?? null,
+      ph: result?.reading?.ph?.value ?? null,
+      orp: result?.reading?.orp?.value ?? null,
+    },
+  };
+  await event.data.after.ref.set(patch, { merge: true });
+  logger.info("onJacuzziMeasureRequest", { by, ok: patch.measureRequestStatus.ok, message });
+});
+
 /** Blue Riiot Cloud: alle 5 Min. letzte Messung → Website & Gustav */
 exports.syncBlueriiotJacuzzi = onSchedule(
   { schedule: "every 5 minutes", timeZone: "Europe/Zurich" },
   async () => {
-    if (!blueriiot.blueriiotEnabled()) return;
-
-    let cached = {};
-    try {
-      const cfgSnap = await db.doc("config/blueriiot").get();
-      if (cfgSnap.exists) cached = cfgSnap.data() || {};
-    } catch (e) {
-      logger.warn("syncBlueriiotJacuzzi: config/blueriiot", e?.message);
-    }
-
-    let reading;
-    try {
-      reading = await blueriiot.fetchLatestTemperature(cached);
-    } catch (e) {
-      logger.error("syncBlueriiotJacuzzi: API", e?.message || e);
-      await db.doc("config/blueriiot").set(
-        { lastError: String(e.message || e), lastSyncAt: new Date().toISOString() },
-        { merge: true }
-      );
-      return;
-    }
-
-    if (!reading || Number.isNaN(reading.tempC)) {
-      logger.info("syncBlueriiotJacuzzi: keine neue Temperatur");
-      return;
-    }
-
-    const prevSnap = await db.doc("config/jacuzzi").get();
-    const prev = prevSnap.exists ? prevSnap.data() : {};
-    const waterExtras = jacuzziMetricExtras(reading);
-    const sameTimestamp = prev.blueriiotMeasuredAt === reading.measuredAt;
-    const needsWaterUpdate = waterExtras.orp != null && prev.orp == null;
-    if (sameTimestamp && !needsWaterUpdate) {
-      return;
-    }
-
-    const status = await persistJacuzziReading({
-      tempC: reading.tempC,
-      at: reading.measuredAt,
-      source: "blueriiot",
-      extras: {
-        blueriiotMeasuredAt: reading.measuredAt,
-        poolId: reading.poolId,
-        deviceSerial: reading.deviceSerial,
-        ...waterExtras,
-      },
-    });
-
-    await maybeSendJacuzziWaterAlerts(status, prev);
-
-    const blueriiotPatch = {
-      poolId: reading.poolId,
-      deviceSerial: reading.deviceSerial,
-      lastSyncAt: new Date().toISOString(),
-      lastMeasuredAt: reading.measuredAt,
-      lastTempC: reading.tempC,
-      lastError: null,
-    };
-    if (reading.releaseMeta) {
-      blueriiotPatch.lastReleaseEvent = {
-        ...reading.releaseMeta,
-        at: new Date().toISOString(),
-      };
-    }
-    await db.doc("config/blueriiot").set(blueriiotPatch, { merge: true });
-
-    logger.info(`Blue Riiot: ${reading.tempC}°C @ ${reading.measuredAt}`, reading.releaseMeta || {});
+    await runBlueriiotSyncOnce();
   }
 );
 
 /** Manueller Push / Legacy-Bridge: Temperatur in Firestore schreiben */
+/** ICS-Download für Gustav-Aufgaben-Kalender (Token aus «Meine Aufgaben?»). */
+exports.tasksCalendarIcs = onRequest(async (req, res) => {
+  res.set("Access-Control-Allow-Origin", "*");
+  if (req.method === "OPTIONS") {
+    res.set("Access-Control-Allow-Methods", "GET");
+    return res.status(204).send("");
+  }
+  const token = String(req.query.token || "").trim();
+  if (!token || token.length > 64) {
+    return res.status(400).send("token required");
+  }
+  try {
+    const snap = await db.collection("gustavCalendarLinks").doc(token).get();
+    if (!snap.exists) return res.status(404).send("not found or expired");
+    const ics = snap.data()?.ics;
+    if (!ics) return res.status(404).send("empty");
+    res.set("Content-Type", "text/calendar; charset=utf-8");
+    res.set("Content-Disposition", 'attachment; filename="haus-am-see-aufgaben.ics"');
+    return res.status(200).send(ics);
+  } catch (e) {
+    logger.error("tasksCalendarIcs", e);
+    return res.status(500).send("error");
+  }
+});
+
 exports.jacuzziReading = onRequest(async (req, res) => {
   res.set("Access-Control-Allow-Origin", "*");
   if (req.method === "OPTIONS") {

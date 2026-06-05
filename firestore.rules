@@ -85,5 +85,21 @@ service cloud.firestore {
     match /polls/{document=**} {
       allow read, write: if true;
     }
+    // Gustav Chat-Verlauf (nur Cloud Functions via Admin SDK)
+    match /gustavChatHistory/{document=**} {
+      allow read, write: if false;
+    }
+    match /gustavCalendarLinks/{document=**} {
+      allow read, write: if false;
+    }
+    match /einkaufsliste/{document=**} {
+      allow read, write: if true;
+    }
+    match /eventBring/{document=**} {
+      allow read, write: if true;
+    }
+    match /gustavRemindPending/{document=**} {
+      allow read, write: if false;
+    }
   }
 }

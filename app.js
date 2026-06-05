@@ -478,8 +478,13 @@ const auth = {
     renderSettingsBewohnerRoster();
     syncKeychainUserFields();
     syncJacuzziWhatsappOpt();
+    syncJacuzziMeasureUI();
+    renderEinkaufsliste();
+    renderGustavHub();
+    renderHausWiki();
     renderWellnessBelegung();
     renderJacuzziPanel();
+    syncDeinTagSettings();
   }
 };
 
@@ -548,6 +553,13 @@ function applyMemberPrefsDoc(data) {
       if (rawEmoji) o.emoji = rawEmoji;
       if (rawPhone) o.phone = rawPhone;
       if (typeof v.jacuzziWhatsapp === "boolean") o.jacuzziWhatsapp = v.jacuzziWhatsapp;
+      if (v.birthDate != null && String(v.birthDate).trim()) o.birthDate = String(v.birthDate).trim().slice(0, 12);
+      if (v.deinTag && typeof v.deinTag === "object") {
+        o.deinTag = {
+          enabled: !!v.deinTag.enabled,
+          cadence: ["daily", "weekdays", "weekly", "every2days"].includes(v.deinTag.cadence) ? v.deinTag.cadence : "daily",
+        };
+      }
       if (Object.keys(o).length) next[k] = o;
     }
   }
@@ -574,11 +586,16 @@ function onMemberPrefsChanged() {
   renderAnwesend();
   renderTermine();
   renderSchaeden();
+  renderEinkaufsliste();
+  renderGustavHub();
+  renderHausWiki();
   populateLoginMemberSelect();
   populateAufgabenWhoSelect();
   populateSchadenZustaendigSelect();
   renderSettingsBewohnerRoster();
   syncJacuzziWhatsappOpt();
+  syncJacuzziMeasureUI();
+  syncDeinTagSettings();
 }
 
 function onMovedOutChanged() {
@@ -778,10 +795,12 @@ function fillMemberProfileForm() {
   const elName = $("profileDisplayName");
   const elEmoji = $("profileEmoji");
   const elPhone = $("profilePhone");
+  const elBirth = $("profileBirthDate");
   if (!elName || !elEmoji) return;
   if (!auth.isMember) {
     elName.value = "";
     if (elPhone) elPhone.value = "";
+    if (elBirth) elBirth.value = "";
     if (elEmoji.options.length) elEmoji.selectedIndex = 0;
     return;
   }
@@ -789,6 +808,7 @@ function fillMemberProfileForm() {
   const base = BEWOHNER.find((b) => b.name === auth.member);
   elName.value = p?.displayName || auth.member;
   if (elPhone) elPhone.value = p?.phone || "";
+  if (elBirth) elBirth.value = p?.birthDate || "";
   const want = p?.emoji && EMOJI_CHOICES_SET.has(p.emoji) ? p.emoji : (base?.emoji || EMOJI_CHOICES[0]);
   if (Array.from(elEmoji.options).some((o) => o.value === want)) elEmoji.value = want;
   else {
@@ -1798,8 +1818,66 @@ function renderEvents() {
       else if (btn.dataset.action === "share") shareEvent(ev);
     });
   });
+  list.querySelectorAll(".event-bring-form").forEach((form) => {
+    form.addEventListener("submit", (e) => {
+      e.preventDefault();
+      void submitEventBring(form.dataset.eventid, form);
+    });
+  });
 
   $("statEvents").textContent = upcoming.length;
+}
+
+let eventBringCache = [];
+
+function eventBringForEvent(eventId) {
+  return eventBringCache.filter((x) => x.eventId === eventId);
+}
+
+function renderEventBringBlock(ev) {
+  const items = eventBringForEvent(ev.id);
+  const listHtml = items.length
+    ? `<ul class="event-bring-ul">${items.map((x) =>
+        `<li><strong>${escapeHtml(x.who || "?")}</strong>: ${escapeHtml(x.item)}</li>`
+      ).join("")}</ul>`
+    : `<p class="form-note small">Noch niemand eingetragen.</p>`;
+  return `
+    <details class="event-bring">
+      <summary>🥗 Wer bringt was · ${items.length}</summary>
+      ${listHtml}
+      <form class="event-bring-form inline" data-eventid="${escapeHtml(ev.id)}">
+        <input name="item" placeholder="z. B. Salat" maxlength="120" required />
+        <button type="submit" class="btn btn-ghost small">Eintragen</button>
+      </form>
+      <p class="form-note small">Oder per WhatsApp: <em>Mitbringen ${escapeHtml(ev.title)}: Salat</em></p>
+    </details>`;
+}
+
+async function submitEventBring(eventId, form) {
+  if (!requireAuth("Mitbringen eintragen")) return;
+  const input = form.querySelector('input[name="item"]');
+  const item = String(input?.value || "").trim().slice(0, 120);
+  if (!item) return;
+  const ev = eventsCache.find((x) => x.id === eventId);
+  if (!ev) return;
+  if (firebaseReady) {
+    try {
+      await addDoc(collection(db, "eventBring"), {
+        eventId,
+        eventTitle: ev.title || "",
+        who: auth.member || "",
+        item,
+        createdAt: serverTimestamp(),
+      });
+      input.value = "";
+      showToast("Eingetragen.", "success");
+    } catch (err) {
+      console.error(err);
+      showToast("Speichern fehlgeschlagen.", "error");
+    }
+  } else {
+    showToast("Nur mit Firebase-Verbindung möglich.", "error");
+  }
 }
 
 function renderEventCard(ev, isPast) {
@@ -1825,6 +1903,7 @@ function renderEventCard(ev, isPast) {
   ` : "";
 
   const signupBlock = !isPast ? renderSignupBlock(ev) : "";
+  const bringBlock = !isPast && auth.isMember ? renderEventBringBlock(ev) : "";
 
   const hasFlyer = !!ev.flyerSrc;
   const dateClickable = hasFlyer ? `data-flyer="${ev.id}" role="button" tabindex="0" title="Flyer ansehen"` : "";
@@ -1852,6 +1931,7 @@ function renderEventCard(ev, isPast) {
         <div class="event-meta">📍 ${escapeHtml(ev.location || "Haus am See")}</div>
         ${ev.description ? `<p>${escapeHtml(ev.description)}</p>` : ""}
         ${signupBlock}
+        ${bringBlock}
         ${fotosBlock}
       </div>
       <div class="event-actions">
@@ -2820,6 +2900,7 @@ function renderGiessplan() {
   
   if (sorted.length === 0) {
     grid.innerHTML = `<div class="empty-state" style="grid-column: 1/-1;">Noch keine Pflanzen eingetragen 🌿</div>`;
+    renderGustavHub();
     return;
   }
   
@@ -2876,6 +2957,7 @@ function renderGiessplan() {
     });
   });
   bindReminderCadenceControls(grid);
+  renderGustavHub();
 }
 
 async function markAsWatered(id) {
@@ -3971,6 +4053,7 @@ function renderGartenTodos() {
     });
   }
   bindReminderCadenceControls(grid);
+  renderGustavHub();
 }
 
 async function setReminderCadence(type, id, { reminder, everyDays } = {}) {
@@ -4691,6 +4774,7 @@ function renderAufgaben() {
 
   if (!sorted.length) {
     grid.innerHTML = `<div class="empty-state" style="grid-column:1/-1;">Noch keine Aufgaben – Zeit, die Liste zu starten! 📋</div>`;
+    renderGustavHub();
     return;
   }
 
@@ -4770,6 +4854,7 @@ function renderAufgaben() {
       downloadAufgabenIcs(item, toISODateLocal(aufgabenNextDueDate(item)), item.who);
     });
   });
+  renderGustavHub();
   grid.querySelectorAll(".gartentodo-rotation-ical").forEach((btn) => {
     btn.addEventListener("click", (e) => {
       e.preventDefault();
@@ -5516,6 +5601,83 @@ function renderJacuzziPanel() {
   `;
 
   syncJacuzziWhatsappOpt();
+  syncJacuzziMeasureUI();
+}
+
+let jacuzziMeasureBusy = false;
+let jacuzziMeasureRequestAt = 0;
+
+function syncJacuzziMeasureUI() {
+  const row = $("jacuzziMeasureRow");
+  const btn = $("jacuzziMeasureNowBtn");
+  const hint = $("jacuzziMeasureHint");
+  if (!row || !btn) return;
+
+  if (!auth.isMember) {
+    row.classList.add("hidden");
+    btn.disabled = true;
+    return;
+  }
+  row.classList.remove("hidden");
+
+  const status = jacuzziStatusCache?.measureRequestStatus;
+  const baseHint =
+    "Zuerst in der <strong>Blue Connect App</strong> am Jacuzzi messen (Bluetooth), dann hier tippen – Gustav lädt die Werte aus der Cloud.";
+
+  if (jacuzziMeasureBusy) {
+    btn.disabled = true;
+    btn.textContent = "⏳ Wird geladen…";
+    if (hint) hint.innerHTML = "Messung wird aus der Blue&nbsp;Riiot-Cloud geholt…";
+    return;
+  }
+
+  btn.disabled = false;
+  btn.textContent = "📡 Jetzt messen";
+  if (hint) {
+    if (status?.message) {
+      const when = status.at ? fmtJacuzziRelative(status.at) : "";
+      const cls = status.ok ? "is-ok" : status.unchanged ? "is-warn" : "is-bad";
+      hint.innerHTML = `<span class="jacuzzi-measure-status ${cls}">${escapeHtml(status.message)}</span>${when ? ` <span class="form-note">(${escapeHtml(when)})</span>` : ""}<br><span class="form-note">${baseHint}</span>`;
+    } else {
+      hint.innerHTML = baseHint;
+    }
+  }
+}
+
+async function requestJacuzziMeasureNow() {
+  if (!requireAuth("Wasserqualität messen")) return;
+  if (jacuzziMeasureBusy) return;
+  const cooldownMs = 90_000;
+  if (Date.now() - jacuzziMeasureRequestAt < cooldownMs) {
+    showToast("Bitte kurz warten – Messung läuft bereits.", "info");
+    return;
+  }
+  jacuzziMeasureBusy = true;
+  jacuzziMeasureRequestAt = Date.now();
+  syncJacuzziMeasureUI();
+  if (firebaseReady) {
+    try {
+      await setDoc(
+        doc(db, "config", "jacuzzi"),
+        { measureRequest: { at: serverTimestamp(), by: auth.member || "" } },
+        { merge: true }
+      );
+      showToast("Messung angefordert – Blue Connect-Werte werden geladen…", "success");
+      setTimeout(() => {
+        jacuzziMeasureBusy = false;
+        syncJacuzziMeasureUI();
+      }, 12_000);
+    } catch (err) {
+      console.error(err);
+      jacuzziMeasureBusy = false;
+      syncJacuzziMeasureUI();
+      showToast("Anfrage fehlgeschlagen.", "error");
+    }
+  } else {
+    jacuzziMeasureBusy = false;
+    syncJacuzziMeasureUI();
+    showToast("Nur mit Firebase-Verbindung möglich.", "error");
+  }
 }
 
 function syncJacuzziWhatsappOpt() {
@@ -5614,6 +5776,7 @@ function setupJacuzziVerlaufToggles() {
   $("jacuzziWhatsappCheckbox")?.addEventListener("change", (e) => {
     void saveJacuzziWhatsappPref(e.target.checked);
   });
+  $("jacuzziMeasureNowBtn")?.addEventListener("click", () => void requestJacuzziMeasureNow());
 }
 
 function wellnessWhoLine(booking) {
@@ -8323,6 +8486,7 @@ function renderSchaeden() {
       openLightbox({ src: img.src, caption: img.alt || "" });
     });
   });
+  renderGustavHub();
 }
 
 async function setSchadenField(id, field, value) {
@@ -8949,9 +9113,13 @@ $("memberProfileForm")?.addEventListener("submit", async (e) => {
   if (!displayName) { showToast("Bitte einen Anzeigenamen eintragen.", "error"); return; }
   if (!EMOJI_CHOICES_SET.has(emoji)) { showToast("Bitte ein Icon aus der Liste wählen.", "error"); return; }
   
-  const profileData = { displayName, emoji, updatedBy: auth.member };
+  const profileData = { ...(authConfig.memberPrefs[auth.member] || {}), displayName, emoji, updatedBy: auth.member };
   if (phone) profileData.phone = phone;
-  
+  else delete profileData.phone;
+  const birthRaw = $("profileBirthDate")?.value.replace(/\s+/g, " ").trim() || "";
+  if (birthRaw) profileData.birthDate = birthRaw.slice(0, 12);
+  else delete profileData.birthDate;
+
   if (firebaseReady) {
     try {
       await setDoc(doc(db, "config", "memberPrefs"), {
@@ -8972,6 +9140,308 @@ $("memberProfileForm")?.addEventListener("submit", async (e) => {
     onMemberPrefsChanged();
     showToast("Profil lokal gespeichert.", "success");
   }
+});
+
+function syncDeinTagSettings() {
+  const cb = $("deinTagEnabledCheckbox");
+  const sel = $("deinTagCadenceSelect");
+  const hint = $("deinTagSettingsHint");
+  if (!cb || !sel) return;
+  if (!auth.isMember) {
+    cb.disabled = true;
+    sel.disabled = true;
+    return;
+  }
+  const hasPersonalPw = !!authConfig.memberHashes[auth.member];
+  const dt = authConfig.memberPrefs[auth.member]?.deinTag || {};
+  cb.checked = !!dt.enabled;
+  sel.value = dt.cadence || "daily";
+  const canEdit = auth.isPersonalLogin && hasPersonalPw;
+  cb.disabled = !canEdit;
+  sel.disabled = !canEdit;
+  if (hint) {
+    hint.textContent = canEdit
+      ? "Oder per WhatsApp: «Dein Tag an», «Dein Tag werktags», «Dein Tag aus»."
+      : "Mit persönlichem Passwort anmelden zum Ändern.";
+  }
+}
+
+async function saveDeinTagPref(enabled, cadence) {
+  if (!auth.isPersonalLogin) {
+    showToast("Bitte mit persönlichem Passwort anmelden.", "error");
+    syncDeinTagSettings();
+    return;
+  }
+  const profileData = {
+    ...(authConfig.memberPrefs[auth.member] || {}),
+    deinTag: { enabled: !!enabled, cadence: cadence || "daily" },
+    updatedBy: auth.member,
+  };
+  if (firebaseReady) {
+    try {
+      await setDoc(doc(db, "config", "memberPrefs"), {
+        [auth.member]: { ...profileData, updatedAt: serverTimestamp() },
+      }, { merge: true });
+      authConfig.memberPrefs[auth.member] = { ...profileData };
+      showToast(enabled ? "Dein Tag aktiviert." : "Dein Tag deaktiviert.", "success");
+      onMemberPrefsChanged();
+    } catch (err) {
+      console.error(err);
+      showToast("Speichern fehlgeschlagen.", "error");
+      syncDeinTagSettings();
+    }
+  }
+}
+
+let einkaufslisteCache = [];
+let hausWikiCache = null;
+
+const HAUS_WIKI_DEFAULTS = {
+  wlan: { title: "📶 WLAN", text: "WLAN-Name und Passwort stehen im WG-Intern-Bereich der Website (nach Login)." },
+  muell: { title: "🗑️ Müll", text: "Mülltonnen beim Carport. Kehricht/Altpapier/Grüngut getrennt – Details am schwarzen Plan im Gang." },
+  notfall: { title: "🚨 Notfall", text: "Notfall: 117 (Polizei), 118 (Feuer), 144 (Sanität). Vermieterin (Schelly) über die WG." },
+  adresse: { title: "📍 Adresse", text: "Haus am See, Pilatusstrasse 40, 8330 Pfäffikon ZH." },
+};
+
+function gustavNamesMatch(who, resident) {
+  if (!who || !resident) return false;
+  const w = String(who).toLowerCase().trim();
+  const r = String(resident).toLowerCase().trim();
+  return w === r || w.startsWith(r) || r.startsWith(w) || w.includes(r) || r.includes(w);
+}
+
+function gustavTaskUrgency(rank) {
+  if (rank <= 1) return "overdue";
+  if (rank === 2) return "due-today";
+  return "upcoming";
+}
+
+function buildGustavMyTasksPreview() {
+  if (!auth.isMember || !auth.member) return [];
+  const member = auth.member;
+  const tasks = [];
+
+  for (const item of giessplanCache) {
+    if (!gustavNamesMatch(item.who, member)) continue;
+    const st = getGiessStatus(item);
+    if (st === "done-today") continue;
+    const summary = formatGiessCardSummary(item);
+    const rank = st === "overdue" ? 0 : st === "due-today" ? 1 : 3;
+    tasks.push({ emoji: "🌱", label: item.plant, when: summary.when, rank, kind: "giess" });
+  }
+
+  for (const item of gartenTodoCache) {
+    if (!gustavNamesMatch(item.who, member)) continue;
+    const st = getGartenTodoStatus(item);
+    if (st === "done-today" || st === "scheduled") continue;
+    const next = formatGartenTodoNext(item);
+    const rank = st === "overdue" ? 0 : st === "due-today" ? 1 : 3;
+    tasks.push({ emoji: "🌿", label: item.task, when: next.text, rank, kind: "garten" });
+  }
+
+  for (const item of putzCache) {
+    if (!gustavNamesMatch(item.who, member)) continue;
+    const st = getAufgabenStatus(item);
+    if (st === "done" || st === "done-today") continue;
+    const summary = formatAufgabenCardSummary(item);
+    const rank = st === "overdue" ? 0 : st === "due-today" ? 1 : 3;
+    tasks.push({ emoji: "📋", label: item.task, when: summary.when, rank, kind: "aufgabe" });
+  }
+
+  for (const s of schaedenCache) {
+    if (s.status === "erledigt") continue;
+    if (!gustavNamesMatch(s.zustaendig, member)) continue;
+    const prioRank = s.prio === "hoch" ? 0 : s.prio === "mittel" ? 2 : 4;
+    tasks.push({
+      emoji: "🔧",
+      label: s.titel || "Schaden",
+      when: SCHADEN_STATUS_LABEL[s.status] || s.status || "offen",
+      rank: prioRank,
+      kind: "schaden",
+    });
+  }
+
+  return tasks.sort((a, b) => a.rank - b.rank).slice(0, 6);
+}
+
+function renderGustavHub() {
+  const el = $("gustavHubPanel");
+  if (!el) return;
+  if (!auth.isMember) {
+    el.innerHTML = "";
+    el.classList.add("hidden");
+    return;
+  }
+  el.classList.remove("hidden");
+
+  const tasks = buildGustavMyTasksPreview();
+  const tasksHtml = tasks.length
+    ? `<ul class="gustav-hub-tasks">${tasks.map((t) =>
+        `<li class="gustav-hub-task is-${gustavTaskUrgency(t.rank)}"><span class="gustav-hub-task-emoji">${t.emoji}</span><span><strong>${escapeHtml(t.label)}</strong><span class="form-note"> · ${escapeHtml(t.when)}</span></span></li>`
+      ).join("")}</ul>`
+    : `<p class="form-note">Keine offenen Aufgaben für dich 🎉 – Gustav: <em>Meine Aufgaben?</em></p>`;
+
+  const openEinkauf = einkaufslisteCache.filter((x) => !x.done).slice(0, 5);
+  const einkaufHtml = openEinkauf.length
+    ? `<ul class="gustav-hub-einkauf">${openEinkauf.map((x) =>
+        `<li>${escapeHtml(x.item)}</li>`
+      ).join("")}</ul>`
+    : `<p class="form-note small">Einkaufsliste leer ✅</p>`;
+
+  const dt = authConfig.memberPrefs[auth.member]?.deinTag || {};
+  const deinTagOn = dt.enabled ? `an (${dt.cadence || "daily"})` : "aus";
+
+  el.innerHTML = `
+    <div class="gustav-hub-grid">
+      <section class="gustav-hub-card">
+        <h3>📋 Meine Aufgaben</h3>
+        ${tasksHtml}
+        <p class="form-note small">Vollständige Liste per WhatsApp: <em>Meine Aufgaben?</em> · mit Kalender-Link</p>
+      </section>
+      <section class="gustav-hub-card">
+        <h3>🛒 Einkaufsliste</h3>
+        ${einkaufHtml}
+        <form class="gustav-hub-einkauf-form" id="gustavHubEinkaufForm">
+          <input id="gustavHubEinkaufInput" placeholder="Auf die Liste…" maxlength="80" />
+          <button type="submit" class="btn btn-ghost small">+</button>
+        </form>
+      </section>
+      <section class="gustav-hub-card gustav-hub-card-wide">
+        <h3>🤖 Gustav</h3>
+        <p class="form-note small">☀️ Dein Tag: <strong>${escapeHtml(deinTagOn)}</strong> · <a href="#wg-intern">Einstellungen</a></p>
+        <details class="gustav-hub-cheats">
+          <summary>WhatsApp-Befehle</summary>
+          <ul class="gustav-hub-cmds">
+            <li><em>Jacuzzi warm?</em> · <em>Wasserqualität?</em></li>
+            <li><em>Kino frei?</em> · <em>Sauna frei?</em></li>
+            <li><em>WLAN?</em> · <em>Müll?</em></li>
+            <li><em>Mitbringen Spieleabend: Salat</em></li>
+            <li><em>Kino heute Avatar</em></li>
+          </ul>
+        </details>
+      </section>
+    </div>`;
+
+  $("gustavHubEinkaufForm")?.addEventListener("submit", (e) => {
+    e.preventDefault();
+    const input = $("gustavHubEinkaufInput");
+    void addEinkaufslisteItem(input?.value, input);
+  });
+}
+
+function renderHausWiki() {
+  const el = $("hausWikiList");
+  if (!el) return;
+  if (!auth.isMember) {
+    el.innerHTML = "";
+    return;
+  }
+  const wiki = { ...HAUS_WIKI_DEFAULTS };
+  if (hausWikiCache && typeof hausWikiCache === "object") {
+    for (const [key, val] of Object.entries(hausWikiCache)) {
+      if (typeof val === "string" && val.trim()) {
+        wiki[key] = { ...(wiki[key] || { title: key }), text: val.trim() };
+      }
+    }
+  }
+  el.innerHTML = Object.entries(wiki)
+    .map(([key, entry]) => {
+      const title = entry.title || key;
+      return `<article class="haus-wiki-item"><h4>${escapeHtml(title)}</h4><p>${escapeHtml(entry.text)}</p></article>`;
+    })
+    .join("");
+}
+
+function einkaufItemMatches(stored, hint) {
+  const a = String(stored || "").toLowerCase().trim();
+  const b = String(hint || "").toLowerCase().trim();
+  if (!a || !b) return false;
+  return a === b || a.includes(b) || b.includes(a);
+}
+
+async function addEinkaufslisteItem(raw, inputEl = null) {
+  if (!requireAuth("Einkaufsliste")) return;
+  const name = String(raw || "").trim().slice(0, 80);
+  if (!name) return;
+  const dup = einkaufslisteCache.find((x) => !x.done && einkaufItemMatches(x.item, name));
+  if (dup) {
+    showToast("Schon auf der Liste.", "info");
+    return;
+  }
+  if (firebaseReady) {
+    try {
+      await addDoc(collection(db, "einkaufsliste"), {
+        item: name,
+        addedBy: auth.member || "",
+        done: false,
+        createdAt: serverTimestamp(),
+      });
+      if (inputEl) inputEl.value = "";
+      showToast("Auf die Liste.", "success");
+    } catch (err) {
+      console.error(err);
+      showToast("Speichern fehlgeschlagen.", "error");
+    }
+  } else {
+    showToast("Nur mit Firebase-Verbindung möglich.", "error");
+  }
+}
+
+async function markEinkaufslisteDone(id) {
+  if (!requireAuth("Einkaufsliste")) return;
+  if (firebaseReady) {
+    try {
+      await updateDoc(doc(db, "einkaufsliste", id), {
+        done: true,
+        doneBy: auth.member || "",
+        doneAt: serverTimestamp(),
+      });
+      showToast("Erledigt.", "success");
+    } catch (err) {
+      console.error(err);
+      showToast("Speichern fehlgeschlagen.", "error");
+    }
+  }
+}
+
+function renderEinkaufsliste() {
+  const el = $("einkaufslisteList");
+  const form = $("einkaufslisteForm");
+  if (!el) return;
+  if (!auth.isMember) {
+    el.innerHTML = `<p class="form-note">Nur für WG-Mitglieder sichtbar.</p>`;
+    if (form) form.classList.add("hidden");
+    return;
+  }
+  if (form) form.classList.remove("hidden");
+  const open = einkaufslisteCache.filter((x) => !x.done);
+  if (!open.length) {
+    el.innerHTML = `<p class="form-note">Liste leer ✅</p>`;
+    renderGustavHub();
+    return;
+  }
+  el.innerHTML = `<ul class="einkaufsliste-ul">${open.map((x) =>
+    `<li class="einkaufsliste-li"><span><strong>${escapeHtml(x.item)}</strong>${x.addedBy ? ` <span class="form-note">(${escapeHtml(x.addedBy)})</span>` : ""}</span>
+      <button type="button" class="mini-btn einkaufsliste-done" data-id="${escapeHtml(x.id)}" title="Erledigt">✅</button></li>`
+  ).join("")}</ul>`;
+  el.querySelectorAll(".einkaufsliste-done").forEach((btn) => {
+    btn.addEventListener("click", () => void markEinkaufslisteDone(btn.dataset.id));
+  });
+  renderGustavHub();
+}
+
+$("einkaufslisteForm")?.addEventListener("submit", (e) => {
+  e.preventDefault();
+  const input = $("einkaufslisteInput");
+  void addEinkaufslisteItem(input?.value, input);
+});
+
+$("deinTagEnabledCheckbox")?.addEventListener("change", (e) => {
+  const cadence = $("deinTagCadenceSelect")?.value || "daily";
+  void saveDeinTagPref(e.target.checked, cadence);
+});
+$("deinTagCadenceSelect")?.addEventListener("change", (e) => {
+  if ($("deinTagEnabledCheckbox")?.checked) void saveDeinTagPref(true, e.target.value);
 });
 
 $("wgInviteShareNative")?.addEventListener("click", () => shareWgInviteFromSheet());
@@ -9312,6 +9782,21 @@ function setupListeners() {
     renderGartenTodos();
   }, (err) => console.warn("gartentodos listener:", err.message));
 
+  onSnapshot(query(collection(db, "einkaufsliste"), orderBy("createdAt", "desc")), (snap) => {
+    einkaufslisteCache = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
+    renderEinkaufsliste();
+  }, (err) => console.warn("einkaufsliste listener:", err.message));
+
+  onSnapshot(query(collection(db, "eventBring"), orderBy("createdAt", "desc")), (snap) => {
+    eventBringCache = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
+    renderEvents();
+  }, (err) => console.warn("eventBring listener:", err.message));
+
+  onSnapshot(doc(db, "config", "hausWiki"), (snap) => {
+    hausWikiCache = snap.exists() ? snap.data() : null;
+    renderHausWiki();
+  }, (err) => console.warn("hausWiki listener:", err.message));
+
   onSnapshot(query(collection(db, "termine"), orderBy("createdAt", "desc")), (snap) => {
     termineCache = snap.docs.map(d => ({ id: d.id, ...d.data() }));
     renderTermine();
@@ -9405,6 +9890,10 @@ function setupListeners() {
 
   onSnapshot(doc(db, "config", "jacuzzi"), (snap) => {
     jacuzziStatusCache = snap.exists() ? snap.data() : null;
+    if (jacuzziStatusCache?.measureRequestStatus?.at) {
+      jacuzziMeasureBusy = false;
+    }
+    syncJacuzziMeasureUI();
     renderJacuzziPanel();
   }, (err) => console.warn("jacuzzi status listener:", err.message));
 

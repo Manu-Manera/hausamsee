@@ -5524,3 +5524,143 @@ body.wg-guest a[href="#intern"] {
   .draw-size input { width: 90px; }
   .draw-canvas { height: 320px; }
 }
+
+/* Gustav Hub (WG-Kalender → Aufgaben) */
+.gustav-hub {
+  margin-bottom: 1.25rem;
+}
+.gustav-hub-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 12px;
+}
+.gustav-hub-card {
+  background: var(--card-bg, #fff);
+  border: 1px solid var(--card-border);
+  border-radius: 12px;
+  padding: 14px 16px;
+}
+.gustav-hub-card h3 {
+  margin: 0 0 10px;
+  font-size: 0.95rem;
+}
+.gustav-hub-card-wide {
+  grid-column: 1 / -1;
+}
+.gustav-hub-tasks,
+.gustav-hub-einkauf,
+.gustav-hub-cmds {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.gustav-hub-task {
+  display: flex;
+  gap: 8px;
+  align-items: flex-start;
+  padding: 6px 0;
+  border-bottom: 1px solid var(--card-border);
+  font-size: 0.88rem;
+}
+.gustav-hub-task:last-child { border-bottom: none; }
+.gustav-hub-task.is-overdue strong { color: var(--danger, #c44); }
+.gustav-hub-task.is-due-today strong { color: var(--terracotta-dark); }
+.gustav-hub-einkauf-form,
+.einkaufsliste-form {
+  display: flex;
+  gap: 8px;
+  margin-top: 8px;
+}
+.gustav-hub-einkauf-form input,
+.einkaufsliste-form input {
+  flex: 1;
+  min-width: 0;
+}
+.gustav-hub-cheats summary {
+  cursor: pointer;
+  font-size: 0.85rem;
+  color: var(--terracotta-dark);
+  margin-top: 6px;
+}
+.gustav-hub-cmds {
+  margin-top: 8px;
+  font-size: 0.82rem;
+  color: var(--text-muted);
+}
+.gustav-hub-cmds li { padding: 3px 0; }
+
+/* Einkaufsliste */
+.einkaufsliste-ul {
+  margin: 10px 0 0;
+  padding: 0;
+  list-style: none;
+}
+.einkaufsliste-li {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 6px 0;
+  border-bottom: 1px solid var(--card-border);
+}
+.einkaufsliste-li:last-child { border-bottom: none; }
+
+/* Haus-Wiki */
+.haus-wiki-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  gap: 10px;
+}
+.haus-wiki-item {
+  background: var(--bg-soft, #f8f5f2);
+  border-radius: 10px;
+  padding: 12px;
+}
+.haus-wiki-item h4 {
+  margin: 0 0 6px;
+  font-size: 0.9rem;
+}
+.haus-wiki-item p {
+  margin: 0;
+  font-size: 0.82rem;
+  color: var(--text-muted);
+  line-height: 1.45;
+}
+
+/* Event Mitbringen */
+.event-bring {
+  margin-top: 10px;
+  font-size: 0.88rem;
+}
+.event-bring-ul {
+  margin: 8px 0;
+  padding-left: 1.2rem;
+}
+.event-bring-form {
+  display: flex;
+  gap: 8px;
+  margin-top: 8px;
+}
+.event-bring-form input { flex: 1; min-width: 0; }
+
+/* Jacuzzi «Jetzt messen» */
+.jacuzzi-measure-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px 14px;
+  margin: 12px 0;
+  padding: 12px 14px;
+  background: var(--bg-soft, #f8f5f2);
+  border-radius: 12px;
+  border: 1px solid var(--card-border);
+}
+.jacuzzi-measure-hint {
+  flex: 1 1 200px;
+  margin: 0 !important;
+  font-size: 0.82rem;
+  line-height: 1.45;
+}
+.jacuzzi-measure-status.is-ok { color: #2a7a4b; font-weight: 600; }
+.jacuzzi-measure-status.is-warn { color: #9a6b00; font-weight: 600; }
+.jacuzzi-measure-status.is-bad { color: var(--danger, #c44); font-weight: 600; }
