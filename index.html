@@ -16,7 +16,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,400;0,9..144,600;0,9..144,700;1,9..144,400&family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet" />
-  <link rel="stylesheet" href="styles.css?v=20260605e" />
+  <link rel="stylesheet" href="styles.css?v=20260605f" />
   <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Ctext y='.9em' font-size='90'%3E🏡%3C/text%3E%3C/svg%3E" />
 </head>
 <body>
@@ -488,8 +488,15 @@
       </div>
 
       <div class="kalender-panel hidden" id="tabJacuzzi">
-        <p class="giess-hint">Temperatur vom Blue&nbsp;Riiot-Schwimmer – Gustav holt den letzten Cloud-Stand alle 15&nbsp;Min. (Handy muss nicht offen sein). Auch: <em>«Jacuzzi warm?»</em> per WhatsApp.</p>
+        <p class="giess-hint">Temperatur vom Blue&nbsp;Riiot-Schwimmer – Gustav holt den letzten Cloud-Stand alle 5&nbsp;Min. (Handy muss nicht offen sein). Auch: <em>«Jacuzzi warm?»</em> per WhatsApp.</p>
         <div class="jacuzzi-status-card" id="jacuzziStatusCard" aria-live="polite"></div>
+        <div class="jacuzzi-whatsapp-opt hidden" id="jacuzziWhatsappOpt" data-wg-only>
+          <label class="jacuzzi-whatsapp-label">
+            <input type="checkbox" id="jacuzziWhatsappCheckbox" disabled />
+            <span>📱 WhatsApp bei Wasserqualität (pH / Chlor)</span>
+          </label>
+          <p class="form-note jacuzzi-whatsapp-hint" id="jacuzziWhatsappHint"></p>
+        </div>
         <div class="jacuzzi-verlauf-block">
           <button type="button" class="btn btn-ghost jacuzzi-verlauf-btn" id="jacuzziVerlaufBtn" aria-expanded="false" aria-controls="jacuzziReadingsList">
             📊 Verlauf
@@ -1353,6 +1360,6 @@
   <!-- Toast -->
   <div id="toast" class="toast hidden"></div>
 
-  <script type="module" src="app.js?v=20260605e"></script>
+  <script type="module" src="app.js?v=20260605f"></script>
 </body>
 </html>

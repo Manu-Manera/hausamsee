@@ -1931,7 +1931,7 @@ async function buildJacuzziWarmReply() {
   } else {
     lines.push(
       blueriiot.blueriiotEnabled()
-        ? "🛁 Noch keine Temperatur in der Cloud – Sync läuft alle 15 Min."
+        ? "🛁 Noch keine Temperatur in der Cloud – Sync läuft alle 5 Min."
         : "🛁 Keine Temperatur – Blue-Riiot-Sync in functions/.env aktivieren."
     );
   }
@@ -4707,9 +4707,151 @@ async function persistJacuzziReading({ tempC, at, source, extras = {} }) {
   return status;
 }
 
-/** Blue Riiot Cloud: alle 15 Min. letzte Messung → Website & Gustav */
+const JACUZZI_WATER_ALERT_COOLDOWN_MS = 6 * 60 * 60 * 1000;
+
+function jacuzziWaterAmpelLevel(value, okMin, okMax, warnLow, warnHigh) {
+  if (value == null || Number.isNaN(Number(value))) return "unknown";
+  const v = Number(value);
+  if (okMin != null && okMax != null && v >= okMin && v <= okMax) return "ok";
+  if (warnLow != null && warnHigh != null && v >= warnLow && v <= warnHigh) return "warn";
+  return "bad";
+}
+
+function jacuzziAmpelRank(level) {
+  if (level === "bad") return 3;
+  if (level === "warn") return 2;
+  if (level === "ok") return 1;
+  return 0;
+}
+
+function jacuzziWaterAmpelWorsened(prevLevel, nextLevel) {
+  if (!nextLevel || nextLevel === "unknown" || nextLevel === "ok") return false;
+  if (!prevLevel || prevLevel === "unknown") return nextLevel === "warn" || nextLevel === "bad";
+  return jacuzziAmpelRank(nextLevel) > jacuzziAmpelRank(prevLevel);
+}
+
+function jacuzziWaterAmpelLabel(level) {
+  if (level === "ok") return "im Soll";
+  if (level === "warn") return "Grenzbereich";
+  if (level === "bad") return "kritisch";
+  return "unbekannt";
+}
+
+function buildJacuzziWaterMetricLine(key, status) {
+  if (status[key] == null) return null;
+  const level = status[`${key}Ampel`] || "unknown";
+  const icon = level === "ok" ? "🟢" : level === "warn" ? "🟡" : level === "bad" ? "🔴" : "⚪";
+  const label = key === "ph" ? "pH" : "Chlor (Redox)";
+  const value =
+    key === "ph"
+      ? Number(status.ph).toFixed(1)
+      : `${Math.round(Number(status.orp))} mV`;
+  const range =
+    status[`${key}OkMin`] != null && status[`${key}OkMax`] != null
+      ? ` (Soll ${status[`${key}OkMin`]}–${status[`${key}OkMax`]}${key === "orp" ? " mV" : ""})`
+      : "";
+  return `${icon} *${label}:* ${value} – ${jacuzziWaterAmpelLabel(level)}${range}`;
+}
+
+async function getJacuzziWhatsappRecipients() {
+  const [prefsSnap, pwSnap] = await Promise.all([
+    db.doc("config/memberPrefs").get(),
+    db.doc("config/memberPasswords").get(),
+  ]);
+  const prefs = prefsSnap.exists ? prefsSnap.data() || {} : {};
+  const passwords = pwSnap.exists ? pwSnap.data() || {} : {};
+  const recipients = [];
+  for (const name of ADULTS) {
+    if (!passwords[name]) continue;
+    if (prefs[name]?.jacuzziWhatsapp !== true) continue;
+    const phone = await getBewohnerPhone(name);
+    if (phone) recipients.push({ name, phone });
+  }
+  return recipients;
+}
+
+async function maybeSendJacuzziWaterAlerts(status, prev = {}) {
+  const phAmpel = jacuzziWaterAmpelLevel(
+    status.ph,
+    status.phOkMin,
+    status.phOkMax,
+    status.phWarnLow,
+    status.phWarnHigh
+  );
+  const orpAmpel = jacuzziWaterAmpelLevel(
+    status.orp,
+    status.orpOkMin,
+    status.orpOkMax,
+    status.orpWarnLow,
+    status.orpWarnHigh
+  );
+  const enriched = { ...status, phAmpel, orpAmpel };
+
+  const alerts = [];
+  const now = Date.now();
+  if (
+    status.ph != null &&
+    jacuzziWaterAmpelWorsened(prev.phAmpel, phAmpel) &&
+    now - (prev.jacuzziAlertPhAt || 0) >= JACUZZI_WATER_ALERT_COOLDOWN_MS
+  ) {
+    alerts.push("ph");
+  }
+  if (
+    status.orp != null &&
+    jacuzziWaterAmpelWorsened(prev.orpAmpel, orpAmpel) &&
+    now - (prev.jacuzziAlertOrpAt || 0) >= JACUZZI_WATER_ALERT_COOLDOWN_MS
+  ) {
+    alerts.push("orp");
+  }
+
+  const alertMeta = {
+    phAmpel,
+    orpAmpel,
+    jacuzziAlertPhAt: prev.jacuzziAlertPhAt || null,
+    jacuzziAlertOrpAt: prev.jacuzziAlertOrpAt || null,
+  };
+
+  if (!alerts.length) {
+    await db.doc("config/jacuzzi").set(alertMeta, { merge: true });
+    return;
+  }
+
+  const recipients = await getJacuzziWhatsappRecipients();
+  if (!recipients.length) {
+    logger.info("Jacuzzi-Wasser-Alert: keine Empfänger (Opt-in + persönliches Passwort)");
+    await db.doc("config/jacuzzi").set(alertMeta, { merge: true });
+    return;
+  }
+
+  const lines = ["🛁 *Jacuzzi · Wasserqualität*", ""];
+  if (status.tempC != null) {
+    const warm = Number(status.tempC) >= JACUZZI_WARM_TEMP_C;
+    lines.push(`🌡️ Temperatur: ${Number(status.tempC).toFixed(1)} °C${warm ? " ♨️" : ""}`);
+  }
+  for (const key of alerts) {
+    const line = buildJacuzziWaterMetricLine(key, enriched);
+    if (line) lines.push(line);
+  }
+  lines.push("", "_Nur für WG-Mitglieder mit persönlichem Login & Opt-in im Jacuzzi-Tab._");
+  const text = lines.join("\n");
+
+  for (const { name, phone } of recipients) {
+    try {
+      await sendWhatsApp(phone, text);
+      logger.info(`Jacuzzi-Wasser-Alert an ${name}`);
+    } catch (e) {
+      logger.warn(`Jacuzzi-Wasser-Alert an ${name} fehlgeschlagen`, e?.message || e);
+    }
+  }
+
+  if (alerts.includes("ph")) alertMeta.jacuzziAlertPhAt = now;
+  if (alerts.includes("orp")) alertMeta.jacuzziAlertOrpAt = now;
+  await db.doc("config/jacuzzi").set(alertMeta, { merge: true });
+}
+
+/** Blue Riiot Cloud: alle 5 Min. letzte Messung → Website & Gustav */
 exports.syncBlueriiotJacuzzi = onSchedule(
-  { schedule: "every 15 minutes", timeZone: "Europe/Zurich" },
+  { schedule: "every 5 minutes", timeZone: "Europe/Zurich" },
   async () => {
     if (!blueriiot.blueriiotEnabled()) return;
 
@@ -4747,7 +4889,7 @@ exports.syncBlueriiotJacuzzi = onSchedule(
       return;
     }
 
-    await persistJacuzziReading({
+    const status = await persistJacuzziReading({
       tempC: reading.tempC,
       at: reading.measuredAt,
       source: "blueriiot",
@@ -4758,6 +4900,8 @@ exports.syncBlueriiotJacuzzi = onSchedule(
         ...waterExtras,
       },
     });
+
+    await maybeSendJacuzziWaterAlerts(status, prev);
 
     await db.doc("config/blueriiot").set(
       {

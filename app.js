@@ -395,8 +395,14 @@ let movedOutNames = new Set();
 const auth = {
   member: null,
   isGuest: false,
+  /** @type {"personal"|"group"|null} Nur bei WG-Login: persönliches vs. Gruppenpasswort */
+  loginKind: null,
   get isAuthed() { return !!this.member; },
   get isMember() { return !!this.member && !this.isGuest; },
+  /** Persönliches Passwort gesetzt und damit eingeloggt (für Jacuzzi-WhatsApp-Opt-in). */
+  get isPersonalLogin() {
+    return this.isMember && this.loginKind === "personal" && !!authConfig.memberHashes[this.member];
+  },
   init() {
     try {
       const raw = localStorage.getItem(SESSION_KEY);
@@ -409,22 +415,26 @@ const auth = {
       if (session.isGuest) {
         this.member = session.member;
         this.isGuest = true;
+        this.loginKind = null;
         this.apply();
       } else if (BEWOHNER.find(b => b.name === session.member) && !movedOutNames.has(session.member)) {
         this.member = session.member;
         this.isGuest = false;
+        this.loginKind = session.loginKind === "personal" ? "personal" : "group";
         this.apply();
       } else {
         localStorage.removeItem(SESSION_KEY);
       }
     } catch { localStorage.removeItem(SESSION_KEY); }
   },
-  login(member, { isGuest = false } = {}) {
+  login(member, { isGuest = false, loginKind = null } = {}) {
     this.member = member;
     this.isGuest = isGuest;
+    this.loginKind = isGuest ? null : loginKind;
     localStorage.setItem(SESSION_KEY, JSON.stringify({
       member,
       isGuest,
+      loginKind: this.loginKind,
       until: Date.now() + SESSION_DURATION
     }));
     this.apply();
@@ -434,6 +444,7 @@ const auth = {
   logout() {
     this.member = null;
     this.isGuest = false;
+    this.loginKind = null;
     localStorage.removeItem(SESSION_KEY);
     this.apply();
     showToast("Abgemeldet.");
@@ -466,6 +477,7 @@ const auth = {
     fillMemberProfileForm();
     renderSettingsBewohnerRoster();
     syncKeychainUserFields();
+    syncJacuzziWhatsappOpt();
   }
 };
 
@@ -533,6 +545,7 @@ function applyMemberPrefsDoc(data) {
       if (displayName) o.displayName = displayName;
       if (rawEmoji) o.emoji = rawEmoji;
       if (rawPhone) o.phone = rawPhone;
+      if (typeof v.jacuzziWhatsapp === "boolean") o.jacuzziWhatsapp = v.jacuzziWhatsapp;
       if (Object.keys(o).length) next[k] = o;
     }
   }
@@ -563,6 +576,7 @@ function onMemberPrefsChanged() {
   populateAufgabenWhoSelect();
   populateSchadenZustaendigSelect();
   renderSettingsBewohnerRoster();
+  syncJacuzziWhatsappOpt();
 }
 
 function onMovedOutChanged() {
@@ -797,10 +811,10 @@ async function verifyMemberPassword(memberName, pw) {
   const hash = await sha256(normPasswordInput(pw));
   const personal = authConfig.memberHashes[memberName];
   if (personal) {
-    if (hash === personal) return { ok: true, kind: "member" };
+    if (hash === personal) return { ok: true, kind: "personal" };
     return { ok: false, reason: "wrong" };
   }
-  if (hashMatchesWgLoginFallback(hash)) return { ok: true, kind: "member" };
+  if (hashMatchesWgLoginFallback(hash)) return { ok: true, kind: "group" };
   return { ok: false, reason: "wrong" };
 }
 
@@ -982,7 +996,7 @@ $("loginForm")?.addEventListener("submit", async (e) => {
     showError("Falsches Passwort · versuch's nochmal.");
     return;
   }
-  auth.login(selected, { isGuest: false });
+  auth.login(selected, { isGuest: false, loginKind: mres.kind });
   $("loginDialog").close();
 });
 
@@ -5414,6 +5428,85 @@ function renderJacuzziPanel() {
   }
 
   renderJacuzziHero();
+  syncJacuzziWhatsappOpt();
+}
+
+function syncJacuzziWhatsappOpt() {
+  const wrap = $("jacuzziWhatsappOpt");
+  const cb = $("jacuzziWhatsappCheckbox");
+  const hint = $("jacuzziWhatsappHint");
+  if (!wrap || !cb) return;
+
+  if (!auth.isMember) {
+    wrap.classList.add("hidden");
+    cb.checked = false;
+    cb.disabled = true;
+    return;
+  }
+
+  wrap.classList.remove("hidden");
+  const hasPersonalPw = !!authConfig.memberHashes[auth.member];
+  const enabled = authConfig.memberPrefs[auth.member]?.jacuzziWhatsapp === true;
+  cb.checked = enabled;
+
+  if (!hasPersonalPw) {
+    cb.disabled = true;
+    if (hint) {
+      hint.textContent =
+        "Zuerst unter WG-Intern → Einstellungen ein persönliches Passwort setzen, dann damit anmelden.";
+    }
+    return;
+  }
+
+  if (!auth.isPersonalLogin) {
+    cb.disabled = true;
+    if (hint) {
+      hint.textContent = enabled
+        ? "Aktiv für dich – zum Ändern mit persönlichem Passwort anmelden (nicht Gruppenpasswort)."
+        : "Nur mit persönlichem Passwort anmelden, um WhatsApp-Alerts zu aktivieren.";
+    }
+    return;
+  }
+
+  cb.disabled = false;
+  if (hint) {
+    hint.textContent =
+      "WhatsApp nur an deine Profil-Nummer, wenn pH oder Chlor (Redox) in den Grenz- oder Kritikbereich wechseln.";
+  }
+}
+
+async function saveJacuzziWhatsappPref(enabled) {
+  if (!auth.isPersonalLogin) {
+    showToast("Bitte mit persönlichem Passwort anmelden.", "error");
+    syncJacuzziWhatsappOpt();
+    return;
+  }
+  const profileData = {
+    ...(authConfig.memberPrefs[auth.member] || {}),
+    jacuzziWhatsapp: !!enabled,
+    updatedBy: auth.member,
+  };
+  if (firebaseReady) {
+    try {
+      await setDoc(doc(db, "config", "memberPrefs"), {
+        [auth.member]: { ...profileData, updatedAt: serverTimestamp() },
+      }, { merge: true });
+      authConfig.memberPrefs[auth.member] = { ...profileData };
+      showToast(enabled ? "Jacuzzi-WhatsApp-Alerts aktiviert." : "Jacuzzi-WhatsApp-Alerts aus.", "success");
+      onMemberPrefsChanged();
+    } catch (err) {
+      console.error(err);
+      showToast("Speichern fehlgeschlagen.", "error");
+      syncJacuzziWhatsappOpt();
+    }
+  } else {
+    const next = { ...localStore.memberPrefs, [auth.member]: profileData };
+    localStore.memberPrefs = next;
+    saveLocal("memberPrefs", next);
+    applyMemberPrefsDoc(next);
+    onMemberPrefsChanged();
+    showToast(enabled ? "Lokal: Alerts an." : "Lokal: Alerts aus.", "success");
+  }
 }
 
 function setupJacuzziVerlaufToggles() {
@@ -5426,6 +5519,9 @@ function setupJacuzziVerlaufToggles() {
       jacuzziHeroVerlaufOpen = !jacuzziHeroVerlaufOpen;
       renderJacuzziPanel();
     }
+  });
+  $("jacuzziWhatsappCheckbox")?.addEventListener("change", (e) => {
+    void saveJacuzziWhatsappPref(e.target.checked);
   });
 }
 
