@@ -85,14 +85,13 @@ async function ensureSession() {
   return login();
 }
 
-async function apiGet(path) {
-  await ensureSession();
+function signedApiOpts(method, path, bodyStr = null) {
   const cleanPath = path.startsWith("/") ? path.slice(1) : path;
   const fullPath = `${API_BASE}${cleanPath}`;
   const opts = {
     host: API_HOST,
     path: fullPath,
-    method: "GET",
+    method,
     service: API_SERVICE,
     region: API_REGION,
     headers: {
@@ -101,12 +100,99 @@ async function apiGet(path) {
       "X-Amz-Security-Token": sessionCache.sessionToken,
     },
   };
+  if (bodyStr) {
+    opts.headers["Content-Type"] = "application/json";
+    opts.headers["Content-Length"] = Buffer.byteLength(bodyStr);
+  }
   aws4.sign(opts, {
     accessKeyId: sessionCache.accessKeyId,
     secretAccessKey: sessionCache.secretAccessKey,
     sessionToken: sessionCache.sessionToken,
   });
-  return httpsJson(opts);
+  return opts;
+}
+
+async function apiGet(path) {
+  await ensureSession();
+  return httpsJson(signedApiOpts("GET", path));
+}
+
+async function apiPost(path, body = null) {
+  await ensureSession();
+  const bodyStr = body != null ? JSON.stringify(body) : null;
+  return httpsJson(signedApiOpts("POST", path, bodyStr), bodyStr);
+}
+
+function releaseEventEnabled() {
+  const v = String(process.env.BLUERIIOT_RELEASE_EVENT || "1").toLowerCase();
+  return v !== "0" && v !== "false" && v !== "off" && v !== "no";
+}
+
+/**
+ * Experimentell: hängende Bluetooth-Messungen aus der App in die Cloud übernehmen.
+ * @see MBW.Client.BlueRiiotApi BlueReleaseLastUnprocessedEvent
+ */
+async function tryReleaseLastUnprocessedEvent(deviceSerial) {
+  try {
+    const resp = await apiPost(`blue/${encodeURIComponent(deviceSerial)}/releaseLastUnprocessedEvent`);
+    return { ok: true, resp: resp || null };
+  } catch (e) {
+    return { ok: false, error: String(e.message || e) };
+  }
+}
+
+async function fetchLastMeasurements(poolId, deviceSerial) {
+  const path = `swimming_pool/${encodeURIComponent(poolId)}/blue/${encodeURIComponent(deviceSerial)}/lastMeasurements?mode=blue_and_strip`;
+  return apiGet(path);
+}
+
+function parseLastMeasurementsResponse(resp, poolId, deviceSerial, releaseMeta = null) {
+  const rows = resp?.data || [];
+  const tempRow =
+    rows.find((r) => r.name === "temperature" && !r.expired) ||
+    rows.find((r) => r.name === "temperature" && r.value != null);
+  if (!tempRow || tempRow.value == null) {
+    return null;
+  }
+
+  const measuredAt =
+    tempRow.timestamp ||
+    resp?.last_blue_measure_timestamp ||
+    new Date().toISOString();
+
+  function pickRow(name) {
+    return (
+      rows.find((r) => r.name === name && !r.expired) ||
+      rows.find((r) => r.name === name && r.value != null)
+    );
+  }
+
+  function rowToMetric(row) {
+    if (!row || row.value == null) return null;
+    return {
+      value: Number(row.value),
+      okMin: row.ok_min,
+      okMax: row.ok_max,
+      warnLow: row.warning_low,
+      warnHigh: row.warning_high,
+      expired: !!row.expired,
+    };
+  }
+
+  const reading = {
+    tempC: Number(tempRow.value),
+    measuredAt: new Date(measuredAt).toISOString(),
+    ph: rowToMetric(pickRow("ph")),
+    orp: rowToMetric(pickRow("orp")),
+    poolId,
+    deviceSerial,
+    status: resp?.status || "OK",
+    cloudTimestamp: resp?.last_blue_measure_timestamp
+      ? new Date(resp.last_blue_measure_timestamp).toISOString()
+      : null,
+  };
+  if (releaseMeta) reading.releaseMeta = releaseMeta;
+  return reading;
 }
 
 async function resolvePoolAndDevice(cached = {}) {
@@ -148,57 +234,71 @@ async function fetchLatestTemperature(cached = {}) {
   if (!blueriiotEnabled()) return null;
 
   const { poolId, deviceSerial } = await resolvePoolAndDevice(cached);
-  const path = `swimming_pool/${encodeURIComponent(poolId)}/blue/${encodeURIComponent(deviceSerial)}/lastMeasurements?mode=blue_and_strip`;
-  const resp = await apiGet(path);
 
-  const rows = resp?.data || [];
-  const tempRow =
-    rows.find((r) => r.name === "temperature" && !r.expired) ||
-    rows.find((r) => r.name === "temperature" && r.value != null);
-  if (!tempRow || tempRow.value == null) {
+  let respBefore;
+  try {
+    respBefore = await fetchLastMeasurements(poolId, deviceSerial);
+  } catch (e) {
+    logger.error("Blue Riiot: lastMeasurements (vor Release)", e?.message || e);
+    throw e;
+  }
+
+  const tsBefore = respBefore?.last_blue_measure_timestamp || null;
+  let releaseMeta = {
+    attempted: false,
+    ok: null,
+    error: null,
+    measuredAtBefore: tsBefore ? new Date(tsBefore).toISOString() : null,
+    measuredAtAfter: null,
+    timestampChanged: false,
+  };
+
+  let resp = respBefore;
+  if (releaseEventEnabled()) {
+    releaseMeta.attempted = true;
+    const releaseResult = await tryReleaseLastUnprocessedEvent(deviceSerial);
+    releaseMeta.ok = releaseResult.ok;
+    releaseMeta.error = releaseResult.error || null;
+    if (releaseResult.ok) {
+      logger.info("Blue Riiot: releaseLastUnprocessedEvent", {
+        deviceSerial,
+        response: releaseResult.resp,
+      });
+      try {
+        resp = await fetchLastMeasurements(poolId, deviceSerial);
+      } catch (e) {
+        logger.warn("Blue Riiot: lastMeasurements nach Release fehlgeschlagen", e?.message || e);
+      }
+    } else {
+      logger.info("Blue Riiot: releaseLastUnprocessedEvent nicht verfügbar", {
+        deviceSerial,
+        error: releaseResult.error,
+      });
+    }
+    const tsAfter = resp?.last_blue_measure_timestamp || null;
+    releaseMeta.measuredAtAfter = tsAfter ? new Date(tsAfter).toISOString() : null;
+    releaseMeta.timestampChanged =
+      !!tsBefore && !!tsAfter && String(tsBefore) !== String(tsAfter);
+    if (releaseMeta.timestampChanged) {
+      logger.info("Blue Riiot: Zeitstempel nach Release aktualisiert", releaseMeta);
+    }
+  }
+
+  const reading = parseLastMeasurementsResponse(resp, poolId, deviceSerial, releaseMeta);
+  if (!reading) {
     logger.warn("Blue Riiot: keine Temperatur in lastMeasurements", {
       status: resp?.status,
       last: resp?.last_blue_measure_timestamp,
+      releaseMeta,
     });
     return null;
   }
 
-  const measuredAt =
-    tempRow.timestamp ||
-    resp?.last_blue_measure_timestamp ||
-    new Date().toISOString();
-
-  function pickRow(name) {
-    return (
-      rows.find((r) => r.name === name && !r.expired) ||
-      rows.find((r) => r.name === name && r.value != null)
-    );
-  }
-
-  function rowToMetric(row) {
-    if (!row || row.value == null) return null;
-    return {
-      value: Number(row.value),
-      okMin: row.ok_min,
-      okMax: row.ok_max,
-      warnLow: row.warning_low,
-      warnHigh: row.warning_high,
-      expired: !!row.expired,
-    };
-  }
-
-  return {
-    tempC: Number(tempRow.value),
-    measuredAt: new Date(measuredAt).toISOString(),
-    ph: rowToMetric(pickRow("ph")),
-    orp: rowToMetric(pickRow("orp")),
-    poolId,
-    deviceSerial,
-    status: resp?.status || "OK",
-  };
+  return reading;
 }
 
 module.exports = {
   blueriiotEnabled,
   fetchLatestTemperature,
+  releaseEventEnabled,
 };

@@ -5507,19 +5507,23 @@ exports.syncBlueriiotJacuzzi = onSchedule(
 
     await maybeSendJacuzziWaterAlerts(status, prev);
 
-    await db.doc("config/blueriiot").set(
-      {
-        poolId: reading.poolId,
-        deviceSerial: reading.deviceSerial,
-        lastSyncAt: new Date().toISOString(),
-        lastMeasuredAt: reading.measuredAt,
-        lastTempC: reading.tempC,
-        lastError: null,
-      },
-      { merge: true }
-    );
+    const blueriiotPatch = {
+      poolId: reading.poolId,
+      deviceSerial: reading.deviceSerial,
+      lastSyncAt: new Date().toISOString(),
+      lastMeasuredAt: reading.measuredAt,
+      lastTempC: reading.tempC,
+      lastError: null,
+    };
+    if (reading.releaseMeta) {
+      blueriiotPatch.lastReleaseEvent = {
+        ...reading.releaseMeta,
+        at: new Date().toISOString(),
+      };
+    }
+    await db.doc("config/blueriiot").set(blueriiotPatch, { merge: true });
 
-    logger.info(`Blue Riiot: ${reading.tempC}°C @ ${reading.measuredAt}`);
+    logger.info(`Blue Riiot: ${reading.tempC}°C @ ${reading.measuredAt}`, reading.releaseMeta || {});
   }
 );
 
