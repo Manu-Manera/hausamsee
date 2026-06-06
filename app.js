@@ -294,36 +294,89 @@ try {
   console.error("Firebase-Init fehlgeschlagen", e);
 }
 
+function readLocalJson(key, fallback) {
+  try {
+    const raw = localStorage.getItem(`has_${key}`);
+    return raw ? JSON.parse(raw) : fallback;
+  } catch {
+    return fallback;
+  }
+}
+
+/** Kleine Text-/Listen-Daten – beim Start sofort parsen */
 const localStore = {
-  events: JSON.parse(localStorage.getItem("has_events") || "[]"),
-  putzplan: JSON.parse(localStorage.getItem("has_putzplan") || "[]"),
-  giessplan: JSON.parse(localStorage.getItem("has_giessplan") || "[]"),
-  gartentodos: JSON.parse(localStorage.getItem("has_gartentodos") || "[]"),
-  termine: JSON.parse(localStorage.getItem("has_termine") || "[]"),
-  anwesenheit: JSON.parse(localStorage.getItem("has_anwesenheit") || "{}"),
-  gaestebuch: JSON.parse(localStorage.getItem("has_gaestebuch") || "[]"),
-  galerie: JSON.parse(localStorage.getItem("has_galerie") || "[]"),
-  musik: JSON.parse(localStorage.getItem("has_musik") || "[]"),
-  kandidaten: JSON.parse(localStorage.getItem("has_kandidaten") || "[]"),
-  schaeden: JSON.parse(localStorage.getItem("has_schaeden") || "[]"),
-  bewohnerfotos: JSON.parse(localStorage.getItem("has_bewohnerfotos") || "{}"),
-  hausbilder: JSON.parse(localStorage.getItem("has_hausbilder") || "{}"),
-  eventfotos: JSON.parse(localStorage.getItem("has_eventfotos") || "[]"),
-  config: JSON.parse(localStorage.getItem("has_config") || "{}"),
-  guests: JSON.parse(localStorage.getItem("has_guests") || "[]"),
-  anmeldungen: JSON.parse(localStorage.getItem("has_anmeldungen") || "[]"),
-  nachrichten: JSON.parse(localStorage.getItem("has_nachrichten") || "[]"),
-  roomOffer: JSON.parse(localStorage.getItem("has_roomOffer") || "null"),
-  bewohnertexte: JSON.parse(localStorage.getItem("has_bewohnertexte") || "{}"),
-  gartenPlan: JSON.parse(localStorage.getItem("has_gartenPlan") || "null"),
-  memberPasswords: JSON.parse(localStorage.getItem("has_memberPasswords") || "{}"),
-  memberPrefs: JSON.parse(localStorage.getItem("has_memberPrefs") || "{}"),
-  movedOut: JSON.parse(localStorage.getItem("has_movedOut") || "[]"),
-  wellnessBookings: JSON.parse(localStorage.getItem("has_wellnessBookings") || "[]"),
-  jacuzziReadings: JSON.parse(localStorage.getItem("has_jacuzziReadings") || "[]"),
-  jacuzziStatus: JSON.parse(localStorage.getItem("has_jacuzziStatus") || "null"),
+  events: readLocalJson("events", []),
+  putzplan: readLocalJson("putzplan", []),
+  giessplan: readLocalJson("giessplan", []),
+  gartentodos: readLocalJson("gartentodos", []),
+  termine: readLocalJson("termine", []),
+  anwesenheit: readLocalJson("anwesenheit", {}),
+  kandidaten: readLocalJson("kandidaten", []),
+  config: readLocalJson("config", {}),
+  guests: readLocalJson("guests", []),
+  anmeldungen: readLocalJson("anmeldungen", []),
+  nachrichten: readLocalJson("nachrichten", []),
+  bewohnertexte: readLocalJson("bewohnertexte", {}),
+  memberPasswords: readLocalJson("memberPasswords", {}),
+  memberPrefs: readLocalJson("memberPrefs", {}),
+  movedOut: readLocalJson("movedOut", []),
+  wellnessBookings: readLocalJson("wellnessBookings", []),
+  jacuzziReadings: readLocalJson("jacuzziReadings", []),
+  einkaufsliste: readLocalJson("einkaufsliste", []),
+  eventBring: readLocalJson("eventBring", []),
+  hausfeatures: readLocalJson("hausfeatures", {}),
 };
 function saveLocal(key, value) { localStorage.setItem(`has_${key}`, JSON.stringify(value)); }
+
+/** Base64-Bilder/Audio – lazy laden (können zusammen >10 MB sein) */
+const heavyLocalCache = {};
+
+function getHeavyLocal(key, fallback) {
+  if (!(key in heavyLocalCache)) {
+    heavyLocalCache[key] = readLocalJson(key, fallback);
+    localStore[key] = heavyLocalCache[key];
+  }
+  return heavyLocalCache[key];
+}
+
+/** Firestore-Timestamps für localStorage in Zahlen umwandeln */
+function serializeForLocal(data) {
+  return JSON.parse(JSON.stringify(data, (_k, v) => {
+    if (v && typeof v.toDate === "function") return v.toDate().getTime();
+    if (v && typeof v.toMillis === "function") return v.toMillis();
+    return v;
+  }));
+}
+
+/** Nur leichte Collections beim Live-Sync cachen – Medien nie (Megabyte-Writes blockieren UI) */
+const PERSIST_ON_SNAPSHOT_KEYS = new Set([
+  "events", "putzplan", "giessplan", "gartentodos", "termine", "anwesenheit",
+  "anmeldungen", "einkaufsliste", "eventBring", "hausWiki", "kandidaten",
+  "guests", "nachrichten", "hausfeatures", "bewohnertexte",
+  "wellnessBookings", "jacuzziReadings", "jacuzziStatus",
+]);
+let persistPending = null;
+let persistTimer = null;
+
+function flushPersistPending() {
+  persistTimer = null;
+  if (!persistPending) return;
+  const batch = persistPending;
+  persistPending = null;
+  for (const [key, value] of Object.entries(batch)) {
+    const serialized = serializeForLocal(value);
+    localStore[key] = serialized;
+    saveLocal(key, serialized);
+  }
+}
+
+function persistFirestoreCache(key, value) {
+  if (!PERSIST_ON_SNAPSHOT_KEYS.has(key)) return;
+  if (!persistPending) persistPending = {};
+  persistPending[key] = value;
+  if (persistTimer) return;
+  persistTimer = setTimeout(flushPersistPending, 600);
+}
 
 /* ==========================================================================
    Helpers
@@ -1602,12 +1655,22 @@ const DEFAULT_GALLERY = [
 ];
 
 let galerieCache = [];
+let galerieFirestoreSynced = false;
 
 function renderGallery() {
   const grid = $("gallery");
+  if (!grid) return;
   const userImages = [...galerieCache].sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
-  // Default-Bilder nur zeigen wenn noch keine eigenen da sind
-  const images = userImages.length > 0 ? userImages : DEFAULT_GALLERY;
+  // Beim Firebase-Laden: kein Unsplash-Flash – erst echte Daten oder Ladehinweis
+  if (firebaseReady && !userImages.length && !galerieFirestoreSynced) {
+    grid.innerHTML = `<div class="empty-state gallery-loading"><span class="spinner"></span> Galerie wird geladen…</div>`;
+    return;
+  }
+  const images = userImages.length > 0 ? userImages : (!firebaseReady ? DEFAULT_GALLERY : []);
+  if (!images.length) {
+    grid.innerHTML = `<div class="empty-state">Noch keine Bilder in der Galerie.</div>`;
+    return;
+  }
 
   grid.innerHTML = images.map(img => `
     <div class="gallery-item" data-src="${escapeHtml(img.src)}" data-id="${escapeHtml(img.id)}" data-caption="${escapeHtml(img.caption || "")}">
@@ -9580,6 +9643,101 @@ async function deleteGuest(id) {
    Firebase Listeners (Live)
    ========================================================================== */
 
+/** Leichte Collections – beim Start sofort aus localStorage */
+function hydrateCachesFromLocalStore() {
+  eventsCache = localStore.events || [];
+  putzCache = localStore.putzplan || [];
+  termineCache = localStore.termine || [];
+  anwesendCache = localStore.anwesenheit || {};
+  kandidatenCache = localStore.kandidaten || [];
+  hausfeaturesCache = localStore.hausfeatures || {};
+  guestsCache = localStore.guests || [];
+  anmeldungenCache = localStore.anmeldungen || [];
+  nachrichtenCache = localStore.nachrichten || [];
+  bewohnertexteCache = localStore.bewohnertexte || {};
+  giessplanCache = localStore.giessplan || [];
+  gartenTodoCache = localStore.gartentodos || [];
+  einkaufslisteCache = localStore.einkaufsliste || [];
+  eventBringCache = localStore.eventBring || [];
+  wellnessBookingsCache = localStore.wellnessBookings || [];
+  jacuzziReadingsCache = localStore.jacuzziReadings || [];
+}
+
+/** Sichtbare Medien – einmal parsen, Above-the-fold */
+function hydrateAboveFoldHeavyFromLocal() {
+  galerieCache = getHeavyLocal("galerie", []);
+  galerieFirestoreSynced = !firebaseReady || galerieCache.length > 0;
+  hausbilderCache = getHeavyLocal("hausbilder", {});
+  bewohnerfotosCache = getHeavyLocal("bewohnerfotos", {});
+  jacuzziStatusCache = getHeavyLocal("jacuzziStatus", null);
+}
+
+/** Weitere Medien – erst wenn Browser idle ist */
+function hydrateDeferredHeavyFromLocal() {
+  gbCache = getHeavyLocal("gaestebuch", []);
+  musikCache = [...getHeavyLocal("musik", [])].sort((a, b) => (a.createdAt || 0) - (b.createdAt || 0));
+  schaedenCache = getHeavyLocal("schaeden", []);
+  eventfotosCache = getHeavyLocal("eventfotos", []);
+  roomOfferCache = getHeavyLocal("roomOffer", null);
+  gartenPlanCache = normalizeGartenPlan(getHeavyLocal("gartenPlan", null));
+  hausWikiCache = getHeavyLocal("hausWiki", null);
+}
+
+/** Sichtbarer Seiteninhalt zuerst – Rest wenn Browser Luft hat */
+function renderAboveFoldFromCaches() {
+  renderEvents();
+  renderBewohner();
+  renderHausFeatures();
+  renderGallery();
+  renderAnwesend();
+  renderTermine();
+  renderJacuzziPanel();
+  renderWellnessBelegung();
+}
+
+function renderDeferredFromCaches() {
+  renderAufgaben();
+  renderGiessplan();
+  renderGartenTodos();
+  populateGiessWhoSelect();
+  populateGartenTodoWhoSelect();
+  renderGaestebuch();
+  renderPlaylist();
+  renderKandidaten();
+  renderSchaeden();
+  renderGuestsList();
+  renderNachrichten();
+  renderRoomOffer();
+  renderEinkaufsliste();
+  renderHausWiki();
+  syncBewerbungToggleVisibility();
+}
+
+let deferredRenderScheduled = false;
+
+function scheduleDeferredRenders() {
+  if (deferredRenderScheduled) return;
+  deferredRenderScheduled = true;
+  const run = () => {
+    deferredRenderScheduled = false;
+    hydrateDeferredHeavyFromLocal();
+    renderDeferredFromCaches();
+  };
+  if (typeof requestIdleCallback === "function") {
+    requestIdleCallback(run, { timeout: 1200 });
+  } else {
+    setTimeout(run, 16);
+  }
+}
+
+function renderAllFromCaches() {
+  hydrateCachesFromLocalStore();
+  hydrateAboveFoldHeavyFromLocal();
+  hydrateDeferredHeavyFromLocal();
+  renderAboveFoldFromCaches();
+  renderDeferredFromCaches();
+}
+
 async function loadAuthConfig() {
   if (firebaseReady) {
     try {
@@ -9630,121 +9788,94 @@ async function loadAuthConfig() {
 
 function setupListeners() {
   if (!firebaseReady) {
-    eventsCache = localStore.events;
-    putzCache = localStore.putzplan;
-    termineCache = localStore.termine;
-    anwesendCache = localStore.anwesenheit;
-    gbCache = localStore.gaestebuch;
-    galerieCache = localStore.galerie;
-    musikCache = [...localStore.musik].sort((a, b) => (a.createdAt || 0) - (b.createdAt || 0));
-    kandidatenCache = localStore.kandidaten;
-    schaedenCache = localStore.schaeden;
-    bewohnerfotosCache = localStore.bewohnerfotos;
-    hausbilderCache = localStore.hausbilder;
-    eventfotosCache = localStore.eventfotos;
-    guestsCache = localStore.guests;
-    anmeldungenCache = localStore.anmeldungen;
-    nachrichtenCache = localStore.nachrichten;
-    roomOfferCache = localStore.roomOffer || null;
-    bewohnertexteCache = localStore.bewohnertexte || {};
-    gartenPlanCache = normalizeGartenPlan(localStore.gartenPlan);
-    giessplanCache = localStore.giessplan || [];
-    gartenTodoCache = localStore.gartentodos || [];
-    wellnessBookingsCache = localStore.wellnessBookings || [];
-    jacuzziReadingsCache = localStore.jacuzziReadings || [];
-    jacuzziStatusCache = localStore.jacuzziStatus;
-    renderEvents();
-    renderAufgaben();
-    renderGiessplan();
-    renderGartenTodos();
-    populateGiessWhoSelect();
-    populateGartenTodoWhoSelect();
-    renderTermine();
-    renderAnwesend();
-    renderJacuzziPanel();
-    renderWellnessBelegung();
-    renderGaestebuch();
-    renderGallery();
-    renderPlaylist();
-    renderKandidaten();
-    renderSchaeden();
-    renderBewohner();
-    renderHausFeatures();
-    renderGuestsList();
-    renderNachrichten();
-    renderRoomOffer();
-    syncBewerbungToggleVisibility();
+    hydrateCachesFromLocalStore();
+    renderAllFromCaches();
     return;
   }
 
   onSnapshot(query(collection(db, "events"), orderBy("createdAt", "desc")), (snap) => {
     eventsCache = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+    persistFirestoreCache("events", eventsCache);
     renderEvents();
   }, (err) => console.warn("events listener:", err.message));
 
   onSnapshot(collection(db, "anmeldungen"), (snap) => {
     anmeldungenCache = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+    persistFirestoreCache("anmeldungen", anmeldungenCache);
     renderEvents();
   }, (err) => console.warn("anmeldungen listener:", err.message));
 
   onSnapshot(query(collection(db, "putzplan"), orderBy("createdAt", "desc")), (snap) => {
     putzCache = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+    persistFirestoreCache("putzplan", putzCache);
     renderAufgaben();
   }, (err) => console.warn("putzplan listener:", err.message));
 
   onSnapshot(query(collection(db, "giessplan"), orderBy("createdAt", "desc")), (snap) => {
     giessplanCache = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+    persistFirestoreCache("giessplan", giessplanCache);
     renderGiessplan();
   }, (err) => console.warn("giessplan listener:", err.message));
 
   onSnapshot(query(collection(db, "gartentodos"), orderBy("createdAt", "desc")), (snap) => {
     gartenTodoCache = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
+    persistFirestoreCache("gartentodos", gartenTodoCache);
     renderGartenTodos();
   }, (err) => console.warn("gartentodos listener:", err.message));
 
   onSnapshot(query(collection(db, "einkaufsliste"), orderBy("createdAt", "desc")), (snap) => {
     einkaufslisteCache = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
+    persistFirestoreCache("einkaufsliste", einkaufslisteCache);
     renderEinkaufsliste();
   }, (err) => console.warn("einkaufsliste listener:", err.message));
 
   onSnapshot(query(collection(db, "eventBring"), orderBy("createdAt", "desc")), (snap) => {
     eventBringCache = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
+    persistFirestoreCache("eventBring", eventBringCache);
     renderEvents();
   }, (err) => console.warn("eventBring listener:", err.message));
 
   onSnapshot(doc(db, "config", "hausWiki"), (snap) => {
     hausWikiCache = snap.exists() ? snap.data() : null;
+    persistFirestoreCache("hausWiki", hausWikiCache);
     renderHausWiki();
   }, (err) => console.warn("hausWiki listener:", err.message));
 
   onSnapshot(query(collection(db, "termine"), orderBy("createdAt", "desc")), (snap) => {
     termineCache = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+    persistFirestoreCache("termine", termineCache);
     renderTermine();
   }, (err) => console.warn("termine listener:", err.message));
 
   onSnapshot(collection(db, "anwesenheit"), (snap) => {
     anwesendCache = {};
     snap.docs.forEach(d => { anwesendCache[d.id] = d.data(); });
+    persistFirestoreCache("anwesenheit", anwesendCache);
     renderAnwesend();
   }, (err) => console.warn("anwesenheit listener:", err.message));
 
   onSnapshot(query(collection(db, "gaestebuch"), orderBy("createdAt", "desc")), (snap) => {
     gbCache = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+    persistFirestoreCache("gaestebuch", gbCache);
     renderGaestebuch();
   }, (err) => console.warn("gaestebuch listener:", err.message));
 
   onSnapshot(query(collection(db, "galerie"), orderBy("createdAt", "desc")), (snap) => {
+    galerieFirestoreSynced = true;
     galerieCache = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+    persistFirestoreCache("galerie", galerieCache);
     renderGallery();
   }, (err) => console.warn("galerie listener:", err.message));
 
   onSnapshot(query(collection(db, "kandidaten"), orderBy("createdAt", "desc")), (snap) => {
     kandidatenCache = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+    persistFirestoreCache("kandidaten", kandidatenCache);
     renderKandidaten();
   }, (err) => console.warn("kandidaten listener:", err.message));
 
   onSnapshot(query(collection(db, "schaeden"), orderBy("createdAt", "desc")), (snap) => {
     schaedenCache = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+    persistFirestoreCache("schaeden", schaedenCache);
     renderSchaeden();
   }, (err) => console.warn("schaeden listener:", err.message));
 
@@ -9755,39 +9886,46 @@ function setupListeners() {
       const newIdx = musikCache.findIndex(s => s.id === prevId);
       currentSongIdx = newIdx;
     }
+    persistFirestoreCache("musik", musikCache);
     renderPlaylist();
   }, (err) => console.warn("musik listener:", err.message));
 
   onSnapshot(collection(db, "bewohnerfotos"), (snap) => {
     bewohnerfotosCache = {};
     snap.docs.forEach(d => { bewohnerfotosCache[d.id] = d.data(); });
+    persistFirestoreCache("bewohnerfotos", bewohnerfotosCache);
     renderBewohner();
   }, (err) => console.warn("bewohnerfotos listener:", err.message));
 
   onSnapshot(collection(db, "hausbilder"), (snap) => {
     hausbilderCache = {};
     snap.docs.forEach(d => { hausbilderCache[d.id] = d.data(); });
+    persistFirestoreCache("hausbilder", hausbilderCache);
     renderHausFeatures();
   }, (err) => console.warn("hausbilder listener:", err.message));
 
   onSnapshot(collection(db, "hausfeatures"), (snap) => {
     hausfeaturesCache = {};
     snap.docs.forEach(d => { hausfeaturesCache[d.id] = d.data(); });
+    persistFirestoreCache("hausfeatures", hausfeaturesCache);
     renderHausFeatures();
   }, (err) => console.warn("hausfeatures listener:", err.message));
 
   onSnapshot(query(collection(db, "eventfotos"), orderBy("createdAt", "desc")), (snap) => {
     eventfotosCache = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+    persistFirestoreCache("eventfotos", eventfotosCache);
     renderEvents();
   }, (err) => console.warn("eventfotos listener:", err.message));
 
   onSnapshot(query(collection(db, "guests"), orderBy("createdAt", "desc")), (snap) => {
     guestsCache = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+    persistFirestoreCache("guests", guestsCache);
     renderGuestsList();
   }, (err) => console.warn("guests listener:", err.message));
 
   onSnapshot(query(collection(db, "nachrichten"), orderBy("createdAt", "desc")), (snap) => {
     nachrichtenCache = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+    persistFirestoreCache("nachrichten", nachrichtenCache);
     renderNachrichten();
   }, (err) => console.warn("nachrichten listener:", err.message));
 
@@ -9805,21 +9943,25 @@ function setupListeners() {
   onSnapshot(collection(db, "bewohnertexte"), (snap) => {
     bewohnertexteCache = {};
     snap.docs.forEach(d => { bewohnertexteCache[d.id] = d.data(); });
+    persistFirestoreCache("bewohnertexte", bewohnertexteCache);
     renderBewohner();
   }, (err) => console.warn("bewohnertexte listener:", err.message));
 
   onSnapshot(doc(db, "config", "jacuzzi"), (snap) => {
     jacuzziStatusCache = snap.exists() ? snap.data() : null;
+    persistFirestoreCache("jacuzziStatus", jacuzziStatusCache);
     renderJacuzziPanel();
   }, (err) => console.warn("jacuzzi status listener:", err.message));
 
   onSnapshot(query(collection(db, "jacuzziReadings"), orderBy("at", "desc"), limit(48)), (snap) => {
     jacuzziReadingsCache = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
+    persistFirestoreCache("jacuzziReadings", jacuzziReadingsCache);
     renderJacuzziPanel();
   }, (err) => console.warn("jacuzziReadings listener:", err.message));
 
   onSnapshot(query(collection(db, "wellnessBookings"), orderBy("startAt", "asc")), (snap) => {
     wellnessBookingsCache = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
+    persistFirestoreCache("wellnessBookings", wellnessBookingsCache);
     renderWellnessBelegung();
     renderJacuzziPanel();
   }, (err) => console.warn("wellnessBookings listener:", err.message));
@@ -9854,9 +9996,11 @@ populateAufgabenWhoSelect();
 setAufgabenFormDefaults();
 populateSchadenZustaendigSelect();
 $("schaedenExportBtn")?.addEventListener("click", () => downloadSchaedenExcel());
-renderBewohner();
-renderHausFeatures();
-renderGallery();
+hydrateCachesFromLocalStore();
+hydrateAboveFoldHeavyFromLocal();
+renderAboveFoldFromCaches();
+scheduleDeferredRenders();
+setupListeners();
 setupScrollAnim();
 setupJacuzziVerlaufToggles();
 function placeWeatherWidget() {
@@ -9879,13 +10023,12 @@ placeWeatherWidget();
 }
 initWeather();
 
-// Auth-Config zuerst laden (wichtig für korrekte Passwort-Prüfung beim Auto-Login)
+// Auth-Config parallel (Firestore-Listener starten schon oben via setupListeners)
 loadAuthConfig().then(() => {
   auth.init();
   onMovedOutChanged();
   populateLoginMemberSelect();
   populateAufgabenWhoSelect();
-  setupListeners();
   setupRoomShareUI();
   if (new URLSearchParams(window.location.search).get("openLogin") === "1" ||
       new URLSearchParams(window.location.search).get("login") === "1") {
