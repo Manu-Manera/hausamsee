@@ -47,7 +47,11 @@ async function buildWikiReply(db, query) {
     notfall: "🚨 Notfall",
     adresse: "📍 Adresse",
   };
-  return `${titles[q.key] || "📖 Info"}\n\n${text}\n\n🌐 ${WEBSITE_URL}`;
+  const footer =
+    q.key === "wlan"
+      ? `\n\n📶 QR-Code für Gäste: schreib *WLAN QR*`
+      : "";
+  return `${titles[q.key] || "📖 Info"}\n\n${text}${footer}\n\n🌐 ${WEBSITE_URL}`;
 }
 
 module.exports = { parseWikiQuery, buildWikiReply, DEFAULT_WIKI };

@@ -5606,6 +5606,17 @@ body.wg-guest a[href="#intern"] {
 .einkaufsliste-li:last-child { border-bottom: none; }
 
 /* Haus-Wiki */
+.wlan-qr-form {
+  margin-bottom: 16px;
+  padding: 14px;
+  border-radius: 12px;
+  background: var(--bg-soft, #f8f5f2);
+  border: 1px solid rgba(0, 0, 0, 0.06);
+}
+.wlan-qr-title {
+  margin: 0 0 6px;
+  font-size: 0.95rem;
+}
 .haus-wiki-grid {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));

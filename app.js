@@ -9297,7 +9297,7 @@ function renderGustavHub() {
           <ul class="gustav-hub-cmds">
             <li><em>Jacuzzi warm?</em> · <em>Wasserqualität?</em></li>
             <li><em>Kino frei?</em> · <em>Sauna frei?</em></li>
-            <li><em>WLAN?</em> · <em>Müll?</em></li>
+            <li><em>WLAN?</em> · <em>WLAN QR</em> · <em>Müll?</em></li>
             <li><em>Mitbringen Spieleabend: Salat</em></li>
             <li><em>Kino heute Avatar</em></li>
           </ul>
@@ -9312,6 +9312,39 @@ function renderGustavHub() {
   });
 }
 
+function syncWlanQrForm() {
+  const ssidEl = $("wlanSsid");
+  const passEl = $("wlanPassword");
+  if (!ssidEl || !passEl) return;
+  const data = hausWikiCache && typeof hausWikiCache === "object" ? hausWikiCache : {};
+  ssidEl.value = data.wlanSsid || "Haus am See 2.0";
+  passEl.value = data.wlanPassword || "";
+}
+
+async function saveWlanQrSettings(e) {
+  e?.preventDefault();
+  if (!requireMember("WLAN-QR-Einstellungen speichern")) return;
+  const ssid = ($("wlanSsid")?.value || "Haus am See 2.0").trim() || "Haus am See 2.0";
+  const password = ($("wlanPassword")?.value || "").trim();
+  if (!password) {
+    showToast("Bitte WLAN-Passwort eintragen.", "error");
+    return;
+  }
+  const payload = { wlanSsid: ssid, wlanPassword: password, wlanSecurity: "WPA" };
+  if (firebaseReady) {
+    try {
+      await setDoc(doc(db, "config", "hausWiki"), payload, { merge: true });
+      showToast("WLAN für Gustav-QR gespeichert.", "success");
+    } catch {
+      showToast("Speichern fehlgeschlagen.", "error");
+    }
+  } else {
+    hausWikiCache = { ...(hausWikiCache || {}), ...payload };
+    saveLocal("hausWiki", hausWikiCache);
+    showToast("WLAN lokal gespeichert.", "success");
+  }
+}
+
 function renderHausWiki() {
   const el = $("hausWikiList");
   if (!el) return;
@@ -9319,9 +9352,11 @@ function renderHausWiki() {
     el.innerHTML = "";
     return;
   }
+  syncWlanQrForm();
   const wiki = { ...HAUS_WIKI_DEFAULTS };
   if (hausWikiCache && typeof hausWikiCache === "object") {
     for (const [key, val] of Object.entries(hausWikiCache)) {
+      if (["wlanSsid", "wlanPassword", "wlanSecurity"].includes(key)) continue;
       if (typeof val === "string" && val.trim()) {
         wiki[key] = { ...(wiki[key] || { title: key }), text: val.trim() };
       }
@@ -9418,6 +9453,8 @@ $("einkaufslisteForm")?.addEventListener("submit", (e) => {
   const input = $("einkaufslisteInput");
   void addEinkaufslisteItem(input?.value, input);
 });
+
+$("wlanQrForm")?.addEventListener("submit", (e) => { void saveWlanQrSettings(e); });
 
 $("deinTagEnabledCheckbox")?.addEventListener("change", (e) => {
   const cadence = $("deinTagCadenceSelect")?.value || "daily";

@@ -39,6 +39,7 @@ const tasksOverview = require("./tasksOverview");
 const deinTag = require("./deinTag");
 const einkaufsliste = require("./einkaufsliste");
 const hausWiki = require("./hausWiki");
+const wifiQr = require("./wifiQr");
 const birthdays = require("./birthdays");
 const gustavExtras = require("./gustavExtras");
 const { saturday10Iso } = require("./calendarIcs");
@@ -229,6 +230,66 @@ async function sendWhatsAppDetailed(to, text, phoneIdOpt) {
 async function sendWhatsApp(to, text, phoneIdOpt) {
   const r = await sendWhatsAppDetailed(to, text, phoneIdOpt);
   return r.ok;
+}
+
+/** Bild an WhatsApp senden (PNG/JPEG-Buffer, z. B. WLAN-QR). */
+async function uploadWhatsAppMedia(buffer, mimeType, filename, phoneIdOpt) {
+  const { token } = cfg();
+  const phoneId = await resolveWhatsAppPhoneId(phoneIdOpt);
+  if (!token || !phoneId || !buffer?.length) return null;
+  try {
+    const form = new FormData();
+    form.append("messaging_product", "whatsapp");
+    form.append("type", mimeType);
+    form.append("file", new Blob([buffer], { type: mimeType }), filename || "image.png");
+    const res = await fetch(`https://graph.facebook.com/v20.0/${phoneId}/media`, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${token}` },
+      body: form,
+    });
+    const raw = await res.text();
+    if (!res.ok) {
+      logger.warn("uploadWhatsAppMedia failed", { status: res.status, body: raw.slice(0, 300) });
+      return null;
+    }
+    const j = JSON.parse(raw);
+    return j.id || null;
+  } catch (e) {
+    logger.error("uploadWhatsAppMedia", e);
+    return null;
+  }
+}
+
+async function sendWhatsAppImage(to, imageBuffer, caption, phoneIdOpt) {
+  const mediaId = await uploadWhatsAppMedia(imageBuffer, "image/png", "wlan-qr.png", phoneIdOpt);
+  if (!mediaId) return false;
+  const { token } = cfg();
+  const phoneId = await resolveWhatsAppPhoneId(phoneIdOpt);
+  if (!token || !phoneId) return false;
+  try {
+    const res = await fetch(`https://graph.facebook.com/v20.0/${phoneId}/messages`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+      body: JSON.stringify({
+        messaging_product: "whatsapp",
+        to,
+        type: "image",
+        image: {
+          id: mediaId,
+          caption: caption ? String(caption).slice(0, 1024) : undefined,
+        },
+      }),
+    });
+    if (!res.ok) {
+      const body = await res.text().catch(() => "");
+      logger.warn("sendWhatsAppImage failed", { status: res.status, body: body.slice(0, 300) });
+      return false;
+    }
+    return true;
+  } catch (e) {
+    logger.error("sendWhatsAppImage", e);
+    return false;
+  }
 }
 
 /** WhatsApp Interactive Reply Buttons (max. 3, Titel je max. 20 Zeichen). */
@@ -2932,7 +2993,8 @@ const HELP_TEXT =
   `🎬 "Kino heute Avatar"\n` +
   `🚪 "Bewerber Lisa" · "Bewerber Status Lisa: eingeladen"\n` +
   `📊 "Umfrage: Titel | morgen | bis Donnerstag"\n` +
-  `📖 "WLAN?" · "Müll?" (Haus-Wiki)\n\n` +
+  `📖 "WLAN?" · "Müll?" (Haus-Wiki)\n` +
+  `📶 "WLAN QR" / "QR Code WLAN" — QR zum Scannen (Gäste verbinden sich automatisch)\n\n` +
   `*Garten To-Do / Giessplan (Website WG-Kalender)*\n` +
   `🌿 "garten erledigt" / "garten erledigt Rasen hinten"\n` +
   `💧 "gegossen" / "gegossen Wohnzimmer"\n\n` +
@@ -3154,6 +3216,17 @@ async function dispatch(ctx) {
       await reply("🌡️ Ups, konnte das Wetter gerade nicht abrufen. Versuch's später nochmal!");
     }
     return true;
+  }
+
+  // 0.54) WLAN-QR-Code für Gäste
+  if (wifiQr.parseWifiQrQuery(rawInput)) {
+    return wifiQr.handleWifiQrRequest({
+      db,
+      to: from,
+      phoneId: replyPhoneId,
+      reply,
+      sendImage: sendWhatsAppImage,
+    });
   }
 
   // 0.55) Haus-Wiki (WLAN, Müll, Notfall, …)

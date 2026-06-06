@@ -106,7 +106,7 @@ Beispiele:
 - Kino heute Film -> *Kino heute Avatar*
 - Bewerber Lisa -> Status anzeigen; Bewerber Status Lisa: eingeladen -> aktualisieren
 - Umfrage mit Deadline -> *Umfrage: Titel | wann | bis Donnerstag*
-- WLAN/Müll/Notfall -> Haus-Wiki (*WLAN?*, *Müll?*)
+- WLAN/Müll/Notfall -> Haus-Wiki (*WLAN?*, *Müll?*); *WLAN QR* / *QR Code WLAN* -> QR-Bild für Gäste
 - Yes Event/Oui Event/Ja Event -> *Ja Event*
 - No Event/Non Event/Nein Event -> *Nein Event*
 - Maybe/Vielleicht Event -> *Vielleicht Event*

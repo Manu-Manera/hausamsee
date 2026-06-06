@@ -749,7 +749,20 @@
 
         <div class="settings-card" id="hausWikiCard" data-wg-only>
           <h3>📖 Haus-Wiki</h3>
-          <p class="form-note" style="margin-bottom:10px;">Gustav kennt diese Infos – oder frag per WhatsApp: «WLAN?», «Müll?»</p>
+          <p class="form-note" style="margin-bottom:10px;">Gustav kennt diese Infos – oder frag per WhatsApp: «WLAN?», «Müll?», «WLAN QR»</p>
+          <form id="wlanQrForm" class="wlan-qr-form form-card inline">
+            <h4 class="wlan-qr-title">📶 WLAN QR-Code (Gäste)</h4>
+            <p class="form-note small">Gustav schickt einen QR-Code – Gäste scannen und sind automatisch im WLAN.</p>
+            <div class="field">
+              <label for="wlanSsid">Netzwerk (SSID)</label>
+              <input id="wlanSsid" type="text" maxlength="64" placeholder="Haus am See 2.0" autocomplete="off" />
+            </div>
+            <div class="field">
+              <label for="wlanPassword">WLAN-Passwort</label>
+              <input id="wlanPassword" type="password" maxlength="128" placeholder="Passwort" autocomplete="new-password" />
+            </div>
+            <button type="submit" class="btn btn-primary small">WLAN für QR speichern</button>
+          </form>
           <div id="hausWikiList" class="haus-wiki-grid"></div>
         </div>
 
