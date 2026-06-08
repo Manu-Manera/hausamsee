@@ -2429,6 +2429,38 @@ async function createWellnessBooking({ resource, who, startAt, endAt, title, cre
   return { id: ref.id, ...entry };
 }
 
+/** WhatsApp bei neuer Sauna-Buchung (komma-separiert, ohne +). Default: Manu. */
+function saunaBookingNotifyTargets() {
+  const raw =
+    process.env.SAUNA_BOOKING_NOTIFY ||
+    process.env.WELLNESS_BOOKING_NOTIFY ||
+    "41798385590";
+  return [...new Set(raw.split(",").map((s) => s.trim().replace(/\D/g, "")).filter(Boolean))];
+}
+
+async function sendSaunaBookingAlert(data) {
+  if (!data || data.resource !== "sauna") return;
+  const targets = saunaBookingNotifyTargets();
+  if (!targets.length) return;
+  const when = fmtWellnessDateLabel(data.startAt);
+  const range = fmtWellnessTimeRange(data.startAt, data.endAt);
+  const who = data.who || data.createdBy || "?";
+  const via = data.createdBy && data.createdBy !== who ? `\n📝 Eingetragen von: *${data.createdBy}*` : "";
+  const text =
+    `🧖 *Neue Sauna-Buchung*\n\n` +
+    `👤 *${who}*\n` +
+    `📅 ${when}, *${range}*${via}\n\n` +
+    `🌐 ${WEBSITE_URL}/#kalender`;
+  for (const to of targets) {
+    try {
+      const ok = await sendWhatsApp(to, text);
+      if (!ok) logger.warn("sendSaunaBookingAlert failed", { to });
+    } catch (e) {
+      logger.error("sendSaunaBookingAlert", { to, error: e?.message });
+    }
+  }
+}
+
 function parseWellnessQuery(raw, history) {
   const s = String(raw || "").trim();
   const low = s.toLowerCase();
@@ -3002,7 +3034,8 @@ const HELP_TEXT =
   `🛁 "Jacuzzi?" – Übersicht mit Wasserqualität (Temp, pH, Chlorgehalt)\n` +
   `🛁 "Jacuzzi warm?" / "Ist der Jacuzzi warm?"\n` +
   `🎬 "Kino frei?" · 🧖 "Sauna frei?" · 🛁 "Jacuzzi frei?"\n` +
-  `📅 "Jacuzzi besetzt von mir bis 15 Uhr" · "Sauna für Andy von 18 bis 20"\n\n` +
+  `📅 Sauna buchen: *"Sauna besetzt von mir bis 20 Uhr"* · *"Sauna für Corina von 18 bis 21"*\n` +
+  `📅 Auch Jacuzzi/Kino: *"Jacuzzi besetzt von mir bis 15 Uhr"*\n\n` +
   `*Anwesenheit*\n` +
   `✅ "Bin da" / "Bin weg 1.5."\n` +
   `📋 "Wer ist da?"\n\n` +
@@ -4829,6 +4862,17 @@ exports.onGartenCommand = onDocumentCreated("garten_commands/{id}", async (event
 /* ==========================================================================
    Kontaktformular → WhatsApp
    ========================================================================== */
+
+exports.onWellnessBookingCreated = onDocumentCreated("wellnessBookings/{id}", async (event) => {
+  const data = event.data?.data();
+  if (!data || data.resource !== "sauna") return;
+  try {
+    await sendSaunaBookingAlert(data);
+    logger.info("Sauna-Buchungsbenachrichtigung gesendet", { who: data.who });
+  } catch (e) {
+    logger.error("onWellnessBookingCreated", e);
+  }
+});
 
 exports.onNewNachricht = onDocumentCreated("nachrichten/{id}", async (event) => {
   const data = event.data?.data();
