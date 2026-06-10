@@ -21,6 +21,9 @@ const REGIONS = {
   in: "https://openapi.tuyain.com",
 };
 
+/** 2-Kanal-Ventile (Kategorie ggq, z. B. Wasserhahn 1 Manu): Countdown max. 24 Min (Tuya 2008 darüber). */
+const GGQ_DUAL_MAX_COUNTDOWN_MINUTES = 24;
+
 function cfg() {
   const region = (process.env.TUYA_REGION || "eu").toLowerCase();
   return {
@@ -325,20 +328,32 @@ async function startIrrigationChannel(nameOrId, minutes, channel) {
   const switchCode = `switch_${channel}`;
   const countdownCode = `countdown_${channel}`;
   const statusCodes = (device.status || []).map((s) => s.code);
-  if (!statusCodes.includes(switchCode) || !statusCodes.includes(countdownCode)) {
-    throw new Error(`Gerät "${device.name}" hat keinen Kanal ${channel} (${switchCode}/${countdownCode}).`);
+  if (!statusCodes.includes(switchCode)) {
+    throw new Error(`Gerät "${device.name}" hat keinen Kanal ${channel} (${switchCode}).`);
   }
 
-  const commands = [
-    { code: countdownCode, value: minutes * 60 },
-    { code: switchCode, value: true },
-  ];
+  const safeMinutes = Math.max(1, Math.min(GGQ_DUAL_MAX_COUNTDOWN_MINUTES, Math.round(minutes)));
+  const useHardwareTimer = minutes <= GGQ_DUAL_MAX_COUNTDOWN_MINUTES && statusCodes.includes(countdownCode);
+
+  const commands = [];
+  if (useHardwareTimer) {
+    commands.push({ code: countdownCode, value: safeMinutes * 60 });
+  }
+  commands.push({ code: switchCode, value: true });
+
   await apiCall({
     method: "POST",
     path: `/v1.0/devices/${device.id}/commands`,
     body: { commands },
   });
-  return { id: device.id, name: device.name, channel, minutes, commands: commands.map((c) => `${c.code}=${c.value}`) };
+  return {
+    id: device.id,
+    name: device.name,
+    channel,
+    minutes,
+    hardwareTimer: useHardwareTimer,
+    commands: commands.map((c) => `${c.code}=${c.value}`),
+  };
 }
 
 /**

@@ -4928,6 +4928,129 @@ body.is-spotify-track .vinyl {
   flex: 1 1 auto;
   min-width: 160px;
 }
+
+/* Regen-Warnung («Jetzt bewässern») */
+.garten-rain-dialog {
+  max-width: 440px;
+}
+
+.garten-rain-form {
+  gap: 16px;
+}
+
+.garten-rain-banner {
+  margin: 0;
+  padding: 14px 16px;
+  background: linear-gradient(135deg, rgba(91, 141, 184, 0.12), rgba(91, 141, 184, 0.06));
+  border: 1px solid rgba(91, 141, 184, 0.28);
+  border-radius: var(--r-md, 16px);
+}
+
+.garten-rain-lead {
+  margin: 0 0 8px;
+  font-size: 1.02rem;
+  font-weight: 600;
+  line-height: 1.4;
+  color: var(--cocoa);
+}
+
+.garten-rain-detail {
+  margin: 0;
+  font-size: 0.9rem;
+  line-height: 1.45;
+  color: var(--text-soft);
+}
+
+.garten-rain-question {
+  margin: 0;
+  font-size: 0.92rem;
+  line-height: 1.45;
+}
+
+.garten-rain-hint {
+  margin: 0;
+  font-size: 0.78rem;
+  line-height: 1.4;
+  color: var(--text-muted);
+}
+
+.garten-rain-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-top: 4px;
+}
+
+.garten-rain-actions .btn {
+  flex: 1 1 140px;
+  min-width: 0;
+}
+
+@media (max-width: 400px) {
+  .garten-rain-actions {
+    flex-direction: column;
+  }
+  .garten-rain-actions .btn {
+    width: 100%;
+  }
+}
+
+/* Dialog-Buttons (Auth & Modals) */
+.auth-btns {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-top: 4px;
+}
+
+.auth-btns .btn,
+.auth-btns .btn-primary,
+.auth-btns .btn-secondary {
+  flex: 1 1 120px;
+  border-radius: 999px;
+}
+
+.auth-btns .btn-secondary {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 13px 24px;
+  font-family: inherit;
+  font-size: 0.96rem;
+  font-weight: 600;
+  cursor: pointer;
+  background: var(--card);
+  color: var(--cocoa);
+  border: 1px solid var(--card-border);
+  transition: all 0.22s var(--ease);
+}
+
+.auth-btns .btn-secondary:hover {
+  background: rgba(255, 251, 243, 0.95);
+  border-color: var(--terracotta);
+  color: var(--terracotta-dark);
+}
+
+.auth-btns .btn-primary {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 13px 24px;
+  font-family: inherit;
+  font-size: 0.96rem;
+  font-weight: 600;
+  cursor: pointer;
+  border: none;
+  background: linear-gradient(135deg, var(--terracotta) 0%, var(--terracotta-dark) 100%);
+  color: white;
+  box-shadow: 0 6px 18px -6px rgba(198, 122, 80, 0.55);
+  transition: all 0.22s var(--ease);
+}
+
+.auth-btns .btn-primary:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 10px 24px -6px rgba(198, 122, 80, 0.65);
+}
 .garten-now-zone-field {
   flex: 1 1 220px;
   min-width: 180px;

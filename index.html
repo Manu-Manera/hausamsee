@@ -631,11 +631,12 @@
           <fieldset class="garten-sequenz-box">
             <legend>🔧 Geräte-Sequenz</legend>
             <p class="form-note" style="margin:0 0 12px;">
-              <strong>Ablauf pro Zone:</strong> Ventil AN → Pumpe AN → Dauer → Pumpe AUS → Nachlauf → Ventil AUS. Drei Zonen mit eigenem Wochenplan.
+              <strong>Beet &amp; Gartenschlauch:</strong> nur Ventil AN → Dauer → Ventil AUS.<br>
+              <strong>Tomatenbewässerung (WH1 rechts):</strong> Ventil AN → mehrfacher Check → Pumpe AN → Dauer → Pumpe AUS → Nachlauf → Ventil AUS (Trockenlauf-Schutz).
             </p>
             <div class="row" style="gap:12px;flex-wrap:wrap;">
               <div class="field" style="flex:1;min-width:180px;">
-                <label for="gartenDeviceName">Pumpe (Smart Life, gemeinsam)</label>
+                <label for="gartenDeviceName">Pumpe (nur Tomatenbewässerung)</label>
                 <input type="text" id="gartenDeviceName" placeholder="Pumpe" autocomplete="off" />
               </div>
             </div>
@@ -649,15 +650,16 @@
           </fieldset>
           
           <div class="garten-now-row">
-            <div class="field garten-now-zone-field">
-              <label for="gartenWaterNowZone">Zone</label>
-              <select id="gartenWaterNowZone"></select>
-            </div>
+            <p class="form-note garten-now-zone-hint" id="gartenWaterNowZoneHint" style="margin:0;flex:1;min-width:200px;">
+              Zone: <strong id="gartenWaterNowZoneLabel">—</strong>
+              <span class="garten-now-pump-hint" id="gartenWaterNowPumpHint"></span>
+            </p>
+            <select id="gartenWaterNowZone" hidden aria-hidden="true" tabindex="-1"></select>
             <button
               type="button"
               id="gartenWaterNowBtn"
               class="btn btn-primary"
-              title="Startet sofort die Bewässerungssequenz für 30 Minuten (Ventil → Pumpe → Stopp). Wenn in den letzten oder nächsten 6 Stunden Regen gemeldet wurde oder erwartet wird, erscheint zuerst eine Warnung – du kannst abbrechen oder trotzdem giessen."
+              title="Startet sofort die Bewässerung für die gewählte Zone (Tomaten: Ventil + Pumpe mit Sicherheitscheck; Beet/Schlauch: nur Ventil). Bei Regen ±6h erscheint zuerst eine Warnung."
             >💧 Jetzt bewässern</button>
             <button
               type="button"

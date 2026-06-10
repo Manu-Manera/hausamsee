@@ -7364,7 +7364,7 @@ const GARTEN_DEFAULT_ZONES = [
   {
     id: "wh1-rechts",
     label: "Tomatenbewässerung",
-    subtitle: "Wasserhahn 1 rechts (Manu)",
+    subtitle: "Wasserhahn 1 rechts (Manu) – mit Pumpe",
     device: "Wasserhahn 1 (Manu)",
     valveType: "dual",
     channel: 2,
@@ -7622,14 +7622,25 @@ function renderGartenWeek() {
   if (en) en.checked = !!data.enabled;
   if (dev) dev.value = data.deviceName || "Pumpe";
   if (nachlauf) nachlauf.value = data.nachlaufSec ?? 30;
+  const tabsRoot = $("gartenZoneTabs");
+  const activeTab = tabsRoot?.dataset.activeZone || data.zones?.[0]?.id || "wh2-wintergarten";
+  const activeZone = (data.zones || []).find((z) => z.id === activeTab) || data.zones?.[0];
+
   if (zoneSelect) {
     zoneSelect.innerHTML = (data.zones || []).map((z) =>
       `<option value="${escapeHtml(z.id)}">${escapeHtml(z.label)}</option>`
     ).join("");
+    zoneSelect.value = activeTab;
   }
 
-  const tabsRoot = $("gartenZoneTabs");
-  const activeTab = tabsRoot?.dataset.activeZone || data.zones?.[0]?.id || "wh2-wintergarten";
+  const zoneLabelEl = $("gartenWaterNowZoneLabel");
+  const pumpHintEl = $("gartenWaterNowPumpHint");
+  if (zoneLabelEl) zoneLabelEl.textContent = activeZone?.label || "—";
+  if (pumpHintEl) {
+    pumpHintEl.textContent = activeZone?.id === "wh1-rechts"
+      ? " (Ventil + Pumpe)"
+      : " (nur Ventil, keine Pumpe)";
+  }
 
   if (tabsRoot) {
     tabsRoot.innerHTML = (data.zones || []).map((zone) => `
@@ -7925,11 +7936,13 @@ $("gartenPlanForm")?.addEventListener("submit", async (e) => {
 
 const GARTEN_MANUAL_MINUTES = 30;
 const GARTEN_RAIN_METEO_TTL_MS = 15 * 60 * 1000;
+/** Ab dieser Menge (mm/h, Open-Meteo) gilt eine Stunde als «regnerisch». */
+const GARTEN_RAIN_MIN_MM = 0.1;
 let gartenRainMeteoCache = { t: 0, data: null };
 
 function hourLooksRainy(precipMm, wmoCode) {
   const p = Number(precipMm);
-  if (!Number.isNaN(p) && p > 0.1) return true;
+  if (!Number.isNaN(p) && p > GARTEN_RAIN_MIN_MM) return true;
   const c = Number(wmoCode);
   if (Number.isNaN(c)) return p > 0.05;
   if (c >= 51 && c <= 67) return true;
@@ -7938,6 +7951,45 @@ function hourLooksRainy(precipMm, wmoCode) {
   if (c >= 71 && c <= 77) return true;
   if (c >= 85 && c <= 86) return true;
   return p > 0.05;
+}
+
+function formatGartenRainMm(mm) {
+  const n = Number(mm);
+  if (Number.isNaN(n) || n <= 0) return "0";
+  if (n < 0.1) return "< 0,1";
+  if (n < 10) return n.toLocaleString("de-CH", { maximumFractionDigits: 1 });
+  return Math.round(n).toLocaleString("de-CH");
+}
+
+function gartenRainIntensityLabel(maxMm) {
+  const m = Number(maxMm) || 0;
+  if (m >= 5) return "kräftiger Regen";
+  if (m >= 1) return "mässiger Regen";
+  if (m >= GARTEN_RAIN_MIN_MM) return "leichter Niederschlag";
+  return "Regen laut Wettercode (wenig mm gemeldet)";
+}
+
+function buildGartenRainRiskSummary(hits) {
+  if (!hits.length) return { rainy: false, summary: "", detail: "", hint: "" };
+
+  const now = Date.now();
+  const past = hits.some((h) => h.endMs <= now || h.startMs < now);
+  const future = hits.some((h) => h.endMs > now);
+  let summary = "In den nächsten 6 Stunden ist Regen gemeldet.";
+  if (past && future) summary = "In den letzten und nächsten 6 Stunden ist Regen gemeldet.";
+  else if (past && !future) summary = "In den letzten 6 Stunden hat es geregnet.";
+
+  const totalMm = hits.reduce((s, h) => s + (Number(h.precip) || 0), 0);
+  const maxMm = hits.reduce((m, h) => Math.max(m, Number(h.precip) || 0), 0);
+  const intensity = gartenRainIntensityLabel(maxMm);
+
+  const detail = totalMm > 0
+    ? `Erwarteter Niederschlag im Fenster: ca. ${formatGartenRainMm(totalMm)} mm (${intensity}, stärkste Stunde ~${formatGartenRainMm(maxMm)} mm).`
+    : `Wettermodell meldet Regen ohne konkrete mm-Angabe (${intensity}).`;
+
+  const hint = `Es zählen Niederschlag ab ${String(GARTEN_RAIN_MIN_MM).replace(".", ",")} mm/h und Regen-Wettercodes (Open-Meteo, ±6 h um jetzt).`;
+
+  return { rainy: true, summary, detail, hint, totalMm, maxMm };
 }
 
 async function fetchGartenRainMeteo() {
@@ -7967,19 +8019,11 @@ async function gartenRainRiskIn6h() {
     const times = hourly?.time;
     const prec = hourly?.precipitation;
     const codes = hourly?.weathercode;
-    if (!Array.isArray(times) || !times.length) return { rainy: false, detail: "" };
+    if (!Array.isArray(times) || !times.length) return { rainy: false, summary: "", detail: "", hint: "" };
 
     const now = Date.now();
     const ws = now - 6 * 60 * 60 * 1000;
     const we = now + 6 * 60 * 60 * 1000;
-    const fmt = new Intl.DateTimeFormat("de-CH", {
-      timeZone: "Europe/Zurich",
-      weekday: "short",
-      day: "2-digit",
-      month: "short",
-      hour: "2-digit",
-      minute: "2-digit",
-    });
     const hits = [];
 
     for (let i = 0; i < times.length; i++) {
@@ -7989,30 +8033,34 @@ async function gartenRainRiskIn6h() {
       const he = hs + 3600 * 1000;
       if (hs >= we || he <= ws) continue;
       if (!hourLooksRainy(prec?.[i], codes?.[i])) continue;
-      hits.push(fmt.format(new Date(hs)));
+      hits.push({ startMs: hs, endMs: he, precip: Number(prec?.[i]) || 0 });
     }
 
-    if (!hits.length) return { rainy: false, detail: "" };
-    const uniq = [...new Set(hits)].slice(0, 6);
-    const more = hits.length > uniq.length ? ` (+${hits.length - uniq.length} weitere)` : "";
-    return {
-      rainy: true,
-      detail: `Niederschlag erwartet bzw. gemeldet um: ${uniq.join(", ")}${more}.`,
-    };
+    return buildGartenRainRiskSummary(hits);
   } catch (e) {
     console.warn("gartenRainRiskIn6h", e);
-    return { rainy: false, detail: "", error: true };
+    return { rainy: false, summary: "", detail: "", hint: "", error: true };
   }
+}
+
+function getGartenActiveZoneId() {
+  const fromTab = $("gartenZoneTabs")?.dataset.activeZone?.trim();
+  if (fromTab) return fromTab;
+  const fromSelect = $("gartenWaterNowZone")?.value?.trim();
+  if (fromSelect) return fromSelect;
+  return gartenPlanCache?.zones?.[0]?.id || "wh2-wintergarten";
 }
 
 function getGartenDeviceConfigFromUi() {
   flushGartenTimeInputs();
   mergeGartenPlanFromDom();
   const p = normalizeGartenPlan(gartenPlanCache);
+  const zoneId = getGartenActiveZoneId();
   return {
-    zoneId: ($("gartenWaterNowZone")?.value || p.zones?.[0]?.id || "wh2-wintergarten").trim(),
+    zoneId,
     devicePumpe: ($("gartenDeviceName")?.value || p.deviceName || "Pumpe").trim(),
     nachlaufSec: typeof p.nachlaufSec === "number" ? p.nachlaufSec : 30,
+    pumpAllowed: zoneId === "wh1-rechts",
   };
 }
 
@@ -8053,21 +8101,27 @@ async function submitGartenCommand(payload) {
   return waitForGartenCommandResult(ref);
 }
 
-function openGartenRainWarnDialog(detailText) {
+function openGartenRainWarnDialog(risk) {
+  const summary = risk?.summary || "In den nächsten 6 Stunden ist Regen gemeldet.";
+  const detail = risk?.detail || "";
+  const hint = risk?.hint || "";
   return new Promise((resolve) => {
     const dialog = document.createElement("dialog");
-    dialog.className = "auth-dialog";
+    dialog.className = "auth-dialog garten-rain-dialog";
     dialog.innerHTML = `
-      <form method="dialog" class="auth-form" style="max-width:420px;">
+      <form method="dialog" class="auth-form garten-rain-form">
         <h2 class="auth-title">🌧️ Regen-Warnung</h2>
-        <p style="margin:0 0 12px;line-height:1.45;">${escapeHtml(detailText)}</p>
-        <p class="form-note" style="margin:0 0 16px;">
-          Laut Wetterdaten (Open-Meteo, ±6 Stunden um jetzt) hat es geregnet oder es wird regnen.
+        <div class="garten-rain-banner">
+          <p class="garten-rain-lead">${escapeHtml(summary)}</p>
+          ${detail ? `<p class="garten-rain-detail">${escapeHtml(detail)}</p>` : ""}
+        </div>
+        <p class="form-note garten-rain-question">
           Möchtest du die Bewässerung trotzdem starten?
         </p>
-        <div class="auth-btns">
-          <button type="button" class="btn-secondary" id="gartenRainCancel">Abbrechen</button>
-          <button type="button" class="btn-primary" id="gartenRainForce">Trotzdem bewässern (${GARTEN_MANUAL_MINUTES} Min)</button>
+        ${hint ? `<p class="form-note garten-rain-hint">${escapeHtml(hint)}</p>` : ""}
+        <div class="garten-rain-actions">
+          <button type="button" class="btn btn-ghost" id="gartenRainCancel">Abbrechen</button>
+          <button type="button" class="btn btn-primary" id="gartenRainForce">💧 Trotzdem bewässern (${GARTEN_MANUAL_MINUTES} Min)</button>
         </div>
       </form>
     `;
@@ -8111,11 +8165,15 @@ async function startGartenWaterNow() {
     const risk = await gartenRainRiskIn6h();
     let forceRain = false;
     if (risk.rainy) {
-      const proceed = await openGartenRainWarnDialog(risk.detail);
+      const proceed = await openGartenRainWarnDialog(risk);
       if (!proceed) return;
       forceRain = true;
     }
-    showToast(`Starte Bewässerung (${GARTEN_MANUAL_MINUTES} Min)…`, "info");
+    const zoneId = getGartenActiveZoneId();
+    const zone = gartenPlanCache?.zones?.find((z) => z.id === zoneId);
+    const zoneName = zone?.label || zoneId;
+    const pumpNote = zoneId === "wh1-rechts" ? "" : " (nur Ventil)";
+    showToast(`Starte ${zoneName}${pumpNote} (${GARTEN_MANUAL_MINUTES} Min)…`, "info");
     await runGartenWaterNow(forceRain);
   } finally {
     if (btn) btn.disabled = false;
