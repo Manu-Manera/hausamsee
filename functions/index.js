@@ -925,6 +925,74 @@ async function isGartenSequenzActive() {
   return snap.docs.some((d) => !!d.data().sequenzId);
 }
 
+function gartenQueueEntryKey(entry) {
+  return `${entry?.ymd || ""}|${entry?.zoneId || ""}|${entry?.slotIndex ?? ""}`;
+}
+
+async function enqueueGartenStart(entry) {
+  const ref = db.doc("config/gartenPlan");
+  const key = gartenQueueEntryKey(entry);
+  await db.runTransaction(async (t) => {
+    const snap = await t.get(ref);
+    const q = Array.isArray(snap.data()?.pendingStarts) ? snap.data().pendingStarts : [];
+    if (q.some((x) => gartenQueueEntryKey(x) === key)) return;
+    t.set(ref, {
+      pendingStarts: [...q, { ...entry, queueId: `q_${Date.now()}_${entry.zoneId}` }],
+    }, { merge: true });
+  });
+}
+
+async function processGartenStartQueue(planData) {
+  if (!planData?.enabled || !plugs.isConfigured()) return;
+  if (await isGartenSequenzActive()) return;
+
+  const ref = db.doc("config/gartenPlan");
+  const snap = await ref.get();
+  if (!snap.exists) return;
+  const data = snap.data();
+  const queue = Array.isArray(data.pendingStarts) ? data.pendingStarts : [];
+  if (!queue.length) return;
+
+  const next = queue[0];
+  const devicePumpe = String(planData.deviceName || data.deviceName || GARTEN_DEVICE_PUMPE).trim();
+  const result = await startGartenSequenz(next.minutes, null, {
+    devicePumpe,
+    nachlaufSec: planData.nachlaufSec ?? data.nachlaufSec ?? GARTEN_SEQUENZ_NACHLAUF_SEC,
+    zoneId: next.zoneId,
+    zoneLabel: next.zoneLabel,
+    device: next.device,
+    valveType: next.valveType,
+    channel: next.channel,
+    waterLogSource: "plan",
+    dayKey: next.dayKey,
+    slotIndex: next.slotIndex,
+    allowQueue: false,
+  });
+
+  if (result.success && !result.queued) {
+    const rest = queue.slice(1);
+    await ref.update({ pendingStarts: rest });
+    if (next.ymd && next.zoneId) {
+      await setGartenWaterLog(next.ymd, next.zoneId, {
+        status: "started",
+        source: "plan",
+        dayKey: next.dayKey,
+        slotIndex: next.slotIndex,
+        slotOn: next.slotOn,
+        slotOff: next.slotOff,
+        minutes: next.minutes,
+        zoneLabel: next.zoneLabel,
+        queued: true,
+      });
+    }
+    await debugLog("garten_plan_queue_start", { zoneId: next.zoneId, remaining: rest.length });
+  } else if (!result.success && !result.busy) {
+    const rest = queue.slice(1);
+    await ref.update({ pendingStarts: rest });
+    logger.warn("garten_plan_queue_drop", { zoneId: next.zoneId, reason: result.message });
+  }
+}
+
 /** ±6h um jetzt (Europe/Zurich): Regen in Vergangenheit oder Vorschau? */
 async function gartenRainAroundNow() {
   let data;
@@ -1432,8 +1500,29 @@ async function startGartenSequenz(minutes, requestedBy, config = {}) {
   const nachlaufSec = config.nachlaufSec ?? GARTEN_SEQUENZ_NACHLAUF_SEC;
 
   if (await isGartenSequenzActive()) {
+    if (config.allowQueue && config.zoneId && config.ymd != null) {
+      await enqueueGartenStart({
+        zoneId: zone.id,
+        zoneLabel: zone.label,
+        device: zone.device,
+        valveType: zone.valveType,
+        channel: zone.channel,
+        minutes,
+        ymd: config.ymd,
+        dayKey: config.dayKey,
+        slotIndex: config.slotIndex,
+        slotOn: config.slotOn,
+        slotOff: config.slotOff,
+      });
+      return {
+        success: true,
+        queued: true,
+        message: `📋 *${zone.label}* steht in der Warteschlange (andere Zone läuft noch).`,
+      };
+    }
     return {
       success: false,
+      busy: true,
       message: `⏳ Es läuft bereits eine Bewässerung (*${zone.label}* kann nicht parallel starten).\n\nZuerst stoppen: «Bewässerung stopp»`,
     };
   }
@@ -5797,9 +5886,13 @@ async function runGartenPlanTick() {
               waterLogSource: "plan",
               dayKey,
               slotIndex: idx,
+              ymd,
+              slotOn: onT,
+              slotOff: offT,
+              allowQueue: true,
             });
-            await debugLog("garten_plan_seq_start", { hm, dayKey, zoneId: zone.id, slotIndex: idx, minutes, result: result.success });
-            if (result.success) {
+            await debugLog("garten_plan_seq_start", { hm, dayKey, zoneId: zone.id, slotIndex: idx, minutes, result: result.success, queued: !!result.queued });
+            if (result.success && !result.queued) {
               await setGartenWaterLog(ymd, zone.id, {
                 status: "started",
                 source: "plan",
@@ -5817,6 +5910,8 @@ async function runGartenPlanTick() {
                 `📅 Zeitplan: ${onT} – ${offT}\n\n` +
                 `Zum Stoppen: «Garten aus»`
               );
+            } else if (result.queued) {
+              logger.info(`Garten: ${zone.label} in Warteschlange (${onT})`);
             } else {
               logger.warn("garten_plan_seq_start failed:", result.message);
             }
@@ -5843,6 +5938,12 @@ async function runGartenPlanTick() {
       }
       idx += 1;
     }
+  }
+
+  try {
+    await processGartenStartQueue(data);
+  } catch (e) {
+    logger.warn("processGartenStartQueue", e?.message || e);
   }
 }
 
@@ -5985,6 +6086,15 @@ exports.checkBewaesserung = onSchedule(
               sequenzId: d.sequenzId,
               zoneLabel: zoneName,
             });
+          }
+
+          if (d.step === 4) {
+            try {
+              const planSnap = await db.doc("config/gartenPlan").get();
+              if (planSnap.exists) await processGartenStartQueue(planSnap.data());
+            } catch (qe) {
+              logger.warn("processGartenStartQueue after step 4", qe?.message || qe);
+            }
           }
         } catch (e) {
           logger.error(`Sequenz-Step failed for ${d.device}:`, e.message || e);

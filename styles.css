@@ -4942,6 +4942,36 @@ body.is-spotify-track .vinyl {
   border: 1px solid var(--card-border);
   background: #fff;
 }
+.garten-zone-tabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 0 0 14px;
+}
+.garten-zone-tab {
+  font-family: inherit;
+  font-size: 0.82rem;
+  font-weight: 600;
+  padding: 8px 12px;
+  border-radius: 999px;
+  border: 1px solid var(--card-border);
+  background: #fff;
+  color: var(--text);
+  cursor: pointer;
+}
+.garten-zone-tab.is-active {
+  background: rgba(129, 199, 132, 0.22);
+  border-color: rgba(76, 143, 88, 0.45);
+  color: #2e6b34;
+}
+.garten-zone-tab.is-off {
+  opacity: 0.72;
+}
+.garten-zone-tab.is-off::after {
+  content: " · aus";
+  font-weight: 500;
+  font-size: 0.75rem;
+}
 .garten-zones {
   display: flex;
   flex-direction: column;
@@ -4949,11 +4979,18 @@ body.is-spotify-track .vinyl {
   margin: 8px 0 12px;
 }
 .garten-zone-box {
+  display: none;
   border: 1px solid var(--card-border);
   background: rgba(255, 252, 246, 0.75);
   border-radius: var(--r-md);
   padding: 14px 16px 10px;
   margin: 0;
+}
+.garten-zone-box.is-active {
+  display: block;
+}
+.garten-zone-enabled-row {
+  margin: 0 0 10px;
 }
 .garten-zone-box legend {
   font-weight: 700;

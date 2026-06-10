@@ -623,8 +623,10 @@
         <form id="gartenPlanForm" class="form-card garten-plan-form">
           <label class="toggle-row">
             <input type="checkbox" id="gartenPlanEnabled" />
-            <span>Automatischen Plan aktiv (Server schaltet minütlich per Tuya-Cloud)</span>
+            <span>Automatik global aktiv (Server schaltet minütlich per Tuya-Cloud)</span>
           </label>
+          <p class="form-note" style="margin:0 0 12px;">Jede Zone hat einen <strong>eigenen Wochenplan</strong> und kann separat ein- oder ausgeschaltet werden.</p>
+          <div class="garten-zone-tabs" id="gartenZoneTabs" role="tablist" aria-label="Bewässerungszonen"></div>
           
           <fieldset class="garten-sequenz-box">
             <legend>🔧 Geräte-Sequenz</legend>

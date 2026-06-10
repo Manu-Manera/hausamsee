@@ -7604,9 +7604,36 @@ function renderGartenWeek() {
     ).join("");
   }
 
+  const tabsRoot = $("gartenZoneTabs");
+  const activeTab = tabsRoot?.dataset.activeZone || data.zones?.[0]?.id || "wh2-wintergarten";
+
+  if (tabsRoot) {
+    tabsRoot.innerHTML = (data.zones || []).map((zone) => `
+      <button
+        type="button"
+        class="garten-zone-tab${zone.id === activeTab ? " is-active" : ""}${zone.enabled === false ? " is-off" : ""}"
+        role="tab"
+        aria-selected="${zone.id === activeTab ? "true" : "false"}"
+        data-zone-tab="${escapeHtml(zone.id)}"
+      >${escapeHtml(zone.label)}</button>
+    `).join("");
+    tabsRoot.dataset.activeZone = activeTab;
+    tabsRoot.querySelectorAll(".garten-zone-tab").forEach((btn) => {
+      btn.addEventListener("click", () => {
+        mergeGartenPlanFromDom();
+        if (tabsRoot) tabsRoot.dataset.activeZone = btn.dataset.zoneTab || "";
+        renderGartenWeek();
+      });
+    });
+  }
+
   root.innerHTML = (data.zones || []).map((zone) => `
-    <fieldset class="garten-zone-box" data-zone-id="${escapeHtml(zone.id)}">
+    <fieldset class="garten-zone-box${zone.id === activeTab ? " is-active" : ""}" data-zone-id="${escapeHtml(zone.id)}">
       <legend>${escapeHtml(zone.label)}</legend>
+      <label class="toggle-row garten-zone-enabled-row">
+        <input type="checkbox" class="garten-zone-enabled" data-zone="${escapeHtml(zone.id)}" ${zone.enabled !== false ? "checked" : ""} />
+        <span>Zeitplan für diese Zone aktiv</span>
+      </label>
       <p class="form-note garten-zone-device">${escapeHtml(zone.device)}${zone.channel ? ` · Ausgang ${zone.channel}` : ""}</p>
       <div class="garten-week garten-zone-week">${renderGartenZoneWeek(zone, data)}</div>
     </fieldset>
@@ -7767,7 +7794,9 @@ function collectGartenPlanFromDom(prev) {
   const zones = (last?.zones || defaultGartenPlan().zones).map((zone) => {
     const zoneEl = zonesRoot?.querySelector(`.garten-zone-box[data-zone-id="${zone.id}"]`);
     const days = zoneEl ? collectZoneDaysFromDom(zoneEl, zone.id, last) : (zone.days || emptyGartenDays());
-    return { ...zone, days };
+    const enabledEl = zoneEl?.querySelector(`.garten-zone-enabled[data-zone="${zone.id}"]`);
+    const enabled = enabledEl ? !!enabledEl.checked : zone.enabled !== false;
+    return { ...zone, days, enabled };
   });
 
   return {
@@ -7784,7 +7813,8 @@ function collectGartenPlanFromDom(prev) {
 
 /** Call before add/remove/skip, wenn im DOM noch ungespeicherte Zeiten stehen. */
 function mergeGartenPlanFromDom() {
-  if (!$("gartenZones")?.querySelector?.(".garten-day")) return;
+  const zonesRoot = $("gartenZones");
+  if (!zonesRoot?.querySelector?.(".garten-zone-box")) return;
   flushGartenTimeInputs();
   const prev = gartenPlanCache;
   gartenPlanCache = normalizeGartenPlan({ ...gartenPlanCache, ...collectGartenPlanFromDom(prev) });
@@ -7824,16 +7854,30 @@ $("gartenPlanForm")?.addEventListener("submit", async (e) => {
     }
   }
   gartenPlanCache = normalizeGartenPlan(next);
-  const wh2 = gartenPlanCache.zones?.find((z) => z.id === "wh2-wintergarten");
-  if (wh2) {
-    gartenPlanCache.deviceComputer = wh2.device;
-    gartenPlanCache.days = wh2.days;
-  }
+  const savePayload = {
+    enabled: gartenPlanCache.enabled,
+    deviceName: gartenPlanCache.deviceName,
+    nachlaufSec: gartenPlanCache.nachlaufSec,
+    useSequenz: true,
+    zones: (gartenPlanCache.zones || []).map((z) => ({
+      id: z.id,
+      label: z.label,
+      device: z.device,
+      valveType: z.valveType,
+      channel: z.channel,
+      enabled: z.enabled !== false,
+      days: z.days,
+    })),
+    slotSkips: gartenPlanCache.slotSkips,
+    waterLog: gartenPlanCache.waterLog,
+    updatedBy: auth.member,
+    updatedAt: serverTimestamp(),
+  };
   if (firebaseReady) {
     try {
       await setDoc(
         doc(db, "config", "gartenPlan"),
-        { ...gartenPlanCache, updatedBy: auth.member, updatedAt: serverTimestamp() },
+        savePayload,
         { merge: true }
       );
       showToast("Gartenplan gespeichert. 🌿", "success");
