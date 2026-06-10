@@ -540,13 +540,12 @@ const auth = {
     fillMemberProfileForm();
     renderSettingsBewohnerRoster();
     syncKeychainUserFields();
-    syncJacuzziWhatsappOpt();
     renderEinkaufsliste();
     renderGustavHub();
     renderHausWiki();
     renderWellnessBelegung();
     renderJacuzziPanel();
-    syncDeinTagSettings();
+    renderWhatsappSettings();
   }
 };
 
@@ -643,6 +642,9 @@ function applyMemberPrefsDoc(data) {
       if (rawEmoji) o.emoji = rawEmoji;
       if (rawPhone) o.phone = rawPhone;
       if (typeof v.jacuzziWhatsapp === "boolean") o.jacuzziWhatsapp = v.jacuzziWhatsapp;
+      if (typeof v.whatsappGiessplan === "boolean") o.whatsappGiessplan = v.whatsappGiessplan;
+      if (typeof v.whatsappGarten === "boolean") o.whatsappGarten = v.whatsappGarten;
+      if (typeof v.whatsappSchaden === "boolean") o.whatsappSchaden = v.whatsappSchaden;
       if (v.birthDate != null && String(v.birthDate).trim()) o.birthDate = String(v.birthDate).trim().slice(0, 12);
       if (v.deinTag && typeof v.deinTag === "object") {
         o.deinTag = {
@@ -683,8 +685,7 @@ function onMemberPrefsChanged() {
   populateAufgabenWhoSelect();
   populateSchadenZustaendigSelect();
   renderSettingsBewohnerRoster();
-  syncJacuzziWhatsappOpt();
-  syncDeinTagSettings();
+  renderWhatsappSettings();
 }
 
 function onMovedOutChanged() {
@@ -5884,62 +5885,166 @@ function renderJacuzziPanel() {
     </div>
   `;
 
-  syncJacuzziWhatsappOpt();
 }
 
-function syncJacuzziWhatsappOpt() {
-  const wrap = $("jacuzziWhatsappOpt");
-  const cb = $("jacuzziWhatsappCheckbox");
-  const hint = $("jacuzziWhatsappHint");
-  if (!wrap || !cb) return;
+/* ==========================================================================
+   WhatsApp-Benachrichtigungen (zentral in Einstellungen)
+   ========================================================================== */
+
+const WHATSAPP_CADENCE_OPTIONS = [
+  { value: "daily", label: "Täglich (7:30)" },
+  { value: "weekdays", label: "Werktags (Mo–Fr)" },
+  { value: "weekly", label: "Wöchentlich (Montag)" },
+  { value: "every2days", label: "Alle 2 Tage" },
+];
+
+const WHATSAPP_PERSONAL_SETTINGS = [
+  {
+    id: "deinTag",
+    type: "cadence",
+    emoji: "☀️",
+    title: "Morgen-Zusammenfassung",
+    description: "Wetter, deine Aufgaben und anstehende Events – persönlich um 7:30.",
+    whatsappHint: "«Dein Tag an», «Dein Tag werktags», «Dein Tag aus»",
+  },
+  {
+    id: "jacuzzi",
+    type: "boolean",
+    prefKey: "jacuzziWhatsapp",
+    emoji: "🛁",
+    title: "Jacuzzi Wasserqualität",
+    description: "Sofort-Alert, wenn pH oder Chlor (Redox) in Grenz- oder Kritikbereich wechseln.",
+    requiresPersonalLogin: true,
+    defaultOn: false,
+  },
+  {
+    id: "giessplan",
+    type: "boolean",
+    prefKey: "whatsappGiessplan",
+    emoji: "🌱",
+    title: "Gießplan-Erinnerungen",
+    description: "Täglich 8:00, wenn deine Zimmerpflanzen fällig sind (pro Pflanze zusätzlich schaltbar).",
+    defaultOn: true,
+  },
+  {
+    id: "garten",
+    type: "boolean",
+    prefKey: "whatsappGarten",
+    emoji: "🌿",
+    title: "Garten-To-Do-Erinnerungen",
+    description: "Täglich 8:00 für offene Garten-Aufgaben, die dir zugewiesen sind.",
+    defaultOn: true,
+  },
+  {
+    id: "schaden",
+    type: "boolean",
+    prefKey: "whatsappSchaden",
+    emoji: "🔧",
+    title: "Schäden-Erinnerungen",
+    description: "Wöchentlich, solange du für offene Schäden zuständig bist.",
+    defaultOn: true,
+  },
+];
+
+const WHATSAPP_WG_BROADCASTS = [
+  { emoji: "🎂", title: "Geburtstags-Erinnerung", description: "Heute/morgen hat jemand Geburtstag – an die WG-Gruppe, 8:00." },
+  { emoji: "📋", title: "Montags-Update", description: "Events, Putzplan, Anwesenheit und offene Schäden – montags 8:00 an alle." },
+  { emoji: "🌧️", title: "Garten & Bewässerung", description: "Regen-Alerts, Bewässerung gestartet/gestoppt – an die WG-Gruppe." },
+  { emoji: "⏰", title: "Umfrage geschlossen", description: "Zusammenfassung an die Person, die die Umfrage erstellt hat." },
+];
+
+function readWhatsappBoolPref(member, prefKey, defaultOn = true) {
+  const v = authConfig.memberPrefs[member]?.[prefKey];
+  if (v === false) return false;
+  if (v === true) return true;
+  return defaultOn;
+}
+
+function canEditWhatsappSettings() {
+  return auth.isMember && auth.isPersonalLogin && !!authConfig.memberHashes[auth.member];
+}
+
+function renderWhatsappSettings() {
+  const list = $("whatsappSettingsList");
+  const hint = $("whatsappSettingsHint");
+  const wgList = $("whatsappWgBroadcastsList");
+  if (!list) return;
 
   if (!auth.isMember) {
-    wrap.classList.add("hidden");
-    cb.checked = false;
-    cb.disabled = true;
+    list.innerHTML = `<p class="form-note">Nur für WG-Mitglieder nach Anmeldung.</p>`;
+    if (hint) hint.textContent = "";
     return;
   }
 
-  wrap.classList.remove("hidden");
-  const hasPersonalPw = !!authConfig.memberHashes[auth.member];
-  const enabled = authConfig.memberPrefs[auth.member]?.jacuzziWhatsapp === true;
-  cb.checked = enabled;
+  const prefs = authConfig.memberPrefs[auth.member] || {};
+  const canEdit = canEditWhatsappSettings();
+  const hasPhone = !!(prefs.phone && String(prefs.phone).trim());
 
-  if (!hasPersonalPw) {
-    cb.disabled = true;
-    if (hint) {
-      hint.textContent =
-        "Zuerst unter WG-Intern → Einstellungen ein persönliches Passwort setzen, dann damit anmelden.";
+  list.innerHTML = WHATSAPP_PERSONAL_SETTINGS.map((s) => {
+    if (s.type === "cadence") {
+      const dt = prefs.deinTag || {};
+      const cadenceOpts = WHATSAPP_CADENCE_OPTIONS.map((o) =>
+        `<option value="${o.value}"${(dt.cadence || "daily") === o.value ? " selected" : ""}>${escapeHtml(o.label)}</option>`
+      ).join("");
+      return `
+        <div class="whatsapp-setting-row" data-wa-setting="${s.id}">
+          <label class="whatsapp-setting-toggle">
+            <input type="checkbox" class="wa-cadence-enabled" ${dt.enabled ? "checked" : ""} ${canEdit ? "" : "disabled"} />
+            <span class="whatsapp-setting-emoji">${s.emoji}</span>
+          </label>
+          <div class="whatsapp-setting-body">
+            <strong class="whatsapp-setting-title">${escapeHtml(s.title)}</strong>
+            <p class="whatsapp-setting-desc">${escapeHtml(s.description)}</p>
+            <div class="whatsapp-setting-extra">
+              <label class="whatsapp-setting-cadence-label">Turnus</label>
+              <select class="wa-cadence-select" ${canEdit && dt.enabled ? "" : "disabled"}>${cadenceOpts}</select>
+            </div>
+            ${s.whatsappHint ? `<p class="form-note small">Oder per WhatsApp: ${escapeHtml(s.whatsappHint)}.</p>` : ""}
+          </div>
+        </div>`;
     }
-    return;
+    const on = readWhatsappBoolPref(auth.member, s.prefKey, s.defaultOn !== false);
+    const needsPersonal = s.requiresPersonalLogin;
+    const disabled = !canEdit || (needsPersonal && !auth.isPersonalLogin);
+    return `
+      <div class="whatsapp-setting-row" data-wa-setting="${s.id}" data-pref-key="${s.prefKey}">
+        <label class="whatsapp-setting-toggle">
+          <input type="checkbox" class="wa-bool-toggle" ${on ? "checked" : ""} ${disabled ? "disabled" : ""} />
+          <span class="whatsapp-setting-emoji">${s.emoji}</span>
+        </label>
+        <div class="whatsapp-setting-body">
+          <strong class="whatsapp-setting-title">${escapeHtml(s.title)}</strong>
+          <p class="whatsapp-setting-desc">${escapeHtml(s.description)}</p>
+        </div>
+      </div>`;
+  }).join("");
+
+  if (wgList) {
+    wgList.innerHTML = WHATSAPP_WG_BROADCASTS.map((b) =>
+      `<li><strong>${b.emoji} ${escapeHtml(b.title)}</strong> – ${escapeHtml(b.description)}</li>`
+    ).join("");
   }
 
-  if (!auth.isPersonalLogin) {
-    cb.disabled = true;
-    if (hint) {
-      hint.textContent = enabled
-        ? "Aktiv für dich – zum Ändern mit persönlichem Passwort anmelden (nicht Gruppenpasswort)."
-        : "Nur mit persönlichem Passwort anmelden, um WhatsApp-Alerts zu aktivieren.";
-    }
-    return;
-  }
-
-  cb.disabled = false;
   if (hint) {
-    hint.textContent =
-      "WhatsApp nur an deine Profil-Nummer, wenn pH oder Chlor (Redox) in den Grenz- oder Kritikbereich wechseln.";
+    if (!canEdit) {
+      hint.textContent = "Zum Ändern: persönliches Passwort setzen und damit anmelden (nicht Gruppenpasswort).";
+    } else if (!hasPhone) {
+      hint.textContent = "Handynummer im Profil oben speichern – sonst kommen keine persönlichen Nachrichten an.";
+    } else {
+      hint.textContent = "Änderungen werden sofort gespeichert.";
+    }
   }
 }
 
-async function saveJacuzziWhatsappPref(enabled) {
-  if (!auth.isPersonalLogin) {
+async function saveWhatsappMemberPrefs(patch, toastMsg) {
+  if (!canEditWhatsappSettings()) {
     showToast("Bitte mit persönlichem Passwort anmelden.", "error");
-    syncJacuzziWhatsappOpt();
+    renderWhatsappSettings();
     return;
   }
   const profileData = {
     ...(authConfig.memberPrefs[auth.member] || {}),
-    jacuzziWhatsapp: !!enabled,
+    ...patch,
     updatedBy: auth.member,
   };
   if (firebaseReady) {
@@ -5948,12 +6053,12 @@ async function saveJacuzziWhatsappPref(enabled) {
         [auth.member]: { ...profileData, updatedAt: serverTimestamp() },
       }, { merge: true });
       authConfig.memberPrefs[auth.member] = { ...profileData };
-      showToast(enabled ? "Jacuzzi-WhatsApp-Alerts aktiviert." : "Jacuzzi-WhatsApp-Alerts aus.", "success");
+      if (toastMsg) showToast(toastMsg, "success");
       onMemberPrefsChanged();
     } catch (err) {
       console.error(err);
       showToast("Speichern fehlgeschlagen.", "error");
-      syncJacuzziWhatsappOpt();
+      renderWhatsappSettings();
     }
   } else {
     const next = { ...localStore.memberPrefs, [auth.member]: profileData };
@@ -5961,7 +6066,7 @@ async function saveJacuzziWhatsappPref(enabled) {
     saveLocal("memberPrefs", next);
     applyMemberPrefsDoc(next);
     onMemberPrefsChanged();
-    showToast(enabled ? "Lokal: Alerts an." : "Lokal: Alerts aus.", "success");
+    if (toastMsg) showToast(toastMsg, "success");
   }
 }
 
@@ -5980,8 +6085,38 @@ function setupJacuzziVerlaufToggles() {
       renderJacuzziPanel();
     }
   });
-  $("jacuzziWhatsappCheckbox")?.addEventListener("change", (e) => {
-    void saveJacuzziWhatsappPref(e.target.checked);
+}
+
+function setupWhatsappSettings() {
+  $("whatsappSettingsList")?.addEventListener("change", (e) => {
+    const row = e.target.closest("[data-wa-setting]");
+    if (!row) return;
+    const settingId = row.dataset.waSetting;
+
+    if (e.target.classList.contains("wa-cadence-enabled")) {
+      const cadence = row.querySelector(".wa-cadence-select")?.value || "daily";
+      void saveWhatsappMemberPrefs(
+        { deinTag: { enabled: !!e.target.checked, cadence } },
+        e.target.checked ? "Morgen-Zusammenfassung aktiviert." : "Morgen-Zusammenfassung deaktiviert."
+      );
+      return;
+    }
+    if (e.target.classList.contains("wa-cadence-select") && settingId === "deinTag") {
+      if (!row.querySelector(".wa-cadence-enabled")?.checked) return;
+      void saveWhatsappMemberPrefs(
+        { deinTag: { enabled: true, cadence: e.target.value } },
+        "Turnus gespeichert."
+      );
+      return;
+    }
+    if (e.target.classList.contains("wa-bool-toggle")) {
+      const prefKey = row.dataset.prefKey;
+      if (!prefKey) return;
+      void saveWhatsappMemberPrefs(
+        { [prefKey]: !!e.target.checked },
+        e.target.checked ? "WhatsApp-Benachrichtigung aktiviert." : "WhatsApp-Benachrichtigung deaktiviert."
+      );
+    }
   });
 }
 
@@ -9592,57 +9727,6 @@ $("memberProfileForm")?.addEventListener("submit", async (e) => {
   }
 });
 
-function syncDeinTagSettings() {
-  const cb = $("deinTagEnabledCheckbox");
-  const sel = $("deinTagCadenceSelect");
-  const hint = $("deinTagSettingsHint");
-  if (!cb || !sel) return;
-  if (!auth.isMember) {
-    cb.disabled = true;
-    sel.disabled = true;
-    return;
-  }
-  const hasPersonalPw = !!authConfig.memberHashes[auth.member];
-  const dt = authConfig.memberPrefs[auth.member]?.deinTag || {};
-  cb.checked = !!dt.enabled;
-  sel.value = dt.cadence || "daily";
-  const canEdit = auth.isPersonalLogin && hasPersonalPw;
-  cb.disabled = !canEdit;
-  sel.disabled = !canEdit;
-  if (hint) {
-    hint.textContent = canEdit
-      ? "Oder per WhatsApp: «Dein Tag an», «Dein Tag werktags», «Dein Tag aus»."
-      : "Mit persönlichem Passwort anmelden zum Ändern.";
-  }
-}
-
-async function saveDeinTagPref(enabled, cadence) {
-  if (!auth.isPersonalLogin) {
-    showToast("Bitte mit persönlichem Passwort anmelden.", "error");
-    syncDeinTagSettings();
-    return;
-  }
-  const profileData = {
-    ...(authConfig.memberPrefs[auth.member] || {}),
-    deinTag: { enabled: !!enabled, cadence: cadence || "daily" },
-    updatedBy: auth.member,
-  };
-  if (firebaseReady) {
-    try {
-      await setDoc(doc(db, "config", "memberPrefs"), {
-        [auth.member]: { ...profileData, updatedAt: serverTimestamp() },
-      }, { merge: true });
-      authConfig.memberPrefs[auth.member] = { ...profileData };
-      showToast(enabled ? "Dein Tag aktiviert." : "Dein Tag deaktiviert.", "success");
-      onMemberPrefsChanged();
-    } catch (err) {
-      console.error(err);
-      showToast("Speichern fehlgeschlagen.", "error");
-      syncDeinTagSettings();
-    }
-  }
-}
-
 let einkaufslisteCache = [];
 let hausWikiCache = null;
 
@@ -9739,7 +9823,7 @@ function renderGustavHub() {
     : `<p class="form-note small">Einkaufsliste leer ✅</p>`;
 
   const dt = authConfig.memberPrefs[auth.member]?.deinTag || {};
-  const deinTagOn = dt.enabled ? `an (${dt.cadence || "daily"})` : "aus";
+  const morgenOn = dt.enabled ? `an (${dt.cadence || "daily"})` : "aus";
 
   el.innerHTML = `
     <div class="gustav-hub-grid">
@@ -9758,7 +9842,7 @@ function renderGustavHub() {
       </section>
       <section class="gustav-hub-card gustav-hub-card-wide">
         <h3>🤖 Gustav</h3>
-        <p class="form-note small">☀️ Dein Tag: <strong>${escapeHtml(deinTagOn)}</strong> · <a href="#wg-intern">Einstellungen</a></p>
+        <p class="form-note small">📱 WhatsApp Morgen-Zusammenfassung: <strong>${escapeHtml(morgenOn)}</strong> · <a href="#wg-intern">Einstellungen</a></p>
         <details class="gustav-hub-cheats">
           <summary>WhatsApp-Befehle</summary>
           <ul class="gustav-hub-cmds">
@@ -9923,13 +10007,7 @@ $("einkaufslisteForm")?.addEventListener("submit", (e) => {
 
 $("wlanQrForm")?.addEventListener("submit", (e) => { void saveWlanQrSettings(e); });
 
-$("deinTagEnabledCheckbox")?.addEventListener("change", (e) => {
-  const cadence = $("deinTagCadenceSelect")?.value || "daily";
-  void saveDeinTagPref(e.target.checked, cadence);
-});
-$("deinTagCadenceSelect")?.addEventListener("change", (e) => {
-  if ($("deinTagEnabledCheckbox")?.checked) void saveDeinTagPref(true, e.target.value);
-});
+setupWhatsappSettings();
 
 $("wgInviteShareNative")?.addEventListener("click", () => shareWgInviteFromSheet());
 $("wgInviteWhatsApp")?.addEventListener("click", () => openWgInviteWhatsApp());

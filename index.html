@@ -488,13 +488,7 @@
 
       <div class="kalender-panel hidden" id="tabJacuzzi">
         <div class="jacuzzi-hero jacuzzi-kalender" id="jacuzziHeroWidget" aria-live="polite"></div>
-        <div class="jacuzzi-whatsapp-opt hidden" id="jacuzziWhatsappOpt" data-wg-only>
-          <label class="jacuzzi-whatsapp-label">
-            <input type="checkbox" id="jacuzziWhatsappCheckbox" disabled />
-            <span>📱 WhatsApp bei Wasserqualität (pH / Chlor)</span>
-          </label>
-          <p class="form-note jacuzzi-whatsapp-hint" id="jacuzziWhatsappHint"></p>
-        </div>
+        <p class="form-note jacuzzi-wa-link" data-wg-only>📱 WhatsApp-Alerts (pH/Chlor): <a href="#wg-intern">WG-Intern → WhatsApp</a></p>
         <details class="admin-toggle" data-wg-only>
           <summary>➕ Temperatur eintragen</summary>
           <form id="jacuzziReadingForm" class="form-card inline">
@@ -731,7 +725,7 @@
             <div class="field">
               <label for="profilePhone">📱 Handynummer (für Bot-Erinnerungen)</label>
               <input id="profilePhone" type="tel" maxlength="20" placeholder="+41 79 123 45 67" autocomplete="tel" />
-              <p class="form-note" style="font-size:0.8rem;margin-top:4px;">Nur für WG-Mitglieder sichtbar. Für Giessplan-Erinnerungen etc.</p>
+              <p class="form-note" style="font-size:0.8rem;margin-top:4px;">Für persönliche WhatsApp-Erinnerungen – steuerbar unter «WhatsApp» weiter unten.</p>
             </div>
             <div class="field">
               <label for="profileBirthDate">🎂 Geburtstag (MM-TT oder JJJJ-MM-TT)</label>
@@ -770,25 +764,17 @@
           <div id="hausWikiList" class="haus-wiki-grid"></div>
         </div>
 
-        <div class="settings-card" id="deinTagSettingsCard" data-wg-only>
-          <h3>☀️ Dein Tag (WhatsApp)</h3>
-          <p class="form-note" style="margin-bottom:10px;">
-            Persönliche Morgen-Zusammenfassung: Wetter, Aufgaben, Events. Gustav schickt sie nur an deine Nummer.
+        <div class="settings-card" id="whatsappSettingsCard" data-wg-only>
+          <h3>📱 WhatsApp</h3>
+          <p class="form-note" style="margin-bottom:12px;">
+            Zentral steuern, was Gustav an <strong>deine Handynummer</strong> schickt. Nummer oben im Profil hinterlegen.
           </p>
-          <label class="jacuzzi-whatsapp-label">
-            <input type="checkbox" id="deinTagEnabledCheckbox" disabled />
-            <span>Dein Tag aktivieren</span>
-          </label>
-          <div class="field" style="margin-top:10px;">
-            <label for="deinTagCadenceSelect">Turnus</label>
-            <select id="deinTagCadenceSelect" disabled>
-              <option value="daily">Täglich (7:30)</option>
-              <option value="weekdays">Werktags</option>
-              <option value="weekly">Wöchentlich (Montag)</option>
-              <option value="every2days">Alle 2 Tage</option>
-            </select>
-          </div>
-          <p class="form-note" id="deinTagSettingsHint" style="margin-top:8px;"></p>
+          <div id="whatsappSettingsList" class="whatsapp-settings-list" aria-live="polite"></div>
+          <p class="form-note whatsapp-settings-hint" id="whatsappSettingsHint"></p>
+          <details class="whatsapp-wg-broadcasts">
+            <summary>WG-weite Nachrichten (für alle, nicht abschaltbar)</summary>
+            <ul class="whatsapp-wg-broadcasts-list" id="whatsappWgBroadcastsList"></ul>
+          </details>
         </div>
 
         <div class="settings-card">

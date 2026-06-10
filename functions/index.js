@@ -5712,6 +5712,14 @@ exports.checkReminders = onSchedule(
    Scheduler: Giessplan-Erinnerungen – täglich 8:00 Uhr
    ========================================================================== */
 
+/** Persönliche WhatsApp-Opt-ins (memberPrefs); undefined = defaultOn */
+function isMemberWhatsappEnabled(allPrefs, name, prefKey, defaultOn = true) {
+  const v = allPrefs?.[name]?.[prefKey];
+  if (v === false) return false;
+  if (v === true) return true;
+  return defaultOn;
+}
+
 // Mapping von Bewohner-Namen zu WhatsApp-Nummern (aus gespeicherten WhatsApp-Nummern, memberPrefs oder hardcoded)
 async function getBewohnerPhone(name) {
   // 1. Priorität: Gespeicherte WhatsApp-Nummer (von eingehenden Nachrichten)
@@ -5747,6 +5755,9 @@ exports.checkGiessplanReminders = onSchedule(
   async () => {
     const snap = await db.collection("giessplan").get();
     if (snap.empty) return;
+
+    const prefsSnap = await db.collection("config").doc("memberPrefs").get();
+    const allPrefs = prefsSnap.exists ? prefsSnap.data() : {};
     
     const today = new Date();
     today.setHours(0, 0, 0, 0);
@@ -5800,6 +5811,7 @@ exports.checkGiessplanReminders = onSchedule(
     const nowIso = new Date().toISOString();
     const promises = [];
     for (const [name, plants] of Object.entries(byPerson)) {
+      if (!isMemberWhatsappEnabled(allPrefs, name, "whatsappGiessplan")) continue;
       const phone = await getBewohnerPhone(name);
       if (!phone) {
         logger.warn(`Giessplan: Keine Telefonnummer für ${name}`);
@@ -5851,6 +5863,9 @@ exports.checkGartenTodoReminders = onSchedule(
     const snap = await db.collection("gartentodos").get();
     if (snap.empty) return;
 
+    const prefsSnap = await db.collection("config").doc("memberPrefs").get();
+    const allPrefs = prefsSnap.exists ? prefsSnap.data() : {};
+
     const today = startOfDay(new Date());
     const dueTasks = [];
 
@@ -5887,6 +5902,7 @@ exports.checkGartenTodoReminders = onSchedule(
     const nowIso = new Date().toISOString();
     const promises = [];
     for (const [name, tasks] of Object.entries(byPerson)) {
+      if (!isMemberWhatsappEnabled(allPrefs, name, "whatsappGarten")) continue;
       const phone = await getBewohnerPhone(name);
       if (!phone) {
         logger.warn(`Garten To-Do: Keine Telefonnummer für ${name}`);
@@ -5942,6 +5958,9 @@ exports.checkSchadenReminders = onSchedule(
     const snap = await db.collection("schaeden").get();
     if (snap.empty) return;
 
+    const prefsSnap = await db.collection("config").doc("memberPrefs").get();
+    const allPrefs = prefsSnap.exists ? prefsSnap.data() : {};
+
     const dueByPerson = {};
 
     snap.docs.forEach((doc) => {
@@ -5969,6 +5988,7 @@ exports.checkSchadenReminders = onSchedule(
     const promises = [];
 
     for (const [name, items] of Object.entries(dueByPerson)) {
+      if (!isMemberWhatsappEnabled(allPrefs, name, "whatsappSchaden")) continue;
       const phone = await getBewohnerPhone(name);
       if (!phone) {
         logger.warn(`Schäden: Keine Telefonnummer für ${name}`);
