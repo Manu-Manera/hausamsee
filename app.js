@@ -7878,6 +7878,7 @@ $("gartenPlanForm")?.addEventListener("submit", async (e) => {
     }
   }
   gartenPlanCache = normalizeGartenPlan(next);
+  const wh2 = gartenPlanCache.zones?.find((z) => z.id === "wh2-wintergarten");
   const savePayload = {
     enabled: gartenPlanCache.enabled,
     deviceName: gartenPlanCache.deviceName,
@@ -7895,6 +7896,7 @@ $("gartenPlanForm")?.addEventListener("submit", async (e) => {
     })),
     slotSkips: gartenPlanCache.slotSkips,
     waterLog: gartenPlanCache.waterLog,
+    deviceComputer: wh2?.device || "Wasserhahn 2 (Wintergarten)",
     updatedBy: auth.member,
     updatedAt: serverTimestamp(),
   };

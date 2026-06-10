@@ -954,6 +954,50 @@ async function loadGartenPlanData() {
   }
 }
 
+/** Schreibt korrigierte Gerätenamen in Firestore (Legacy: «Bewässerungscomputer»). */
+async function repairGartenPlanDevicesIfLegacy() {
+  const ref = db.doc("config/gartenPlan");
+  let raw;
+  try {
+    const snap = await ref.get();
+    if (!snap.exists) return false;
+    raw = snap.data();
+  } catch (e) {
+    logger.warn("repairGartenPlanDevicesIfLegacy read", e?.message || e);
+    return false;
+  }
+
+  const legacyRoot = GARTEN_LEGACY_DEVICE_NAMES.has(String(raw.deviceComputer || "").trim());
+  const legacyZone = Array.isArray(raw.zones) && raw.zones.some((z) =>
+    GARTEN_LEGACY_DEVICE_NAMES.has(String(z?.device || "").trim())
+  );
+  if (!legacyRoot && !legacyZone) return false;
+
+  const zones = normalizeGartenPlanZones(raw);
+  try {
+    await ref.set({
+      zones: zones.map((z) => ({
+        id: z.id,
+        label: z.label,
+        subtitle: z.subtitle || "",
+        device: z.device,
+        valveType: z.valveType,
+        channel: z.channel,
+        enabled: z.enabled !== false,
+        days: z.days,
+      })),
+      deviceComputer: GARTEN_DEVICE_WH2,
+      updatedAt: FieldValue.serverTimestamp(),
+      repairedDevices: true,
+    }, { merge: true });
+    logger.info("gartenPlan: Legacy-Gerätenamen auf WH1/WH2 migriert");
+    return true;
+  } catch (e) {
+    logger.warn("repairGartenPlanDevicesIfLegacy write", e?.message || e);
+    return false;
+  }
+}
+
 async function gartenSequenzConfigForZone(zoneId, opts = {}) {
   const planData = await loadGartenPlanData();
   const zone = resolveGartenZoneFromPlan(planData, zoneId);
@@ -5342,6 +5386,7 @@ exports.onGartenCommand = onDocumentCreated("garten_commands/{id}", async (event
       ? Math.max(0, Math.min(300, data.nachlaufSec))
       : GARTEN_SEQUENZ_NACHLAUF_SEC;
 
+    await repairGartenPlanDevicesIfLegacy();
     let planData = {};
     try {
       const snap = await db.doc("config/gartenPlan").get();
@@ -6060,6 +6105,7 @@ async function setGartenWaterLog(ymd, zoneId, patch, opts = {}) {
 
 async function runGartenPlanTick() {
   if (!plugs.isConfigured()) return;
+  await repairGartenPlanDevicesIfLegacy();
   let planSnap;
   try {
     planSnap = await db.doc("config/gartenPlan").get();
