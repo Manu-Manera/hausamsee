@@ -44,7 +44,7 @@ const BEWOHNER = [
     bio: "Wenn es Rauch gibt, steht Dino am Grill. Zuständig für Feuerstelle, Playlist und spontane Abende."
   },
   {
-    name: "Andy",
+    name: "Andi",
     role: "Handwerker & Tüftler",
     emoji: "🛠️",
     bio: "Repariert alles, baut Möbel aus Palettenholz und hat immer das richtige Werkzeug zur Hand."
@@ -62,7 +62,7 @@ const BEWOHNER = [
     bio: "Paddelt bei jedem Wetter über den See und bringt einen französischen Akzent ins Haus."
   },
   {
-    name: "Fanny",
+    name: "Fannie",
     role: "Kreativ-Kopf",
     emoji: "🎨",
     bio: "Bringt Farbe ins Haus, liebt lange Gespräche am Feuer und kocht leidenschaftlich gerne."
@@ -100,6 +100,11 @@ const EMOJI_CHOICES = [
   ])
 ];
 const EMOJI_CHOICES_SET = new Set(EMOJI_CHOICES);
+/** Legacy-Schreibweisen → offizieller Vorname (Login & Firestore) */
+const BEWOHNER_NAME_ALIASES = { Andy: "Andi", Fanny: "Fannie", Elliot: "Eliot" };
+function canonicalBewohnerName(name) {
+  return BEWOHNER_NAME_ALIASES[name] || name;
+}
 const BEWOHNER_NAME_SET = new Set(BEWOHNER.map((b) => b.name));
 
 // Gallery-Konstanten
@@ -477,13 +482,16 @@ const auth = {
         this.isGuest = true;
         this.loginKind = null;
         this.apply();
-      } else if (BEWOHNER.find(b => b.name === session.member) && !movedOutNames.has(session.member)) {
-        this.member = session.member;
+      } else {
+        const member = canonicalBewohnerName(session.member);
+        if (BEWOHNER.find(b => b.name === member) && !movedOutNames.has(member)) {
+        this.member = member;
         this.isGuest = false;
         this.loginKind = session.loginKind === "personal" ? "personal" : "group";
         this.apply();
-      } else {
-        localStorage.removeItem(SESSION_KEY);
+        } else {
+          localStorage.removeItem(SESSION_KEY);
+        }
       }
     } catch { localStorage.removeItem(SESSION_KEY); }
   },
@@ -591,7 +599,7 @@ function parseMemberPasswordHashes(data) {
     if (typeof v !== "string") continue;
     const raw = v.trim().toLowerCase();
     if (!/^[a-f0-9]{64}$/.test(raw)) continue;
-    const kTrim = k.trim();
+    const kTrim = canonicalBewohnerName(k.trim());
     let canonical = [...ADULT_NAMES].find((n) => n === kTrim);
     if (!canonical) canonical = [...ADULT_NAMES].find((n) => n.toLowerCase() === kTrim.toLowerCase());
     if (!canonical) continue;
@@ -604,7 +612,8 @@ function applyMemberPasswordsDoc(data) {
   authConfig.memberHashes = parseMemberPasswordHashes(data);
 }
 
-const LOGIN_AUTH_WAIT_MS = 3000;
+const LOGIN_AUTH_BOOTSTRAP_MS = 5000;
+const LOGIN_HASH_REFRESH_MS = 8000;
 
 function promiseWithTimeout(promise, ms) {
   return new Promise((resolve, reject) => {
@@ -616,22 +625,62 @@ function promiseWithTimeout(promise, ms) {
   });
 }
 
-/** Nur wenn die App noch lädt – Hashes kommen sonst laufend per onSnapshot. */
-async function ensureAuthConfigForLogin() {
-  if (authConfig.ready) return;
+/** Nur die für Login kritischen Docs – parallel, kurz, vor jeder Passwortprüfung. */
+async function refreshLoginHashesFromFirestore() {
+  if (!firebaseReady) return true;
   try {
-    await promiseWithTimeout(loadAuthConfig(), LOGIN_AUTH_WAIT_MS);
+    const [authSnap, mpSnap] = await promiseWithTimeout(
+      Promise.all([
+        getDoc(doc(db, "config", "auth")),
+        getDoc(doc(db, "config", "memberPasswords")),
+      ]),
+      LOGIN_HASH_REFRESH_MS
+    );
+    if (authSnap.exists() && authSnap.data()?.passwordHash) {
+      authConfig.passwordHash = authSnap.data().passwordHash;
+    }
+    if (mpSnap.exists()) applyMemberPasswordsDoc(mpSnap.data());
+    return true;
   } catch (e) {
-    console.warn("ensureAuthConfigForLogin", e?.message || e);
-    authConfig.ready = true;
+    console.warn("refreshLoginHashesFromFirestore", e?.message || e);
+    return false;
+  }
+}
+
+/** Vor Login: App-Start abwarten, dann Hashes frisch aus Firestore (kein leerer Cache). */
+async function ensureAuthConfigForLogin() {
+  if (!authConfig.ready) {
+    try {
+      await promiseWithTimeout(loadAuthConfig(), LOGIN_AUTH_BOOTSTRAP_MS);
+    } catch (e) {
+      console.warn("ensureAuthConfigForLogin bootstrap", e?.message || e);
+    }
+  }
+  const ok = await refreshLoginHashesFromFirestore();
+  if (!ok && firebaseReady && !Object.keys(authConfig.memberHashes).length) {
+    throw new Error("auth_hashes_unavailable");
   }
 }
 
 function applyMemberPrefsDoc(data) {
   const next = {};
+  const raw = data && typeof data === "object" ? { ...data } : {};
+  if (raw.Andy && !raw.Andi) {
+    raw.Andi = raw.Andy;
+    delete raw.Andy;
+  }
+  if (raw.Fanny && !raw.Fannie) {
+    raw.Fannie = raw.Fanny;
+    delete raw.Fanny;
+  }
+  if (raw.Elliot && !raw.Eliot) {
+    raw.Eliot = raw.Elliot;
+    delete raw.Elliot;
+  }
   if (data && typeof data === "object") {
-    for (const [k, v] of Object.entries(data)) {
-      if (!BEWOHNER_NAME_SET.has(k) || !v || typeof v !== "object") continue;
+    for (const [k, v] of Object.entries(raw)) {
+      const key = canonicalBewohnerName(k);
+      if (!BEWOHNER_NAME_SET.has(key) || !v || typeof v !== "object") continue;
       const rawName = v.displayName != null ? String(v.displayName) : "";
       const displayName = rawName.replace(/\s+/g, " ").trim().slice(0, 32);
       const rawEmoji = v.emoji != null ? String(v.emoji).trim() : "";
@@ -652,7 +701,7 @@ function applyMemberPrefsDoc(data) {
           cadence: ["daily", "weekdays", "weekly", "every2days"].includes(v.deinTag.cadence) ? v.deinTag.cadence : "daily",
         };
       }
-      if (Object.keys(o).length) next[k] = o;
+      if (Object.keys(o).length) next[key] = { ...(next[key] || {}), ...o };
     }
   }
   authConfig.memberPrefs = next;
@@ -920,8 +969,9 @@ function populateProfileEmojiSelect() {
 
 /** Login für eine konkrete Bewohner:in: eigenes Passwort, sonst gemeinsames WG-Passwort. */
 async function verifyMemberPassword(memberName, pw) {
+  const canonical = canonicalBewohnerName(memberName);
   const hash = await sha256(normPasswordInput(pw));
-  const personal = authConfig.memberHashes[memberName];
+  const personal = authConfig.memberHashes[canonical];
   if (personal) {
     if (hash === personal) return { ok: true, kind: "personal" };
     return { ok: false, reason: "wrong", hasPersonal: true };
@@ -1130,7 +1180,7 @@ $("loginDialog")?.addEventListener("click", (e) => {
 $("loginForm")?.addEventListener("submit", async (e) => {
   e.preventDefault();
   syncSelectFromKeychainUser();
-  const selected = resolveLoginMemberSelection();
+  const selected = canonicalBewohnerName(resolveLoginMemberSelection());
   const password = readLoginPassword(e.target);
   if (!selected) {
     const errorEl = $("loginError");
@@ -1165,7 +1215,11 @@ $("loginForm")?.addEventListener("submit", async (e) => {
     await ensureAuthConfigForLogin();
   } catch (err) {
     console.error(err);
-    showError("Anmeldung hat zu lange gedauert – bitte nochmal versuchen.");
+    showError(
+      err?.message === "auth_hashes_unavailable"
+        ? "Passwort-Daten konnten nicht geladen werden (Netzwerk?). Kurz warten und nochmal versuchen."
+        : "Anmeldung hat zu lange gedauert – bitte nochmal versuchen."
+    );
     return;
   }
 
@@ -1201,7 +1255,11 @@ $("loginForm")?.addEventListener("submit", async (e) => {
   }
 
   // Fall 3: WG-Mitglied — eigenes Passwort (falls gesetzt), sonst gemeinsames WG-Passwort
-  const mres = await verifyMemberPassword(selected, password);
+  let mres = await verifyMemberPassword(selected, password);
+  if (!mres.ok && !mres.hasPersonal && firebaseReady) {
+    const retried = await refreshLoginHashesFromFirestore();
+    if (retried) mres = await verifyMemberPassword(selected, password);
+  }
   if (!mres.ok) {
     if (mres.hasPersonal) {
       showError(
@@ -10331,18 +10389,20 @@ async function loadAuthConfig() {
 async function loadAuthConfigOnce() {
   if (firebaseReady) {
     try {
-      const snap = await getDoc(doc(db, "config", "auth"));
+      const [snap, mp] = await Promise.all([
+        getDoc(doc(db, "config", "auth")),
+        getDoc(doc(db, "config", "memberPasswords")),
+      ]);
       if (snap.exists() && snap.data().passwordHash) {
         authConfig.passwordHash = snap.data().passwordHash;
       } else {
         await setDoc(doc(db, "config", "auth"), { passwordHash: WG_PASSWORD_HASH, createdAt: serverTimestamp() }, { merge: true });
       }
+      if (mp.exists()) applyMemberPasswordsDoc(mp.data());
+
       onSnapshot(doc(db, "config", "auth"), (d) => {
         if (d.exists() && d.data().passwordHash) authConfig.passwordHash = d.data().passwordHash;
       });
-
-      const mp = await getDoc(doc(db, "config", "memberPasswords"));
-      if (mp.exists()) applyMemberPasswordsDoc(mp.data());
       onSnapshot(doc(db, "config", "memberPasswords"), (d) => {
         if (!d.exists()) return;
         applyMemberPasswordsDoc(d.data());
