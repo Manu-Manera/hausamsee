@@ -911,16 +911,25 @@ function populateProfileEmojiSelect() {
   if (keep && Array.from(sel.options).some((o) => o.value === keep)) sel.value = keep;
 }
 
-/** Login für eine konkrete Bewohner:in: eigenes Passwort, sonst gemeinsames Fallback. */
+/**
+ * Login für eine konkrete Bewohner:in.
+ * 1) Persönliches Passwort (falls gesetzt)
+ * 2) Gemeinsames WG-Passwort (Fallback – wichtig für Schlüsselbund mit altem WG-PW)
+ */
 async function verifyMemberPassword(memberName, pw) {
   const hash = await sha256(normPasswordInput(pw));
   const personal = authConfig.memberHashes[memberName];
-  if (personal) {
-    if (hash === personal) return { ok: true, kind: "personal" };
-    return { ok: false, reason: "wrong" };
+  if (personal && hash === personal) {
+    return { ok: true, kind: "personal" };
   }
-  if (hashMatchesWgLoginFallback(hash)) return { ok: true, kind: "group" };
-  return { ok: false, reason: "wrong" };
+  if (hashMatchesWgLoginFallback(hash)) {
+    return {
+      ok: true,
+      kind: "group",
+      usedGroupFallback: !!(personal && hash !== personal),
+    };
+  }
+  return { ok: false, reason: "wrong", hasPersonal: !!personal };
 }
 
 // Hash für ein Passwort: nur Gäste + gemeinsames WG-Passwort (für generische Gast-Option)
@@ -992,15 +1001,20 @@ function resolveLoginMemberSelection() {
   return selected;
 }
 
+/** Passwort aus Formular (Autofill liefert manchmal nur zuverlässig über FormData). */
+function readLoginPassword(form) {
+  if (form && typeof FormData !== "undefined") {
+    const fd = new FormData(form);
+    const fromForm = fd.get("password");
+    if (fromForm != null && String(fromForm).length > 0) return String(fromForm);
+  }
+  return $("loginPassword")?.value || "";
+}
+
 function scheduleLoginAutofillSync() {
-  syncKeychainUserFields();
+  // Nur Dropdown nachziehen – Keychain-Konto-Name NICHT überschreiben (sonst Autofill kaputt)
   syncSelectFromKeychainUser();
-  [80, 280, 700].forEach((ms) => {
-    setTimeout(() => {
-      syncSelectFromKeychainUser();
-      syncKeychainUserFields();
-    }, ms);
-  });
+  setTimeout(syncSelectFromKeychainUser, 200);
 }
 
 function wireLoginAutofillSync() {
@@ -1083,7 +1097,6 @@ function openLoginDialog() {
   try {
     $("loginDialog")?.showModal();
     scheduleLoginAutofillSync();
-    $("loginPassword")?.focus();
   } catch (_) { /* */ }
 }
 
@@ -1120,7 +1133,7 @@ $("loginForm")?.addEventListener("submit", async (e) => {
   e.preventDefault();
   syncSelectFromKeychainUser();
   const selected = resolveLoginMemberSelection();
-  const password = $("loginPassword").value;
+  const password = readLoginPassword(e.target);
   if (!selected) {
     const errorEl = $("loginError");
     errorEl.textContent = "Bitte zuerst «Ich bin» wählen (oder Konto-Name aus der Passwort-App).";
@@ -1183,13 +1196,13 @@ $("loginForm")?.addEventListener("submit", async (e) => {
     return;
   }
 
-  // Fall 3: WG-Mitglied — eigenes Passwort oder gemeinsames Fallback (siehe verifyMemberPassword)
+  // Fall 3: WG-Mitglied — persönliches Passwort oder gemeinsames WG-Passwort
   const mres = await verifyMemberPassword(selected, password);
   if (!mres.ok) {
-    if (authConfig.memberHashes[selected]) {
+    if (mres.hasPersonal) {
       showError(
-        "Falsches Passwort. Du hast ein persönliches Passwort – das in der Passwort-App gespeicherte kann veraltet sein. " +
-        "Unter WG-Intern → Einstellungen neu setzen oder einmal manuell eintippen."
+        "Falsches Passwort. Weder persönliches noch gemeinsames WG-Passwort. " +
+        "Passwort-App-Eintrag prüfen oder unter WG-Intern → Einstellungen neu setzen."
       );
     } else {
       showError("Falsches Passwort · versuch's nochmal.");
@@ -1199,6 +1212,14 @@ $("loginForm")?.addEventListener("submit", async (e) => {
   resetSubmitBtn();
   auth.login(selected, { isGuest: false, loginKind: mres.kind });
   $("loginDialog").close();
+  if (mres.usedGroupFallback) {
+    setTimeout(() => {
+      showToast(
+        "Eingeloggt mit WG-Passwort. In der Passwort-App bitte dein persönliches Passwort speichern (oder unter Einstellungen angleichen).",
+        "info"
+      );
+    }, 400);
+  }
 });
 
 /* Guard helper: prüft Auth, zeigt sonst Hinweis */
