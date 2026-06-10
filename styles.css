@@ -4928,6 +4928,45 @@ body.is-spotify-track .vinyl {
   flex: 1 1 auto;
   min-width: 160px;
 }
+.garten-now-zone-field {
+  flex: 1 1 220px;
+  min-width: 180px;
+  margin: 0;
+}
+.garten-now-zone-field select {
+  width: 100%;
+  font-family: inherit;
+  font-size: 0.9rem;
+  padding: 8px 10px;
+  border-radius: var(--r-sm);
+  border: 1px solid var(--card-border);
+  background: #fff;
+}
+.garten-zones {
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+  margin: 8px 0 12px;
+}
+.garten-zone-box {
+  border: 1px solid var(--card-border);
+  background: rgba(255, 252, 246, 0.75);
+  border-radius: var(--r-md);
+  padding: 14px 16px 10px;
+  margin: 0;
+}
+.garten-zone-box legend {
+  font-weight: 700;
+  font-size: 0.95rem;
+  padding: 0 6px;
+}
+.garten-zone-device {
+  margin: 0 0 10px !important;
+  font-size: 0.8rem;
+}
+.garten-zone-week {
+  margin: 0;
+}
 .garten-plan-form {
   text-align: left;
 }

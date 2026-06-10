@@ -77,8 +77,37 @@ const PUMP_MAX_MINUTES = 60;     // Länger lassen wir die Pumpe NIE laufen
 // Garten-Sequenz: Bewässerungscomputer → Pumpe (mit Status-Check)
 const GARTEN_STATUS_CHECK_DELAY_MS = 2000; // Millisekunden zwischen Status-Checks
 const GARTEN_SEQUENZ_NACHLAUF_SEC = 30;   // Sekunden nach Pumpe AUS bevor Bewässerungscomputer AUS
-const GARTEN_DEVICE_COMPUTER = "Bewässerungscomputer"; // Smart Life Gerätename
-const GARTEN_DEVICE_PUMPE = "Pumpe";                   // Smart Life Gerätename
+const GARTEN_DEVICE_WH2 = "Wasserhahn 2 (Wintergarten)";
+const GARTEN_DEVICE_WH1 = "Wasserhahn 1 (Manu)";
+const GARTEN_DEVICE_COMPUTER = GARTEN_DEVICE_WH2; // Legacy-Alias / Default-Zone
+const GARTEN_DEVICE_PUMPE = "Pumpe";
+
+const GARTEN_DEFAULT_ZONES = [
+  {
+    id: "wh2-wintergarten",
+    label: "Wasserhahn 2 (Wintergarten)",
+    device: GARTEN_DEVICE_WH2,
+    valveType: "irrigation",
+    channel: null,
+    enabled: true,
+  },
+  {
+    id: "wh1-links",
+    label: "Wasserhahn 1 – links (Manu)",
+    device: GARTEN_DEVICE_WH1,
+    valveType: "dual",
+    channel: 1,
+    enabled: true,
+  },
+  {
+    id: "wh1-rechts",
+    label: "Wasserhahn 1 – rechts (Manu)",
+    device: GARTEN_DEVICE_WH1,
+    valveType: "dual",
+    channel: 2,
+    enabled: true,
+  },
+];
 
 // Geräte ohne Auto-Off-Timer (bleiben an bis manuell ausgeschaltet)
 const NO_TIMER_DEVICES = ["lichterkette", "licht"];
@@ -769,8 +798,131 @@ async function gartenDayShouldSkipDueToRain(slots, ymd) {
   return false;
 }
 
-function gartenSlotSkipKey(ymd, dayKey, idx) {
-  return `${ymd}|${dayKey}|${idx}`;
+function emptyGartenDays() {
+  return { mon: [], tue: [], wed: [], thu: [], fri: [], sat: [], sun: [] };
+}
+
+function normalizeGartenPlanZones(raw) {
+  const emptyDays = emptyGartenDays();
+  if (raw?.zones && Array.isArray(raw.zones) && raw.zones.length) {
+    return raw.zones.map((z, i) => {
+      const def = GARTEN_DEFAULT_ZONES[i] || GARTEN_DEFAULT_ZONES[0];
+      const days = { ...emptyDays };
+      "mon tue wed thu fri sat sun".split(" ").forEach((k) => {
+        const arr = z.days?.[k];
+        days[k] = Array.isArray(arr)
+          ? arr.map((s) => ({
+            on: String(s.on || "07:00").slice(0, 5),
+            off: String(s.off || "07:15").slice(0, 5),
+          }))
+          : [];
+      });
+      return {
+        id: String(z.id || def.id).trim() || def.id,
+        label: String(z.label || def.label).trim() || def.label,
+        device: String(z.device || def.device).trim() || def.device,
+        valveType: z.valveType === "dual" ? "dual" : "irrigation",
+        channel: z.valveType === "dual" ? (z.channel === 2 ? 2 : 1) : null,
+        enabled: z.enabled !== false,
+        days,
+      };
+    });
+  }
+
+  const legacyDays = { ...emptyDays };
+  "mon tue wed thu fri sat sun".split(" ").forEach((k) => {
+    const arr = raw?.days?.[k];
+    legacyDays[k] = Array.isArray(arr)
+      ? arr.map((s) => ({
+        on: String(s.on || "07:00").slice(0, 5),
+        off: String(s.off || "07:15").slice(0, 5),
+      }))
+      : [];
+  });
+  const legacyDevice = String(raw?.deviceComputer || GARTEN_DEVICE_WH2).trim() || GARTEN_DEVICE_WH2;
+
+  return GARTEN_DEFAULT_ZONES.map((def) => ({
+    ...def,
+    device: def.id === "wh2-wintergarten" ? legacyDevice : def.device,
+    days: def.id === "wh2-wintergarten" ? legacyDays : { ...emptyDays },
+  }));
+}
+
+function gartenSlotSkipKey(ymd, dayKey, idx, zoneId = "wh2-wintergarten") {
+  return `${ymd}|${dayKey}|${idx}|${zoneId}`;
+}
+
+function isGartenSlotSkipped(sk, ymd, dayKey, idx, zoneId) {
+  if (!sk || typeof sk !== "object") return false;
+  if (sk[gartenSlotSkipKey(ymd, dayKey, idx, zoneId)] === true) return true;
+  if (zoneId === "wh2-wintergarten" && sk[`${ymd}|${dayKey}|${idx}`] === true) return true;
+  return false;
+}
+
+function resolveGartenZoneFromPlan(planData, zoneId) {
+  const zones = normalizeGartenPlanZones(planData || {});
+  if (zoneId) {
+    const hit = zones.find((z) => z.id === zoneId);
+    if (hit) return hit;
+  }
+  return zones.find((z) => z.id === "wh2-wintergarten") || zones[0];
+}
+
+function gartenZoneFromConfig(config = {}) {
+  if (config.zoneId || config.valveType || config.channel != null) {
+    return {
+      id: config.zoneId || "wh2-wintergarten",
+      label: config.zoneLabel || config.device || GARTEN_DEVICE_WH2,
+      device: config.device || config.deviceComputer || GARTEN_DEVICE_WH2,
+      valveType: config.valveType === "dual" ? "dual" : "irrigation",
+      channel: config.valveType === "dual" ? (config.channel === 2 ? 2 : 1) : null,
+    };
+  }
+  return {
+    id: "wh2-wintergarten",
+    label: config.deviceComputer || GARTEN_DEVICE_WH2,
+    device: config.deviceComputer || GARTEN_DEVICE_WH2,
+    valveType: "irrigation",
+    channel: null,
+  };
+}
+
+async function startGartenValve(zone, minutes) {
+  if (zone.valveType === "dual") {
+    return plugs.startIrrigationChannel(zone.device, minutes, zone.channel);
+  }
+  return plugs.startIrrigation(zone.device, minutes);
+}
+
+async function stopGartenValve(zone) {
+  if (zone.valveType === "dual") {
+    return plugs.stopIrrigationChannel(zone.device, zone.channel);
+  }
+  return plugs.stopIrrigation(zone.device);
+}
+
+async function isGartenValveOn(zone) {
+  return plugs.isIrrigationChannelOn(zone.device, zone.channel);
+}
+
+async function stopAllGartenValves(planData) {
+  const zones = normalizeGartenPlanZones(planData || {});
+  const seen = new Set();
+  for (const z of zones) {
+    const key = `${z.device}|${z.valveType}|${z.channel}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    try {
+      await stopGartenValve(z);
+    } catch (e) {
+      logger.warn(`stopAllGartenValves: ${z.label}`, e?.message || e);
+    }
+  }
+}
+
+async function isGartenSequenzActive() {
+  const snap = await db.collection("bewaesserung_tasks").where("done", "==", false).get();
+  return snap.docs.some((d) => !!d.data().sequenzId);
 }
 
 /** ±6h um jetzt (Europe/Zurich): Regen in Vergangenheit oder Vorschau? */
@@ -1275,10 +1427,16 @@ function sleep(ms) {
  * @returns {Promise<{success: boolean, message: string, sequenzId?: string}>}
  */
 async function startGartenSequenz(minutes, requestedBy, config = {}) {
-  // Gerätenamen aus Config oder Defaults
-  const deviceComputer = config.deviceComputer || GARTEN_DEVICE_COMPUTER;
+  const zone = gartenZoneFromConfig(config);
   const devicePumpe = config.devicePumpe || GARTEN_DEVICE_PUMPE;
   const nachlaufSec = config.nachlaufSec ?? GARTEN_SEQUENZ_NACHLAUF_SEC;
+
+  if (await isGartenSequenzActive()) {
+    return {
+      success: false,
+      message: `⏳ Es läuft bereits eine Bewässerung (*${zone.label}* kann nicht parallel starten).\n\nZuerst stoppen: «Bewässerung stopp»`,
+    };
+  }
   
   // Regen-Check (WhatsApp/Siri: aktuelles Regen; Website «Jetzt bewässern» kann skipRainCheck setzen)
   if (!config.skipRainCheck) {
@@ -1306,48 +1464,47 @@ async function startGartenSequenz(minutes, requestedBy, config = {}) {
   
   const sequenzId = `seq_${Date.now()}`;
   
-  // 1) Bewässerungscomputer starten (mit Timer für Gesamtdauer + Nachlauf)
-  const computerLaufzeit = minutes + Math.ceil(nachlaufSec / 60) + 1; // Extra Minute Puffer
+  // 1) Ventil der Zone starten (mit Timer für Gesamtdauer + Nachlauf)
+  const valveLaufzeit = minutes + Math.ceil(nachlaufSec / 60) + 1; // Extra Minute Puffer
   try {
-    // Versuche zuerst den speziellen Bewässerungs-Befehl
-    await plugs.startIrrigation(deviceComputer, computerLaufzeit);
-    await debugLog("garten_seq_computer_on", { sequenzId, deviceComputer, computerLaufzeit });
-    logger.info(`Sequenz ${sequenzId}: Bewässerungscomputer gestartet für ${computerLaufzeit} Min`);
+    await startGartenValve(zone, valveLaufzeit);
+    await debugLog("garten_seq_valve_on", { sequenzId, zone, valveLaufzeit });
+    logger.info(`Sequenz ${sequenzId}: ${zone.label} gestartet für ${valveLaufzeit} Min`);
   } catch (e) {
     return {
       success: false,
-      message: `😕 Konnte *${deviceComputer}* nicht einschalten:\n${e.message || e}`,
+      message: `😕 Konnte *${zone.label}* nicht einschalten:\n${e.message || e}`,
     };
   }
   
   // 2) Status-Check: Nur zur Info, KEIN Abbruch!
   await sleep(GARTEN_STATUS_CHECK_DELAY_MS);
   
-  let computerStatus = "gesendet"; // "an", "aus", "gesendet"
-  let computerWarnung = "";
+  let valveStatus = "gesendet"; // "an", "aus", "gesendet"
+  let valveWarnung = "";
   try {
-    const check = await plugs.isDeviceOn(deviceComputer);
-    await debugLog("garten_seq_check", { sequenzId, check });
+    const check = await isGartenValveOn(zone);
+    await debugLog("garten_seq_check", { sequenzId, zone, check });
     
     if (!check.online) {
-      computerStatus = "gesendet";
-      computerWarnung = `\n\n⚠️ *Hinweis:* Bewässerungscomputer meldet offline – Befehl wurde gesendet!`;
-      logger.warn(`Sequenz ${sequenzId}: Computer meldet offline nach Einschalten`);
+      valveStatus = "gesendet";
+      valveWarnung = `\n\n⚠️ *Hinweis:* ${zone.label} meldet offline – Befehl wurde gesendet!`;
+      logger.warn(`Sequenz ${sequenzId}: Ventil meldet offline nach Einschalten`);
     } else if (check.on === false) {
-      computerStatus = "aus";
-      computerWarnung = `\n\n⚠️ *Hinweis:* Bewässerungscomputer meldet AUS – Befehl wurde gesendet, aber Gerät reagiert nicht!`;
-      logger.warn(`Sequenz ${sequenzId}: Computer meldet AUS nach Einschalten`);
+      valveStatus = "aus";
+      valveWarnung = `\n\n⚠️ *Hinweis:* ${zone.label} meldet AUS – Befehl wurde gesendet, aber Gerät reagiert nicht!`;
+      logger.warn(`Sequenz ${sequenzId}: Ventil meldet AUS nach Einschalten`);
     } else if (check.on === null) {
-      computerStatus = "gesendet";
-      computerWarnung = `\n\n⚠️ *Hinweis:* Status unklar. Einschaltbefehl wurde gesendet!`;
-      logger.warn(`Sequenz ${sequenzId}: Computer-Status unklar. Codes: ${check.statusCodes?.join(", ")}`);
+      valveStatus = "gesendet";
+      valveWarnung = `\n\n⚠️ *Hinweis:* Status unklar. Einschaltbefehl wurde gesendet!`;
+      logger.warn(`Sequenz ${sequenzId}: Ventil-Status unklar. Codes: ${check.statusCodes?.join(", ")}`);
     } else {
-      computerStatus = "an";
-      logger.info(`Sequenz ${sequenzId}: Computer-Check OK – meldet AN`);
+      valveStatus = "an";
+      logger.info(`Sequenz ${sequenzId}: Ventil-Check OK – meldet AN`);
     }
   } catch (e) {
-    computerStatus = "gesendet";
-    computerWarnung = `\n\n⚠️ *Hinweis:* Status-Check fehlgeschlagen. Einschaltbefehl wurde gesendet!`;
+    valveStatus = "gesendet";
+    valveWarnung = `\n\n⚠️ *Hinweis:* Status-Check fehlgeschlagen. Einschaltbefehl wurde gesendet!`;
     logger.warn(`Sequenz ${sequenzId}: Status-Check Exception`, e?.message);
   }
   
@@ -1375,7 +1532,13 @@ async function startGartenSequenz(minutes, requestedBy, config = {}) {
       sequenzId,
       step: 3,
       action: "off",
+      deviceKind: "pump",
       device: devicePumpe,
+      zoneId: zone.id,
+      zoneLabel: zone.label,
+      valveDevice: zone.device,
+      valveType: zone.valveType,
+      channel: zone.channel,
       executeAt: new Date(t_pumpeAus).toISOString(),
       requestedBy,
       done: false,
@@ -1385,7 +1548,12 @@ async function startGartenSequenz(minutes, requestedBy, config = {}) {
       sequenzId,
       step: 4,
       action: "off",
-      device: deviceComputer,
+      deviceKind: "valve",
+      device: zone.device,
+      valveType: zone.valveType,
+      channel: zone.channel,
+      zoneId: zone.id,
+      zoneLabel: zone.label,
       executeAt: new Date(t_computerAus).toISOString(),
       requestedBy,
       done: false,
@@ -1400,10 +1568,10 @@ async function startGartenSequenz(minutes, requestedBy, config = {}) {
     await db.collection("bewaesserung_tasks").add(task);
   }
   
-  await debugLog("garten_seq_started", { sequenzId, minutes, deviceComputer, devicePumpe, nachlaufSec });
+  await debugLog("garten_seq_started", { sequenzId, minutes, zone, devicePumpe, nachlaufSec });
 
   const { dayKey: todayKey } = zurichWeekdayKeyAndHM();
-  await setGartenWaterLog(gartenYmdZurichNow(), {
+  await setGartenWaterLog(gartenYmdZurichNow(), zone.id, {
     status: "started",
     source: config.waterLogSource || (requestedBy ? "whatsapp" : "manual"),
     dayKey: config.dayKey || todayKey,
@@ -1411,17 +1579,18 @@ async function startGartenSequenz(minutes, requestedBy, config = {}) {
     by: config.member || null,
     minutes,
     sequenzId,
+    zoneLabel: zone.label,
   });
   
   const pumpeAusTime = new Date(t_pumpeAus).toLocaleTimeString("de-CH", { hour: "2-digit", minute: "2-digit", timeZone: "Europe/Zurich" });
   const endeTime = new Date(t_computerAus).toLocaleTimeString("de-CH", { hour: "2-digit", minute: "2-digit", timeZone: "Europe/Zurich" });
   
   // Status-Zeilen basierend auf tatsächlichem Status
-  const computerLine = computerStatus === "an" 
-    ? `✅ Bewässerungscomputer: AN` 
-    : computerStatus === "aus"
-    ? `❌ Bewässerungscomputer: AUS (reagiert nicht!)`
-    : `📤 Bewässerungscomputer: Befehl gesendet`;
+  const valveLine = valveStatus === "an" 
+    ? `✅ ${zone.label}: AN` 
+    : valveStatus === "aus"
+    ? `❌ ${zone.label}: AUS (reagiert nicht!)`
+    : `📤 ${zone.label}: Befehl gesendet`;
     
   const pumpeLine = pumpeStatus === "an"
     ? `✅ Pumpe: AN`
@@ -1429,13 +1598,14 @@ async function startGartenSequenz(minutes, requestedBy, config = {}) {
     ? `📴 Pumpe: offline`
     : `📤 Pumpe: Befehl gesendet`;
   
-  const allWarnings = computerWarnung + pumpeWarnung;
+  const allWarnings = valveWarnung + pumpeWarnung;
   
   return {
     success: true,
     sequenzId,
     message: `🌿 *Garten-Bewässerung*\n\n` +
-      `${computerLine}\n` +
+      `📍 Zone: *${zone.label}*\n` +
+      `${valveLine}\n` +
       `${pumpeLine}\n` +
       `⏱️ Dauer: *${minutes} Minuten*\n` +
       `⏹️ Pumpe AUS: ${pumpeAusTime} Uhr\n` +
@@ -1449,16 +1619,22 @@ async function startGartenSequenz(minutes, requestedBy, config = {}) {
  * Stoppt alle laufenden Garten-Bewässerungssequenzen sofort.
  */
 async function stopGartenSequenz(requestedBy) {
-  const deviceComputer = GARTEN_DEVICE_COMPUTER;
   const devicePumpe = GARTEN_DEVICE_PUMPE;
   
   if (!plugs.isConfigured()) {
     return { success: false, message: `⚠️ Smart Plugs nicht konfiguriert.` };
   }
+
+  let planData = {};
+  try {
+    const snap = await db.doc("config/gartenPlan").get();
+    if (snap.exists) planData = snap.data();
+  } catch (e) {
+    logger.warn("stopGartenSequenz: gartenPlan read", e?.message || e);
+  }
   
-  // Beide Geräte ausschalten
   let pumpeOk = true;
-  let computerOk = true;
+  let valveOk = true;
   
   try {
     await plugs.setPower(devicePumpe, false);
@@ -1467,9 +1643,9 @@ async function stopGartenSequenz(requestedBy) {
   }
   
   try {
-    await plugs.stopIrrigation(deviceComputer);
+    await stopAllGartenValves(planData);
   } catch (e) {
-    computerOk = false;
+    valveOk = false;
   }
   
   // Alle offenen Tasks als erledigt markieren
@@ -1484,16 +1660,15 @@ async function stopGartenSequenz(requestedBy) {
   });
   await Promise.all(ops);
   
-  await debugLog("garten_seq_stopped", { requestedBy, tasksCleared: ops.length, pumpeOk, computerOk });
+  await debugLog("garten_seq_stopped", { requestedBy, tasksCleared: ops.length, pumpeOk, valveOk });
   
-  // Statuszeilen
   const pumpeStatus = pumpeOk ? "🔌 Pumpe: AUS" : "📴 Pumpe: war offline";
-  const computerStatus = computerOk ? "🔌 Bewässerungscomputer: AUS" : "⚠️ Bewässerungscomputer: Fehler";
+  const valveStatus = valveOk ? "🔌 Alle Ventile: AUS" : "⚠️ Ventile: Fehler beim Stoppen";
   
   return {
-    success: computerOk, // Erfolg wenn Computer gestoppt wurde
+    success: valveOk,
     message: `⏹️ *Garten-Bewässerung gestoppt!*\n\n` +
-      `${computerStatus}\n` +
+      `${valveStatus}\n` +
       `${pumpeStatus}` +
       (ops.length > 0 ? `\n\n${ops.length} geplante Schritte abgebrochen.` : ``),
   };
@@ -1521,11 +1696,27 @@ async function abortGartenSequenz(sequenzId, requestedBy, reason, userMessage) {
   });
   await Promise.all(ops);
   
-  // Bewässerungscomputer sicherheitshalber stoppen
-  try {
-    await plugs.stopIrrigation(GARTEN_DEVICE_COMPUTER);
-  } catch (e) {
-    logger.warn("abortGartenSequenz: Konnte Bewässerungscomputer nicht stoppen", e?.message);
+  const valveTask = snap.docs.find((d) => {
+    const data = d.data();
+    return data.sequenzId === sequenzId && data.step === 4;
+  });
+  const valveData = valveTask?.data();
+  if (valveData) {
+    try {
+      await stopGartenValve({
+        device: valveData.device,
+        valveType: valveData.valveType || "irrigation",
+        channel: valveData.channel ?? null,
+      });
+    } catch (e) {
+      logger.warn("abortGartenSequenz: Konnte Ventil nicht stoppen", e?.message);
+    }
+  } else {
+    try {
+      await stopAllGartenValves({});
+    } catch (e) {
+      logger.warn("abortGartenSequenz: Konnte Ventile nicht stoppen", e?.message);
+    }
   }
   
   // User benachrichtigen
@@ -4819,19 +5010,31 @@ exports.onGartenCommand = onDocumentCreated("garten_commands/{id}", async (event
       }
     }
 
-    const deviceComputer = String(data.deviceComputer || GARTEN_DEVICE_COMPUTER).trim();
     const devicePumpe = String(data.devicePumpe || GARTEN_DEVICE_PUMPE).trim();
     const nachlaufSec = typeof data.nachlaufSec === "number"
       ? Math.max(0, Math.min(300, data.nachlaufSec))
       : GARTEN_SEQUENZ_NACHLAUF_SEC;
 
+    let planData = {};
+    try {
+      const snap = await db.doc("config/gartenPlan").get();
+      if (snap.exists) planData = snap.data();
+    } catch (e) {
+      logger.warn("onGartenCommand: gartenPlan read", e?.message || e);
+    }
+    const zone = resolveGartenZoneFromPlan(planData, data.zoneId);
+
     const result = await startGartenSequenz(minutes, null, {
-      deviceComputer,
       devicePumpe,
       nachlaufSec,
       skipRainCheck: forceRain,
       waterLogSource: "website",
       member,
+      zoneId: zone.id,
+      zoneLabel: zone.label,
+      device: zone.device,
+      valveType: zone.valveType,
+      channel: zone.channel,
     });
 
     await ref.update({
@@ -5493,22 +5696,34 @@ function pruneGartenWaterLog(raw) {
   return o;
 }
 
-/** Tages-Log auf config/gartenPlan (ob heute schon gegossen wurde). */
-async function setGartenWaterLog(ymd, patch, opts = {}) {
+function normalizeGartenWaterLogDay(entry) {
+  if (!entry || typeof entry !== "object" || Array.isArray(entry)) return {};
+  if (typeof entry.status === "string") {
+    return { "wh2-wintergarten": { ...entry } };
+  }
+  return entry;
+}
+
+/** Tages-Log auf config/gartenPlan (pro Zone). */
+async function setGartenWaterLog(ymd, zoneId, patch, opts = {}) {
   const ref = db.doc("config/gartenPlan");
+  const zid = zoneId || "wh2-wintergarten";
   try {
     await db.runTransaction(async (t) => {
       const snap = await t.get(ref);
       const data = snap.exists ? snap.data() : {};
       const waterLog = pruneGartenWaterLog(data.waterLog || {});
-      const prev = waterLog[ymd];
+      const dayLog = normalizeGartenWaterLogDay(waterLog[ymd]);
+      const prev = dayLog[zid];
       if (opts.noOverwriteDone && (prev?.status === "done" || prev?.status === "started")) return;
-      waterLog[ymd] = {
+      dayLog[zid] = {
         ...(prev || {}),
         ...patch,
         ymd,
+        zoneId: zid,
         updatedAt: FieldValue.serverTimestamp(),
       };
+      waterLog[ymd] = dayLog;
       t.set(ref, { waterLog }, { merge: true });
     });
   } catch (e) {
@@ -5529,100 +5744,105 @@ async function runGartenPlanTick() {
   const data = planSnap.data();
   if (!data?.enabled) return;
   
-  // Sequenz-Konfiguration aus dem Plan lesen (oder Defaults)
-  const useSequenz = data.useSequenz !== false; // Default: Sequenz aktiv
-  const deviceComputer = String(data.deviceComputer || GARTEN_DEVICE_COMPUTER).trim();
+  const useSequenz = data.useSequenz !== false;
   const devicePumpe = String(data.deviceName || GARTEN_DEVICE_PUMPE).trim();
-  
-  const days = data.days && typeof data.days === "object" ? data.days : {};
+  const zones = normalizeGartenPlanZones(data).filter((z) => z.enabled);
   const { dayKey, hm } = zurichWeekdayKeyAndHM();
-  const slots = Array.isArray(days[dayKey]) ? days[dayKey] : [];
   const ymd = gartenYmdZurichNow();
   const sk = data.slotSkips && typeof data.slotSkips === "object" ? data.slotSkips : {};
 
-  if (slots.length) {
-    if (await gartenDayShouldSkipDueToRain(slots, ymd)) {
-      if (gartenRainSkipLoggedYmd !== ymd) {
-        gartenRainSkipLoggedYmd = ymd;
-        await debugLog("garten_plan_skip_rain", { ymd, dayKey });
-        await setGartenWaterLog(ymd, { status: "skipped_rain", source: "plan", dayKey }, { noOverwriteDone: true });
-        logger.info(`Garten: Gießplan heute (${dayKey}) wegen Niederschlag im ±6h-Fenster übersprungen.`);
-      }
-      return;
-    }
-    gartenRainSkipLoggedYmd = null;
-  }
+  for (const zone of zones) {
+    const slots = Array.isArray(zone.days?.[dayKey]) ? zone.days[dayKey] : [];
+    if (!slots.length) continue;
 
-  let idx = 0;
-  for (const slot of slots) {
-    const onT = normHM(slot.on);
-    const offT = normHM(slot.off);
-    if (!onT || !offT) {
-      idx += 1;
+    if (await gartenDayShouldSkipDueToRain(slots, ymd)) {
+      const rainKey = `${ymd}|${zone.id}`;
+      if (gartenRainSkipLoggedYmd !== rainKey) {
+        gartenRainSkipLoggedYmd = rainKey;
+        await debugLog("garten_plan_skip_rain", { ymd, dayKey, zoneId: zone.id });
+        await setGartenWaterLog(ymd, zone.id, { status: "skipped_rain", source: "plan", dayKey }, { noOverwriteDone: true });
+        logger.info(`Garten: ${zone.label} heute (${dayKey}) wegen Niederschlag übersprungen.`);
+      }
       continue;
     }
-    if (sk[gartenSlotSkipKey(ymd, dayKey, idx)] === true) {
-      idx += 1;
-      continue;
-    }
-    
-    // Startzeit: Sequenz oder direkt Pumpe
-    if (onT === hm) {
-      if (useSequenz) {
-        // Bewässerungsdauer aus Ein/Aus-Zeit berechnen
-        const [onH, onM] = onT.split(":").map(Number);
-        const [offH, offM] = offT.split(":").map(Number);
-        const minutes = Math.max(1, (offH * 60 + offM) - (onH * 60 + onM));
-        
-        try {
-          const result = await startGartenSequenz(minutes, null, {
-            deviceComputer,
-            devicePumpe,
-            nachlaufSec: data.nachlaufSec ?? GARTEN_SEQUENZ_NACHLAUF_SEC,
-          });
-          await debugLog("garten_plan_seq_start", { hm, dayKey, slotIndex: idx, minutes, result: result.success });
-          if (result.success) {
-            await setGartenWaterLog(ymd, {
-              status: "started",
-              source: "plan",
+
+    let idx = 0;
+    for (const slot of slots) {
+      const onT = normHM(slot.on);
+      const offT = normHM(slot.off);
+      if (!onT || !offT) {
+        idx += 1;
+        continue;
+      }
+      if (isGartenSlotSkipped(sk, ymd, dayKey, idx, zone.id)) {
+        idx += 1;
+        continue;
+      }
+
+      if (onT === hm) {
+        if (useSequenz) {
+          const [onH, onM] = onT.split(":").map(Number);
+          const [offH, offM] = offT.split(":").map(Number);
+          const minutes = Math.max(1, (offH * 60 + offM) - (onH * 60 + onM));
+
+          try {
+            const result = await startGartenSequenz(minutes, null, {
+              devicePumpe,
+              nachlaufSec: data.nachlaufSec ?? GARTEN_SEQUENZ_NACHLAUF_SEC,
+              zoneId: zone.id,
+              zoneLabel: zone.label,
+              device: zone.device,
+              valveType: zone.valveType,
+              channel: zone.channel,
+              waterLogSource: "plan",
               dayKey,
               slotIndex: idx,
-              slotOn: onT,
-              slotOff: offT,
-              minutes,
             });
+            await debugLog("garten_plan_seq_start", { hm, dayKey, zoneId: zone.id, slotIndex: idx, minutes, result: result.success });
+            if (result.success) {
+              await setGartenWaterLog(ymd, zone.id, {
+                status: "started",
+                source: "plan",
+                dayKey,
+                slotIndex: idx,
+                slotOn: onT,
+                slotOff: offT,
+                minutes,
+                zoneLabel: zone.label,
+              });
+              await broadcastToWG(
+                `🌿 *Automatische Garten-Bewässerung*\n\n` +
+                `📍 ${zone.label}\n` +
+                `⏱️ Dauer: ${minutes} Min\n` +
+                `📅 Zeitplan: ${onT} – ${offT}\n\n` +
+                `Zum Stoppen: «Garten aus»`
+              );
+            } else {
+              logger.warn("garten_plan_seq_start failed:", result.message);
+            }
+          } catch (e) {
+            logger.error("garten_plan_seq_start", e?.message || e);
           }
-          
-          // WG benachrichtigen über automatischen Start
-          if (result.success) {
-            await broadcastToWG(`🌿 *Automatische Garten-Bewässerung gestartet!*\n\n⏱️ Dauer: ${minutes} Min\n📅 Zeitplan: ${onT} - ${offT}\n\nZum Stoppen: "Garten aus"`);
-          } else {
-            logger.warn("garten_plan_seq_start failed:", result.message);
+        } else {
+          try {
+            await plugs.setPower(devicePumpe, true);
+            await debugLog("garten_plan_on", { device: devicePumpe, hm, dayKey, zoneId: zone.id, slotIndex: idx });
+          } catch (e) {
+            logger.error("garten_plan_on", e?.message || e);
           }
-        } catch (e) {
-          logger.error("garten_plan_seq_start", e?.message || e);
         }
-      } else {
-        // Legacy: Nur Pumpe einschalten
+      }
+
+      if (!useSequenz && offT === hm) {
         try {
-          await plugs.setPower(devicePumpe, true);
-          await debugLog("garten_plan_on", { device: devicePumpe, hm, dayKey, slotIndex: idx });
+          await plugs.setPower(devicePumpe, false);
+          await debugLog("garten_plan_off", { device: devicePumpe, hm, dayKey, zoneId: zone.id, slotIndex: idx });
         } catch (e) {
-          logger.error("garten_plan_on", e?.message || e);
+          logger.error("garten_plan_off", e?.message || e);
         }
       }
+      idx += 1;
     }
-    
-    // Ausschaltzeit nur bei Legacy-Modus (Sequenz macht das automatisch)
-    if (!useSequenz && offT === hm) {
-      try {
-        await plugs.setPower(devicePumpe, false);
-        await debugLog("garten_plan_off", { device: devicePumpe, hm, dayKey, slotIndex: idx });
-      } catch (e) {
-        logger.error("garten_plan_off", e?.message || e);
-      }
-    }
-    idx += 1;
   }
 }
 
@@ -5684,35 +5904,36 @@ exports.checkBewaesserung = onSchedule(
       });
       
       if (activePumpeSequenzen.length > 0) {
-        try {
-          const computerStatus = await plugs.isDeviceOn(GARTEN_DEVICE_COMPUTER);
-          
-          // Wenn Bewässerungscomputer AUS oder offline → Pumpe sofort stoppen!
-          if (!computerStatus.on || !computerStatus.online) {
-            logger.error(`🚨 TROCKENLAUF-SCHUTZ: Bewässerungscomputer ist ${!computerStatus.online ? "offline" : "AUS"} während Pumpe läuft!`);
-            
-            // Pumpe sofort ausschalten
-            try {
-              await plugs.setPower(GARTEN_DEVICE_PUMPE, false);
-              logger.info("Pumpe wegen Trockenlauf-Schutz ausgeschaltet");
-            } catch (e) {
-              logger.error("Konnte Pumpe nicht ausschalten:", e?.message);
+        for (const doc of activePumpeSequenzen) {
+          const d = doc.data();
+          const zone = {
+            device: d.valveDevice || d.device,
+            valveType: d.valveType || "irrigation",
+            channel: d.channel ?? null,
+            label: d.zoneLabel || d.valveDevice || "Ventil",
+          };
+          try {
+            const valveStatus = await isGartenValveOn(zone);
+            if (!valveStatus.on || !valveStatus.online) {
+              logger.error(`🚨 TROCKENLAUF-SCHUTZ: ${zone.label} ist ${!valveStatus.online ? "offline" : "AUS"} während Pumpe läuft!`);
+              try {
+                await plugs.setPower(GARTEN_DEVICE_PUMPE, false);
+                logger.info("Pumpe wegen Trockenlauf-Schutz ausgeschaltet");
+              } catch (e) {
+                logger.error("Konnte Pumpe nicht ausschalten:", e?.message);
+              }
+              await abortGartenSequenz(d.sequenzId, d.requestedBy, "valve_turned_off",
+                `🚨 *NOTFALL-STOPP!*\n\n*${zone.label}* ist ${!valveStatus.online ? "offline" : "ausgegangen"} – Pumpe wurde SOFORT gestoppt!\n\n⚠️ Bitte prüfe die Anlage!`);
+              await debugLog("garten_dry_run_prevention", {
+                zone: zone.label,
+                valveOnline: valveStatus.online,
+                valveOn: valveStatus.on,
+                sequenzId: d.sequenzId,
+              });
             }
-            
-            // Alle betroffenen Sequenzen abbrechen
-            for (const doc of activePumpeSequenzen) {
-              const d = doc.data();
-              await abortGartenSequenz(d.sequenzId, d.requestedBy, "computer_turned_off",
-                `🚨 *NOTFALL-STOPP!*\n\nDer Bewässerungscomputer ist ${!computerStatus.online ? "offline gegangen" : "ausgegangen"} – Pumpe wurde SOFORT gestoppt um Trockenlauf zu verhindern!\n\n⚠️ Bitte prüfe die Anlage!`);
-            }
-            await debugLog("garten_dry_run_prevention", { 
-              computerOnline: computerStatus.online, 
-              computerOn: computerStatus.on,
-              sequenzenAbgebrochen: activePumpeSequenzen.length,
-            });
+          } catch (e) {
+            logger.warn("Trockenlauf-Check fehlgeschlagen (ignoriert):", e?.message);
           }
-        } catch (e) {
-          logger.warn("Trockenlauf-Check fehlgeschlagen (ignoriert):", e?.message);
         }
       }
     }
@@ -5732,28 +5953,37 @@ exports.checkBewaesserung = onSchedule(
         if (d.reason === "rain" || d.reason === "safety") continue;
         
         try {
-          const turnOn = d.action === "on";
-          await plugs.setPower(d.device, turnOn);
+          if (d.deviceKind === "valve" || (d.valveType && d.step === 4)) {
+            await stopGartenValve({
+              device: d.device,
+              valveType: d.valveType || "irrigation",
+              channel: d.channel ?? null,
+            });
+          } else {
+            await plugs.setPower(d.device, d.action === "on");
+          }
           await doc.ref.update({ done: true, executedAt: FieldValue.serverTimestamp() });
-          await debugLog("garten_seq_step", { sequenzId: d.sequenzId, step: d.step, device: d.device, action: d.action });
+          await debugLog("garten_seq_step", { sequenzId: d.sequenzId, step: d.step, device: d.device, action: d.action, deviceKind: d.deviceKind });
           logger.info(`Sequenz ${d.sequenzId} Step ${d.step}: ${d.device} ${d.action}`);
           
-          // Erfolgsmeldung am Ende der Sequenz senden
           if (d.sendSuccessMessage && d.requestedBy) {
             const mins = d.bewässerungsMinuten || "?";
+            const zoneName = d.zoneLabel || d.device || "Ventil";
             await sendWhatsApp(d.requestedBy, 
               `✅ *Garten-Bewässerung abgeschlossen!*\n\n` +
+              `📍 ${zoneName}\n` +
               `🌿 Dauer: ${mins} Minuten\n` +
               `🔌 Pumpe: AUS\n` +
-              `🔌 Bewässerungscomputer: AUS\n\n` +
+              `🔌 Ventil: AUS\n\n` +
               `Alles hat geklappt – der Garten ist gegossen! 🌻💧`
             );
             await debugLog("garten_seq_success_msg", { sequenzId: d.sequenzId, minutes: mins });
-            await setGartenWaterLog(gartenYmdZurichNow(), {
+            await setGartenWaterLog(gartenYmdZurichNow(), d.zoneId || "wh2-wintergarten", {
               status: "done",
               source: d.waterLogSource || (d.requestedBy ? "whatsapp" : "plan"),
               minutes: mins,
               sequenzId: d.sequenzId,
+              zoneLabel: zoneName,
             });
           }
         } catch (e) {

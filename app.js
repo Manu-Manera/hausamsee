@@ -7325,8 +7325,46 @@ function nextYmdForGartenDayKey(dayKey) {
   return null;
 }
 
-function gartenSlotSkipKey(ymd, dayKey, idx) {
-  return `${ymd}|${dayKey}|${idx}`;
+const GARTEN_DEFAULT_ZONES = [
+  {
+    id: "wh2-wintergarten",
+    label: "Wasserhahn 2 (Wintergarten)",
+    device: "Wasserhahn 2 (Wintergarten)",
+    valveType: "irrigation",
+    channel: null,
+    enabled: true,
+  },
+  {
+    id: "wh1-links",
+    label: "Wasserhahn 1 – links (Manu)",
+    device: "Wasserhahn 1 (Manu)",
+    valveType: "dual",
+    channel: 1,
+    enabled: true,
+  },
+  {
+    id: "wh1-rechts",
+    label: "Wasserhahn 1 – rechts (Manu)",
+    device: "Wasserhahn 1 (Manu)",
+    valveType: "dual",
+    channel: 2,
+    enabled: true,
+  },
+];
+
+function gartenSlotSkipKey(ymd, dayKey, idx, zoneId = "wh2-wintergarten") {
+  return `${ymd}|${dayKey}|${idx}|${zoneId}`;
+}
+
+function isGartenSlotSkipped(sk, ymd, dayKey, idx, zoneId) {
+  if (!sk || typeof sk !== "object") return false;
+  if (sk[gartenSlotSkipKey(ymd, dayKey, idx, zoneId)] === true) return true;
+  if (zoneId === "wh2-wintergarten" && sk[`${ymd}|${dayKey}|${idx}`] === true) return true;
+  return false;
+}
+
+function emptyGartenDays() {
+  return { mon: [], tue: [], wed: [], thu: [], fri: [], sat: [], sun: [] };
 }
 
 function formatGartenYmdShort(ymd) {
@@ -7352,10 +7390,12 @@ function defaultGartenPlan() {
   return {
     enabled: false,
     deviceName: "Pumpe",
-    deviceComputer: "Bewässerungscomputer",
     nachlaufSec: 30,
     useSequenz: true,
-    days: { mon: [], tue: [], wed: [], thu: [], fri: [], sat: [], sun: [] },
+    zones: GARTEN_DEFAULT_ZONES.map((z) => ({
+      ...z,
+      days: emptyGartenDays(),
+    })),
     slotSkips: {},
     waterLog: {},
   };
@@ -7394,22 +7434,33 @@ const GARTEN_WATER_SOURCE_LABELS = {
 };
 
 function formatGartenWaterLogLine(entry) {
-  if (!entry?.status) return "Heute: noch nicht gegossen";
+  if (!entry?.status) return "Noch nicht gegossen";
   const at = gartenWaterLogAt(entry);
   const timeStr = at
     ? at.toLocaleTimeString("de-CH", { hour: "2-digit", minute: "2-digit", timeZone: "Europe/Zurich" })
     : "";
   const src = GARTEN_WATER_SOURCE_LABELS[entry.source] || entry.source || "";
   const tail = [timeStr, src].filter(Boolean).join(" · ");
-  if (entry.status === "done") return `✅ Heute gegossen${tail ? ` · ${tail}` : ""}`;
-  if (entry.status === "started") return `💧 Bewässerung läuft${tail ? ` · ${tail}` : ""}`;
-  if (entry.status === "skipped_rain") return "🌧️ Heute nicht gegossen – wegen Regen übersprungen";
-  if (entry.status === "failed") return "❌ Bewässerung fehlgeschlagen";
-  return "Heute: noch nicht gegossen";
+  if (entry.status === "done") return `✅ Gegossen${tail ? ` · ${tail}` : ""}`;
+  if (entry.status === "started") return `💧 Läuft${tail ? ` · ${tail}` : ""}`;
+  if (entry.status === "skipped_rain") return "🌧️ Regen – übersprungen";
+  if (entry.status === "failed") return "❌ Fehlgeschlagen";
+  return "Noch nicht gegossen";
 }
 
-/** Log-Zeile unter dem Wochentag (heutiger Kalendertag für diesen Wochentag). */
-function gartenDayLogHtml(dayKey, data) {
+function normalizeGartenWaterLogDay(entry) {
+  if (!entry || typeof entry !== "object" || Array.isArray(entry)) return {};
+  if (typeof entry.status === "string") return { "wh2-wintergarten": { ...entry } };
+  return entry;
+}
+
+function gartenWaterLogForZone(data, ymd, zoneId) {
+  const dayLog = normalizeGartenWaterLogDay(data.waterLog?.[ymd]);
+  return dayLog[zoneId] || null;
+}
+
+/** Log-Zeile unter dem Wochentag (heutiger Kalendertag für diese Zone). */
+function gartenDayLogHtml(dayKey, data, zoneId) {
   const today = zurichTodayYmd();
   const nextYmd = nextYmdForGartenDayKey(dayKey);
   const isToday = nextYmd === today;
@@ -7418,7 +7469,7 @@ function gartenDayLogHtml(dayKey, data) {
       ? `<p class="garten-day-log is-future">Nächster Lauf: ${escapeHtml(formatGartenYmdShort(nextYmd))}</p>`
       : "";
   }
-  const entry = data.waterLog?.[today];
+  const entry = gartenWaterLogForZone(data, today, zoneId);
   const cls = entry?.status === "done"
     ? "is-done"
     : entry?.status === "started"
@@ -7436,24 +7487,58 @@ function normalizeGartenPlan(raw) {
   if (!raw || typeof raw !== "object") return d;
   d.enabled = !!raw.enabled;
   d.deviceName = (raw.deviceName || "Pumpe").trim() || "Pumpe";
-  d.deviceComputer = (raw.deviceComputer || "Bewässerungscomputer").trim() || "Bewässerungscomputer";
   d.nachlaufSec = typeof raw.nachlaufSec === "number" ? Math.max(0, Math.min(300, raw.nachlaufSec)) : 30;
   d.useSequenz = raw.useSequenz !== false;
   d.slotSkips = pruneGartenSlotSkips(raw.slotSkips);
   d.waterLog = pruneGartenWaterLog(raw.waterLog);
+
+  const emptyDays = emptyGartenDays();
+  if (raw.zones && Array.isArray(raw.zones) && raw.zones.length) {
+    d.zones = raw.zones.map((z, i) => {
+      const def = GARTEN_DEFAULT_ZONES[i] || GARTEN_DEFAULT_ZONES[0];
+      const days = { ...emptyDays };
+      "mon tue wed thu fri sat sun".split(" ").forEach((k) => {
+        const arr = z.days?.[k];
+        days[k] = Array.isArray(arr)
+          ? arr.map((s) => ({
+            on: String(s.on || "07:00").slice(0, 5),
+            off: String(s.off || "07:15").slice(0, 5),
+          }))
+          : [];
+      });
+      return {
+        id: String(z.id || def.id).trim() || def.id,
+        label: String(z.label || def.label).trim() || def.label,
+        device: String(z.device || def.device).trim() || def.device,
+        valveType: z.valveType === "dual" ? "dual" : "irrigation",
+        channel: z.valveType === "dual" ? (z.channel === 2 ? 2 : 1) : null,
+        enabled: z.enabled !== false,
+        days,
+      };
+    });
+    return d;
+  }
+
+  const legacyDays = { ...emptyDays };
   "mon tue wed thu fri sat sun".split(" ").forEach((k) => {
     const arr = raw.days?.[k];
-    d.days[k] = Array.isArray(arr)
+    legacyDays[k] = Array.isArray(arr)
       ? arr.map((s) => ({
         on: String(s.on || "07:00").slice(0, 5),
         off: String(s.off || "07:15").slice(0, 5),
       }))
       : [];
   });
+  const legacyDevice = (raw.deviceComputer || "Wasserhahn 2 (Wintergarten)").trim() || "Wasserhahn 2 (Wintergarten)";
+  d.zones = GARTEN_DEFAULT_ZONES.map((def) => ({
+    ...def,
+    device: def.id === "wh2-wintergarten" ? legacyDevice : def.device,
+    days: def.id === "wh2-wintergarten" ? legacyDays : { ...emptyDays },
+  }));
   return d;
 }
 
-function gartenSlotRowHtml(day, idx, s, nextYmd, skipped) {
+function gartenSlotRowHtml(zoneId, day, idx, s, nextYmd, skipped) {
   const on = (s.on || "07:00").slice(0, 5);
   const off = (s.off || "07:15").slice(0, 5);
   const hasSkip = !!nextYmd;
@@ -7463,65 +7548,82 @@ function gartenSlotRowHtml(day, idx, s, nextYmd, skipped) {
       : `Überspringen (${formatGartenYmdShort(nextYmd)})`)
     : "";
   const skipBtn = hasSkip
-    ? `<button type="button" class="mini-btn garten-skip-once" data-day="${day}" data-index="${idx}" data-ymd="${nextYmd}" data-skipped="${skipped ? "1" : "0"}" title="Nur diesen Gießblock (dieses Kalenderdatum)">${escapeHtml(skLabel)}</button>`
+    ? `<button type="button" class="mini-btn garten-skip-once" data-zone="${zoneId}" data-day="${day}" data-index="${idx}" data-ymd="${nextYmd}" data-skipped="${skipped ? "1" : "0"}" title="Nur diesen Gießblock (dieses Kalenderdatum)">${escapeHtml(skLabel)}</button>`
     : "";
   return `<div class="garten-slot-row" data-day="${day}" data-index="${idx}">
     <label>Ein <input type="time" class="garten-on" value="${on}" /></label>
     <label>Aus <input type="time" class="garten-off" value="${off}" /></label>
     <div class="garten-slot-actions">
-      <button type="button" class="mini-btn danger garten-remove-slot" data-day="${day}" data-index="${idx}">Entfernen</button>
+      <button type="button" class="mini-btn danger garten-remove-slot" data-zone="${zoneId}" data-day="${day}" data-index="${idx}">Entfernen</button>
       ${skipBtn}
     </div>
   </div>`;
 }
 
-function renderGartenWeek() {
-  const root = $("gartenWeek");
-  if (!root) return;
-  gartenPlanCache = normalizeGartenPlan(gartenPlanCache);
-  const data = gartenPlanCache;
-  const en = $("gartenPlanEnabled");
-  const dev = $("gartenDeviceName");
-  const devComp = $("gartenDeviceComputer");
-  const nachlauf = $("gartenNachlauf");
-  if (en) en.checked = !!data.enabled;
-  if (dev) dev.value = data.deviceName || "Pumpe";
-  if (devComp) devComp.value = data.deviceComputer || "Bewässerungscomputer";
-  if (nachlauf) nachlauf.value = data.nachlaufSec ?? 30;
-
+function renderGartenZoneWeek(zone, data) {
   const todayYmd = zurichTodayYmd();
-  root.innerHTML = GARTEN_DAY_DEF.map(([key, label]) => {
-    const slots = data.days[key] || [];
+  return GARTEN_DAY_DEF.map(([key, label]) => {
+    const slots = zone.days[key] || [];
     const nextYmd = nextYmdForGartenDayKey(key) || todayYmd;
     const isToday = nextYmd === todayYmd;
     const inner = slots.length
       ? slots.map((s, i) =>
         gartenSlotRowHtml(
+          zone.id,
           key,
           i,
           s,
           nextYmd,
-          !!data.slotSkips?.[gartenSlotSkipKey(nextYmd, key, i)]
+          isGartenSlotSkipped(data.slotSkips, nextYmd, key, i, zone.id)
         )).join("")
       : "";
     return `<div class="garten-day${isToday ? " is-today" : ""}" data-day="${key}">
       <h4 class="garten-day-title">${escapeHtml(label)}${isToday ? ' <span class="garten-day-today-mark">Heute</span>' : ""}</h4>
-      ${gartenDayLogHtml(key, data)}
+      ${gartenDayLogHtml(key, data, zone.id)}
       <div class="garten-slots">${inner || `<p class="form-note" style="margin:0 0 8px;">Noch keine Zeiten — unten «Zeitblock» klicken.</p>`}</div>
-      <button type="button" class="btn btn-ghost small garten-add-slot" data-day="${key}">+ Zeitblock</button>
+      <button type="button" class="btn btn-ghost small garten-add-slot" data-zone="${zone.id}" data-day="${key}">+ Zeitblock</button>
     </div>`;
   }).join("");
+}
+
+function renderGartenWeek() {
+  const root = $("gartenZones");
+  if (!root) return;
+  gartenPlanCache = normalizeGartenPlan(gartenPlanCache);
+  const data = gartenPlanCache;
+  const en = $("gartenPlanEnabled");
+  const dev = $("gartenDeviceName");
+  const nachlauf = $("gartenNachlauf");
+  const zoneSelect = $("gartenWaterNowZone");
+  if (en) en.checked = !!data.enabled;
+  if (dev) dev.value = data.deviceName || "Pumpe";
+  if (nachlauf) nachlauf.value = data.nachlaufSec ?? 30;
+  if (zoneSelect) {
+    zoneSelect.innerHTML = (data.zones || []).map((z) =>
+      `<option value="${escapeHtml(z.id)}">${escapeHtml(z.label)}</option>`
+    ).join("");
+  }
+
+  root.innerHTML = (data.zones || []).map((zone) => `
+    <fieldset class="garten-zone-box" data-zone-id="${escapeHtml(zone.id)}">
+      <legend>${escapeHtml(zone.label)}</legend>
+      <p class="form-note garten-zone-device">${escapeHtml(zone.device)}${zone.channel ? ` · Ausgang ${zone.channel}` : ""}</p>
+      <div class="garten-week garten-zone-week">${renderGartenZoneWeek(zone, data)}</div>
+    </fieldset>
+  `).join("");
 
   root.querySelectorAll(".garten-add-slot").forEach((btn) => {
     btn.addEventListener("click", () => {
       const day = btn.dataset.day;
+      const zoneId = btn.dataset.zone;
       void (async () => {
-        /* Blur/change muss ankommen: leerer .value würde früher mit || „07:00" überschrieben. */
         await afterGartenDomStable();
         mergeGartenPlanFromDom();
         gartenPlanCache = normalizeGartenPlan(gartenPlanCache);
-        gartenPlanCache.days[day] = gartenPlanCache.days[day] || [];
-        gartenPlanCache.days[day].push({ on: "07:00", off: "07:15" });
+        const zone = gartenPlanCache.zones.find((z) => z.id === zoneId);
+        if (!zone) return;
+        zone.days[day] = zone.days[day] || [];
+        zone.days[day].push({ on: "07:00", off: "07:15" });
         renderGartenWeek();
       })();
     });
@@ -7529,12 +7631,14 @@ function renderGartenWeek() {
   root.querySelectorAll(".garten-remove-slot").forEach((btn) => {
     btn.addEventListener("click", () => {
       const day = btn.dataset.day;
+      const zoneId = btn.dataset.zone;
       const idx = parseInt(btn.dataset.index, 10);
       void (async () => {
         await afterGartenDomStable();
         mergeGartenPlanFromDom();
         gartenPlanCache = normalizeGartenPlan(gartenPlanCache);
-        if (gartenPlanCache.days[day]) gartenPlanCache.days[day].splice(idx, 1);
+        const zone = gartenPlanCache.zones.find((z) => z.id === zoneId);
+        if (zone?.days[day]) zone.days[day].splice(idx, 1);
         renderGartenWeek();
       })();
     });
@@ -7544,10 +7648,11 @@ function renderGartenWeek() {
     btn.addEventListener("click", async () => {
       if (!requireMember("Gieß-Block anpassen")) return;
       const day = btn.dataset.day;
+      const zoneId = btn.dataset.zone;
       const i = parseInt(btn.dataset.index, 10);
       const ymd = btn.dataset.ymd;
-      if (!ymd || !day) return;
-      const k = gartenSlotSkipKey(ymd, day, i);
+      if (!ymd || !day || !zoneId) return;
+      const k = gartenSlotSkipKey(ymd, day, i, zoneId);
       const turnOff = btn.dataset.skipped === "1";
       await afterGartenDomStable();
       mergeGartenPlanFromDom();
@@ -7596,7 +7701,7 @@ const GARTEN_DAY_KEYS = ["mon", "tue", "wed", "thu", "fri", "sat", "sun"];
 
 /** Damit <input type=time> ggf. aufgesetzte (noch fokusige) Werte wirklich im DOM landen, bevor wir lesen. */
 function flushGartenTimeInputs() {
-  const root = $("gartenWeek");
+  const root = $("gartenZones");
   if (!root) return;
   const a = document.activeElement;
   if (a && root.contains(a) && (a.classList?.contains("garten-on") || a.classList?.contains("garten-off"))) {
@@ -7630,41 +7735,44 @@ function readGartenTimeField(onEl, field, key, slotIdx, prev) {
 /**
  * @param {object|null|undefined} prev  Letzter bekannter Plan (für leere time-Werte) — meist gartenPlanCache vor dem Merge.
  */
-function collectGartenPlanFromDom(prev) {
-  const last = prev && typeof prev === "object" ? normalizeGartenPlan(prev) : null;
-  const days = { mon: [], tue: [], wed: [], thu: [], fri: [], sat: [], sun: [] };
-  const weekRoot = $("gartenWeek");
-  
-  const baseFields = {
-    enabled: !!$("gartenPlanEnabled")?.checked,
-    deviceName: ($("gartenDeviceName")?.value || "Pumpe").trim() || "Pumpe",
-    deviceComputer: ($("gartenDeviceComputer")?.value || "Bewässerungscomputer").trim() || "Bewässerungscomputer",
-    nachlaufSec: parseInt($("gartenNachlauf")?.value, 10) || 30,
-    useSequenz: true,
-  };
-  
-  if (!weekRoot) {
-    return {
-      ...baseFields,
-      days,
-      slotSkips: gartenPlanCache ? pruneGartenSlotSkips(gartenPlanCache.slotSkips) : {},
-      waterLog: gartenPlanCache ? pruneGartenWaterLog(gartenPlanCache.waterLog) : {},
-    };
-  }
+function collectZoneDaysFromDom(zoneEl, zoneId, last) {
+  const days = emptyGartenDays();
+  const lastZone = last?.zones?.find((z) => z.id === zoneId);
   GARTEN_DAY_KEYS.forEach((key) => {
-    const dayEl = weekRoot.querySelector(`.garten-day[data-day="${key}"]`);
+    const dayEl = zoneEl.querySelector(`.garten-day[data-day="${key}"]`);
     if (!dayEl) return;
     const slots = dayEl.querySelector(".garten-slots");
     if (!slots) return;
     slots.querySelectorAll(".garten-slot-row").forEach((row, idx) => {
-      const on = readGartenTimeField(row.querySelector(".garten-on"), "on", key, idx, last);
-      const off = readGartenTimeField(row.querySelector(".garten-off"), "off", key, idx, last);
+      const prevLike = lastZone ? { days: lastZone.days } : null;
+      const on = readGartenTimeField(row.querySelector(".garten-on"), "on", key, idx, prevLike);
+      const off = readGartenTimeField(row.querySelector(".garten-off"), "off", key, idx, prevLike);
       days[key].push({ on, off });
     });
   });
+  return days;
+}
+
+function collectGartenPlanFromDom(prev) {
+  const last = prev && typeof prev === "object" ? normalizeGartenPlan(prev) : null;
+  const zonesRoot = $("gartenZones");
+
+  const baseFields = {
+    enabled: !!$("gartenPlanEnabled")?.checked,
+    deviceName: ($("gartenDeviceName")?.value || "Pumpe").trim() || "Pumpe",
+    nachlaufSec: parseInt($("gartenNachlauf")?.value, 10) || 30,
+    useSequenz: true,
+  };
+
+  const zones = (last?.zones || defaultGartenPlan().zones).map((zone) => {
+    const zoneEl = zonesRoot?.querySelector(`.garten-zone-box[data-zone-id="${zone.id}"]`);
+    const days = zoneEl ? collectZoneDaysFromDom(zoneEl, zone.id, last) : (zone.days || emptyGartenDays());
+    return { ...zone, days };
+  });
+
   return {
     ...baseFields,
-    days,
+    zones,
     slotSkips: gartenPlanCache
       ? pruneGartenSlotSkips(gartenPlanCache.slotSkips)
       : {},
@@ -7676,7 +7784,7 @@ function collectGartenPlanFromDom(prev) {
 
 /** Call before add/remove/skip, wenn im DOM noch ungespeicherte Zeiten stehen. */
 function mergeGartenPlanFromDom() {
-  if (!$("gartenWeek")?.querySelector?.(".garten-day")) return;
+  if (!$("gartenZones")?.querySelector?.(".garten-day")) return;
   flushGartenTimeInputs();
   const prev = gartenPlanCache;
   gartenPlanCache = normalizeGartenPlan({ ...gartenPlanCache, ...collectGartenPlanFromDom(prev) });
@@ -7699,21 +7807,28 @@ $("gartenPlanForm")?.addEventListener("submit", async (e) => {
   flushGartenTimeInputs();
   await afterGartenDomStable();
   const next = collectGartenPlanFromDom(gartenPlanCache);
-  for (const k of Object.keys(next.days)) {
-    for (const slot of next.days[k]) {
-      const a = gartenTimeToMin(slot.on);
-      const b = gartenTimeToMin(slot.off);
-      if (a === null || b === null) {
-        showToast(`Ungültige Zeit in ${k}. Bitte beide Uhrzeiten prüfen.`, "error");
-        return;
-      }
-      if (a >= b) {
-        showToast(`Bei ${k}: «Ein» muss vor «Aus» liegen (${slot.on} → ${slot.off}).`, "error");
-        return;
+  for (const zone of next.zones || []) {
+    for (const k of Object.keys(zone.days || {})) {
+      for (const slot of zone.days[k]) {
+        const a = gartenTimeToMin(slot.on);
+        const b = gartenTimeToMin(slot.off);
+        if (a === null || b === null) {
+          showToast(`Ungültige Zeit in ${zone.label} (${k}). Bitte beide Uhrzeiten prüfen.`, "error");
+          return;
+        }
+        if (a >= b) {
+          showToast(`${zone.label}, ${k}: «Ein» muss vor «Aus» liegen (${slot.on} → ${slot.off}).`, "error");
+          return;
+        }
       }
     }
   }
   gartenPlanCache = normalizeGartenPlan(next);
+  const wh2 = gartenPlanCache.zones?.find((z) => z.id === "wh2-wintergarten");
+  if (wh2) {
+    gartenPlanCache.deviceComputer = wh2.device;
+    gartenPlanCache.days = wh2.days;
+  }
   if (firebaseReady) {
     try {
       await setDoc(
@@ -7824,7 +7939,7 @@ function getGartenDeviceConfigFromUi() {
   mergeGartenPlanFromDom();
   const p = normalizeGartenPlan(gartenPlanCache);
   return {
-    deviceComputer: ($("gartenDeviceComputer")?.value || p.deviceComputer || "Bewässerungscomputer").trim(),
+    zoneId: ($("gartenWaterNowZone")?.value || p.zones?.[0]?.id || "wh2-wintergarten").trim(),
     devicePumpe: ($("gartenDeviceName")?.value || p.deviceName || "Pumpe").trim(),
     nachlaufSec: typeof p.nachlaufSec === "number" ? p.nachlaufSec : 30,
   };

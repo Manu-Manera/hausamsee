@@ -307,6 +307,67 @@ async function startIrrigation(nameOrId, minutes) {
 }
 
 /**
+ * Startet einen Kanal am 2-Kanal-Ventil (ggq: switch_1/2 + countdown_1/2).
+ * @param {string} nameOrId
+ * @param {number} minutes
+ * @param {1|2} channel
+ */
+async function startIrrigationChannel(nameOrId, minutes, channel) {
+  if (channel !== 1 && channel !== 2) {
+    throw new Error(`Ungültiger Kanal: ${channel} (erwartet 1 oder 2)`);
+  }
+  let devices = await listDevices();
+  let device = devices.find((d) => d.id === nameOrId);
+  if (!device) device = findDevice(devices, nameOrId);
+  if (!device) throw new Error(`Gerät "${nameOrId}" nicht gefunden.`);
+  if (!device.online) throw new Error(`Gerät "${device.name}" ist offline.`);
+
+  const switchCode = `switch_${channel}`;
+  const countdownCode = `countdown_${channel}`;
+  const statusCodes = (device.status || []).map((s) => s.code);
+  if (!statusCodes.includes(switchCode) || !statusCodes.includes(countdownCode)) {
+    throw new Error(`Gerät "${device.name}" hat keinen Kanal ${channel} (${switchCode}/${countdownCode}).`);
+  }
+
+  const commands = [
+    { code: countdownCode, value: minutes * 60 },
+    { code: switchCode, value: true },
+  ];
+  await apiCall({
+    method: "POST",
+    path: `/v1.0/devices/${device.id}/commands`,
+    body: { commands },
+  });
+  return { id: device.id, name: device.name, channel, minutes, commands: commands.map((c) => `${c.code}=${c.value}`) };
+}
+
+/**
+ * Stoppt einen Kanal am 2-Kanal-Ventil.
+ */
+async function stopIrrigationChannel(nameOrId, channel) {
+  if (channel !== 1 && channel !== 2) {
+    throw new Error(`Ungültiger Kanal: ${channel} (erwartet 1 oder 2)`);
+  }
+  let devices = await listDevices();
+  let device = devices.find((d) => d.id === nameOrId);
+  if (!device) device = findDevice(devices, nameOrId);
+  if (!device) throw new Error(`Gerät "${nameOrId}" nicht gefunden.`);
+
+  const switchCode = `switch_${channel}`;
+  const countdownCode = `countdown_${channel}`;
+  const commands = [
+    { code: countdownCode, value: 0 },
+    { code: switchCode, value: false },
+  ];
+  await apiCall({
+    method: "POST",
+    path: `/v1.0/devices/${device.id}/commands`,
+    body: { commands },
+  });
+  return { id: device.id, name: device.name, channel, stopped: true };
+}
+
+/**
  * Stoppt Bewässerung bei einem Bewässerungscomputer.
  */
 async function stopIrrigation(nameOrId) {
@@ -414,13 +475,48 @@ async function isDeviceOn(nameOrId) {
   return { online: true, on, name: device.name, found: true, statusCodes };
 }
 
+/**
+ * Prüft ob ein Bewässerungsventil (ein Kanal oder klassisch) eingeschaltet ist.
+ * @param {string} nameOrId
+ * @param {1|2|null} channel
+ */
+async function isIrrigationChannelOn(nameOrId, channel = null) {
+  const devices = await listDevices();
+  let device = devices.find((d) => d.id === nameOrId);
+  if (!device) device = findDevice(devices, nameOrId);
+  if (!device) {
+    return { online: false, on: null, name: nameOrId, found: false, statusCodes: [], channel };
+  }
+  if (!device.online) {
+    return { online: false, on: null, name: device.name, found: true, statusCodes: [], channel };
+  }
+
+  const statusCodes = (device.status || []).map((s) => `${s.code}=${s.value}`);
+  if (channel === 1 || channel === 2) {
+    const entry = (device.status || []).find((s) => s.code === `switch_${channel}`);
+    return {
+      online: true,
+      on: entry ? !!entry.value : null,
+      name: device.name,
+      found: true,
+      statusCodes,
+      channel,
+    };
+  }
+  const base = await isDeviceOn(nameOrId);
+  return { ...base, channel: null };
+}
+
 module.exports = {
   isConfigured,
   listDevices,
   setPower,
   startIrrigation,
+  startIrrigationChannel,
+  stopIrrigationChannel,
   stopIrrigation,
   getAllStatus,
   getAllStatusDebug,
   isDeviceOn,
+  isIrrigationChannelOn,
 };

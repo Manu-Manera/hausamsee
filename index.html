@@ -629,15 +629,11 @@
           <fieldset class="garten-sequenz-box">
             <legend>🔧 Geräte-Sequenz</legend>
             <p class="form-note" style="margin:0 0 12px;">
-              <strong>Ablauf:</strong> Bewässerungscomputer AN → 2x Status-Check → Pumpe AN → Dauer → Pumpe AUS → Nachlauf → Bewässerungscomputer AUS
+              <strong>Ablauf pro Zone:</strong> Ventil AN → Pumpe AN → Dauer → Pumpe AUS → Nachlauf → Ventil AUS. Drei Zonen mit eigenem Wochenplan.
             </p>
             <div class="row" style="gap:12px;flex-wrap:wrap;">
               <div class="field" style="flex:1;min-width:180px;">
-                <label for="gartenDeviceComputer">Bewässerungscomputer (Smart Life)</label>
-                <input type="text" id="gartenDeviceComputer" placeholder="Bewässerungscomputer" autocomplete="off" />
-              </div>
-              <div class="field" style="flex:1;min-width:180px;">
-                <label for="gartenDeviceName">Pumpe (Smart Life)</label>
+                <label for="gartenDeviceName">Pumpe (Smart Life, gemeinsam)</label>
                 <input type="text" id="gartenDeviceName" placeholder="Pumpe" autocomplete="off" />
               </div>
             </div>
@@ -645,26 +641,30 @@
               <div class="field" style="flex:1;min-width:180px;">
                 <label for="gartenNachlauf">Nachlauf nach Pumpe-Stopp (Sekunden)</label>
                 <input type="number" id="gartenNachlauf" min="0" max="300" value="30" style="width:80px;" />
-                <p class="form-note" style="margin:4px 0 0;font-size:0.8rem;">Bewässerungscomputer bleibt nach Pumpe-Aus noch X Sekunden an (Restdruck ablassen).</p>
+                <p class="form-note" style="margin:4px 0 0;font-size:0.8rem;">Ventil bleibt nach Pumpe-Aus noch X Sekunden an (Restdruck ablassen).</p>
               </div>
             </div>
           </fieldset>
           
           <div class="garten-now-row">
+            <div class="field garten-now-zone-field">
+              <label for="gartenWaterNowZone">Zone</label>
+              <select id="gartenWaterNowZone"></select>
+            </div>
             <button
               type="button"
               id="gartenWaterNowBtn"
               class="btn btn-primary"
-              title="Startet sofort die Bewässerungssequenz für 30 Minuten (Bewässerungscomputer → Pumpe → Stopp). Wenn in den letzten oder nächsten 6 Stunden Regen gemeldet wurde oder erwartet wird, erscheint zuerst eine Warnung – du kannst abbrechen oder trotzdem giessen."
+              title="Startet sofort die Bewässerungssequenz für 30 Minuten (Ventil → Pumpe → Stopp). Wenn in den letzten oder nächsten 6 Stunden Regen gemeldet wurde oder erwartet wird, erscheint zuerst eine Warnung – du kannst abbrechen oder trotzdem giessen."
             >💧 Jetzt bewässern</button>
             <button
               type="button"
               id="gartenWaterStopBtn"
               class="btn btn-ghost"
-              title="Stoppt die laufende Garten-Bewässerung sofort (Pumpe zuerst aus, dann Bewässerungscomputer)."
+              title="Stoppt die laufende Garten-Bewässerung sofort (Pumpe und alle Ventile)."
             >⏹ Bewässerung stoppen</button>
           </div>
-          <div class="garten-week" id="gartenWeek"></div>
+          <div class="garten-zones" id="gartenZones"></div>
           <p class="form-note">
             Pro Tag kannst du mehrere Blöcke anlegen. «Ein» muss vor «Aus» liegen (gleicher Tag).
             Bei <strong>Regen</strong> (Open-Meteo, ±6h-Fenster) wird der Gießtag automatisch übersprungen. Auch per WhatsApp steuerbar: «giesse die Blumen» / «Bewässerung stopp».
