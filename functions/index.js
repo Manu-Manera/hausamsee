@@ -425,6 +425,28 @@ async function broadcast(text) {
   await Promise.all(recipients.map((r) => sendWhatsApp(r, text)));
 }
 
+/** WG-WhatsApp (Alias für broadcast). */
+const broadcastToWG = broadcast;
+
+async function notifyGartenPlanStarted(zoneLabel, minutes, onT, offT, opts = {}) {
+  const queuedNote = opts.queued ? "\n📋 (aus Warteschlange)" : "";
+  await broadcastToWG(
+    `🌿 *Automatische Garten-Bewässerung*\n\n` +
+    `📍 ${zoneLabel}\n` +
+    `⏱️ Dauer: ${minutes} Min\n` +
+    `📅 Zeitplan: ${onT} – ${offT}${queuedNote}\n\n` +
+    `Zum Stoppen: «Garten aus»`
+  );
+}
+
+async function notifyGartenRainSkipped(zoneLabel) {
+  await broadcastToWG(
+    `🌧️ *Garten-Zeitplan übersprungen*\n\n` +
+    `📍 ${zoneLabel}\n` +
+    `Regen im ±6h-Fenster um die geplante Zeit – heute nicht gegossen.`
+  );
+}
+
 async function downloadMedia(mediaId) {
   const { token } = cfg();
   if (!token || !mediaId) return null;
@@ -986,6 +1008,9 @@ async function processGartenStartQueue(planData) {
       });
     }
     await debugLog("garten_plan_queue_start", { zoneId: next.zoneId, remaining: rest.length });
+    if (next.slotOn && next.slotOff) {
+      await notifyGartenPlanStarted(next.zoneLabel || next.zoneId, next.minutes, next.slotOn, next.slotOff, { queued: true });
+    }
   } else if (!result.success && !result.busy) {
     const rest = queue.slice(1);
     await ref.update({ pendingStarts: rest });
@@ -5850,6 +5875,7 @@ async function runGartenPlanTick() {
         gartenRainSkipLoggedYmd = rainKey;
         await debugLog("garten_plan_skip_rain", { ymd, dayKey, zoneId: zone.id });
         await setGartenWaterLog(ymd, zone.id, { status: "skipped_rain", source: "plan", dayKey }, { noOverwriteDone: true });
+        await notifyGartenRainSkipped(zone.label);
         logger.info(`Garten: ${zone.label} heute (${dayKey}) wegen Niederschlag übersprungen.`);
       }
       continue;
@@ -5903,13 +5929,7 @@ async function runGartenPlanTick() {
                 minutes,
                 zoneLabel: zone.label,
               });
-              await broadcastToWG(
-                `🌿 *Automatische Garten-Bewässerung*\n\n` +
-                `📍 ${zone.label}\n` +
-                `⏱️ Dauer: ${minutes} Min\n` +
-                `📅 Zeitplan: ${onT} – ${offT}\n\n` +
-                `Zum Stoppen: «Garten aus»`
-              );
+              await notifyGartenPlanStarted(zone.label, minutes, onT, offT);
             } else if (result.queued) {
               logger.info(`Garten: ${zone.label} in Warteschlange (${onT})`);
             } else {
@@ -5975,20 +5995,46 @@ exports.checkBewaesserung = onSchedule(
     // 0) REGEN-CHECK: Wenn es regnet, alle laufenden Bewässerungen sofort stoppen!
     const raining = await isCurrentlyRaining();
     if (raining && snap.docs.length > 0 && plugs.isConfigured()) {
-      const activePumpTasks = snap.docs.filter(d => {
-        const device = (d.data().device || "").toLowerCase();
+      const activePumpTasks = snap.docs.filter((d) => {
+        const data = d.data();
+        if (data.sequenzId && data.step === 3 && data.deviceKind === "pump") return true;
+        const device = (data.device || "").toLowerCase();
         return device.includes("pump") || device.includes("beet") || device.includes("garten") || device.includes("rasen");
       });
       
       for (const doc of activePumpTasks) {
         const d = doc.data();
         try {
-          await plugs.setPower(d.device, false);
-          await doc.ref.update({ done: true, cancelledAt: FieldValue.serverTimestamp(), reason: "rain" });
+          if (d.sequenzId) {
+            let planData = {};
+            try {
+              const ps = await db.doc("config/gartenPlan").get();
+              if (ps.exists) planData = ps.data();
+            } catch (_) { /* */ }
+            await plugs.setPower(d.device, false);
+            if (d.valveDevice) {
+              await stopGartenValve({
+                device: d.valveDevice,
+                valveType: d.valveType || "irrigation",
+                channel: d.channel ?? null,
+              });
+            } else {
+              await stopAllGartenValves(planData);
+            }
+            const seqSnap = await db.collection("bewaesserung_tasks").where("done", "==", false).get();
+            await Promise.all(seqSnap.docs.filter((x) => x.data().sequenzId === d.sequenzId).map((x) =>
+              x.ref.update({ done: true, cancelledAt: FieldValue.serverTimestamp(), reason: "rain" })
+            ));
+            const zoneName = d.zoneLabel || d.valveDevice || "Garten";
+            await broadcastToWG(`🌧️ *Bewässerung wegen Regen gestoppt*\n\n📍 ${zoneName}\nPumpe und Ventil sind aus.`);
+          } else {
+            await plugs.setPower(d.device, false);
+            await doc.ref.update({ done: true, cancelledAt: FieldValue.serverTimestamp(), reason: "rain" });
+          }
           if (d.requestedBy) {
             await sendWhatsApp(d.requestedBy, `🌧️ *${d.device}* automatisch gestoppt – es regnet! 🦆💧\n\nKein Grund zu giessen wenn der Himmel das übernimmt!`);
           }
-          await debugLog("plug_rain_stop", { device: d.device });
+          await debugLog("plug_rain_stop", { device: d.device, sequenzId: d.sequenzId || null, zone: d.zoneLabel });
           logger.info(`Bewässerung ${d.device} wegen Regen gestoppt`);
         } catch (e) {
           logger.error(`Rain-Stop failed for ${d.device}:`, e.message || e);
