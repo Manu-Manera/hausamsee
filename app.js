@@ -612,8 +612,8 @@ function applyMemberPasswordsDoc(data) {
   authConfig.memberHashes = parseMemberPasswordHashes(data);
 }
 
-const LOGIN_AUTH_BOOTSTRAP_MS = 5000;
-const LOGIN_HASH_REFRESH_MS = 15000;
+const LOGIN_REST_MS = 4000;
+const LOGIN_SDK_MS = 6000;
 const AUTH_HASHES_SESSION_KEY = "has_auth_hashes_v1";
 const AUTH_HASHES_SESSION_TTL_MS = 30 * 60 * 1000;
 
@@ -643,6 +643,7 @@ function persistAuthHashesSessionCache() {
       passwordHash: authConfig.passwordHash,
       memberHashes: authConfig.memberHashes,
       t: Date.now(),
+      fromNetwork: true,
     }));
   } catch (_) { /* Privatmodus / Speicher voll */ }
 }
@@ -650,14 +651,21 @@ function persistAuthHashesSessionCache() {
 function hydrateAuthHashesSessionCache() {
   try {
     const raw = sessionStorage.getItem(AUTH_HASHES_SESSION_KEY);
-    if (!raw) return;
+    if (!raw) return false;
     const d = JSON.parse(raw);
-    if (!d?.t || Date.now() - d.t > AUTH_HASHES_SESSION_TTL_MS) return;
+    if (!d?.t || Date.now() - d.t > AUTH_HASHES_SESSION_TTL_MS) return false;
     if (d.passwordHash) authConfig.passwordHash = d.passwordHash;
     if (d.memberHashes && typeof d.memberHashes === "object") {
       authConfig.memberHashes = { ...authConfig.memberHashes, ...d.memberHashes };
     }
+    return !!d.fromNetwork;
   } catch (_) { /* */ }
+  return false;
+}
+
+function prefetchLoginHashesInBackground() {
+  if (!firebaseReady) return;
+  refreshLoginHashesViaRest().catch(() => {});
 }
 
 /** Firestore REST – auf Mobile/Privatmodus zuverlässiger als SDK (kein Listener-Queueing). */
@@ -671,7 +679,7 @@ async function refreshLoginHashesViaRest() {
         fetch(`${base}/config/auth?key=${key}`, { cache: "no-store" }),
         fetch(`${base}/config/memberPasswords?key=${key}`, { cache: "no-store" }),
       ]),
-      LOGIN_HASH_REFRESH_MS
+      LOGIN_REST_MS
     );
     let got = false;
     if (authRes.ok) {
@@ -707,7 +715,7 @@ async function refreshLoginHashesViaSdk() {
         getDoc(doc(db, "config", "auth")),
         getDoc(doc(db, "config", "memberPasswords")),
       ]),
-      LOGIN_HASH_REFRESH_MS
+      LOGIN_SDK_MS
     );
     let got = false;
     if (authSnap.exists() && authSnap.data()?.passwordHash) {
@@ -726,25 +734,18 @@ async function refreshLoginHashesViaSdk() {
   }
 }
 
-/** Vor Login: Session-Cache, dann REST (primär), dann SDK. Login nie wegen Netzwerk blockieren. */
-async function refreshLoginHashesFromFirestore() {
-  if (!firebaseReady) return true;
-  hydrateAuthHashesSessionCache();
-  if (await refreshLoginHashesViaRest()) return true;
-  if (await refreshLoginHashesViaSdk()) return true;
-  return Object.keys(authConfig.memberHashes).length > 0;
-}
-
+/** Vor Login: Cache → REST (schnell) → SDK nur wenn nötig. Kein Bootstrap-Wait. */
 async function ensureAuthConfigForLogin() {
-  hydrateAuthHashesSessionCache();
-  if (!authConfig.ready) {
-    try {
-      await promiseWithTimeout(loadAuthConfig(), LOGIN_AUTH_BOOTSTRAP_MS);
-    } catch (e) {
-      console.warn("ensureAuthConfigForLogin bootstrap", e?.message || e);
-    }
+  const cacheFresh = hydrateAuthHashesSessionCache();
+  if (cacheFresh) {
+    prefetchLoginHashesInBackground();
+    return;
   }
-  await refreshLoginHashesFromFirestore();
+  if (await refreshLoginHashesViaRest()) return;
+  if (!Object.keys(authConfig.memberHashes).length) {
+    await refreshLoginHashesViaSdk();
+  }
+  if (!authConfig.ready) loadAuthConfig().catch(() => {});
 }
 
 function applyMemberPrefsDoc(data) {
@@ -1220,6 +1221,7 @@ function openLoginDialog() {
   $("loginError")?.classList.add("hidden");
   const pw = $("loginPassword");
   if (pw) pw.value = "";
+  prefetchLoginHashesInBackground();
   populateLoginMemberSelect();
   const last = sessionStorage.getItem(LOGIN_LAST_MEMBER_KEY);
   const sel = $("loginMember");
@@ -1332,8 +1334,9 @@ $("loginForm")?.addEventListener("submit", async (e) => {
   // Fall 3: WG-Mitglied — eigenes Passwort (falls gesetzt), sonst gemeinsames WG-Passwort
   let mres = await verifyMemberPassword(selected, password);
   if (!mres.ok && !mres.hasPersonal && firebaseReady) {
-    const retried = await refreshLoginHashesFromFirestore();
-    if (retried) mres = await verifyMemberPassword(selected, password);
+    if (await refreshLoginHashesViaRest()) {
+      mres = await verifyMemberPassword(selected, password);
+    }
   }
   if (!mres.ok) {
     if (mres.hasPersonal) {
@@ -10757,6 +10760,7 @@ initWeather();
 // Auth-Config parallel (Firestore-Listener starten schon oben via setupListeners)
 wireLoginAutofillSync();
 hydrateAuthHashesSessionCache();
+prefetchLoginHashesInBackground();
 
 loadAuthConfig().then(() => {
   auth.init();
