@@ -890,6 +890,91 @@ function resolveGartenZoneFromPlan(planData, zoneId) {
   return zones.find((z) => z.id === "wh2-wintergarten") || zones[0];
 }
 
+/**
+ * Zone aus Freitext (WhatsApp/Siri).
+ * null = Default Wintergarten · "ambiguous_wh1" = links/rechts nötig
+ */
+function parseGartenZoneHint(text) {
+  const s = String(text || "").toLowerCase();
+  if (/\b(rechts|rechte|right)\b/.test(s) || /ausgang\s*2/.test(s) || /kanal\s*2/.test(s)) return "wh1-rechts";
+  if (/\b(links|linke|left)\b/.test(s) || /ausgang\s*1/.test(s) || /kanal\s*1/.test(s)) return "wh1-links";
+  if (/wintergarten/.test(s) || /wasserhahn\s*2/.test(s) || /\bwh\s*2\b/.test(s)) return "wh2-wintergarten";
+  if ((/wasserhahn\s*1\b/.test(s) || /\bmanu\b/.test(s)) && !/\b(links|rechts|left|right)\b/.test(s) && !/ausgang|kanal/.test(s)) {
+    return "ambiguous_wh1";
+  }
+  return null;
+}
+
+async function loadGartenPlanData() {
+  try {
+    const snap = await db.doc("config/gartenPlan").get();
+    return snap.exists ? snap.data() : {};
+  } catch (e) {
+    logger.warn("loadGartenPlanData", e?.message || e);
+    return {};
+  }
+}
+
+async function gartenSequenzConfigForZone(zoneId, opts = {}) {
+  const planData = await loadGartenPlanData();
+  const zone = resolveGartenZoneFromPlan(planData, zoneId);
+  return {
+    devicePumpe: String(planData.deviceName || GARTEN_DEVICE_PUMPE).trim(),
+    nachlaufSec: planData.nachlaufSec ?? GARTEN_SEQUENZ_NACHLAUF_SEC,
+    zoneId: zone.id,
+    zoneLabel: zone.label,
+    device: zone.device,
+    valveType: zone.valveType,
+    channel: zone.channel,
+    waterLogSource: opts.waterLogSource || "whatsapp",
+    allowQueue: !!opts.allowQueue,
+    ymd: opts.ymd,
+    dayKey: opts.dayKey,
+    slotIndex: opts.slotIndex,
+    slotOn: opts.slotOn,
+    slotOff: opts.slotOff,
+  };
+}
+
+function formatGartenZoneStatusLine(zone, st) {
+  if (!st.online) return `📴 ${zone.label}: offline`;
+  if (st.on) return `💧 ${zone.label}: AN`;
+  return `🔌 ${zone.label}: aus`;
+}
+
+async function formatGartenZonesStatus(planData, onlyZoneId = null) {
+  const zones = normalizeGartenPlanZones(planData || {});
+  const picked = onlyZoneId ? zones.filter((z) => z.id === onlyZoneId) : zones;
+  const lines = [];
+  if (await isGartenSequenzActive()) lines.push("⏳ Eine Bewässerungssequenz läuft gerade.");
+  for (const z of picked) {
+    try {
+      const st = await isGartenValveOn(z);
+      lines.push(formatGartenZoneStatusLine(z, st));
+    } catch (e) {
+      lines.push(`⚠️ ${z.label}: Status unbekannt`);
+    }
+  }
+  return lines.join("\n");
+}
+
+function formatGartenZonesList(planData) {
+  const zones = normalizeGartenPlanZones(planData || {});
+  return zones.map((z) => {
+    const en = z.enabled !== false ? "✅" : "⏸️";
+    const ch = z.channel ? ` · Ausgang ${z.channel}` : "";
+    return `${en} *${z.label}* (${z.device}${ch})`;
+  }).join("\n");
+}
+
+const GARTEN_ZONE_WHATSAPP_HELP =
+  `📍 *Zonen:*\n` +
+  `• *giesse wintergarten* (oder nur *giesse die blumen*)\n` +
+  `• *giesse links* / *giesse rechts*\n` +
+  `• *bewässerung wintergarten 20 min*\n` +
+  `• *garten status* · *bewässerung zonen*\n` +
+  `• Stoppen: *bewässerung stopp* (alle Zonen)`;
+
 function gartenZoneFromConfig(config = {}) {
   if (config.zoneId || config.valveType || config.channel != null) {
     return {
@@ -1449,6 +1534,18 @@ function parseGiessenUmgang(sIn) {
   if (!s) return null;
   if (/^wie\s+(gie|kann|soll|muss|funk|warum|wieso)\b/i.test(s)) return null; // reine Wissensfrage, keine Aktion
   if (/^(pumpe|beet|rasen|steckdose|plug)\b/i.test(s)) return null; // normaler Pumpe-Pfad (ohne "bewässerung")
+
+  if (/^(garten|bewässerung|bewaesserung)\s*(zonen|zones|liste)\b/i.test(s)) {
+    return { gartenSequenz: true, listZones: true };
+  }
+
+  const zoneHint = parseGartenZoneHint(s);
+  const statusQuery =
+    /(garten|bewässerung|bewaesserung|wasserhahn|giess|gieß|giesse).*(status|läuft|an\?|aktiv)/i.test(s) ||
+    /^(garten|bewässerung|bewaesserung)\s*status\b/i.test(s);
+  if (statusQuery) {
+    return { gartenSequenz: true, status: true, zoneId: zoneHint === "ambiguous_wh1" ? null : zoneHint };
+  }
   
   // Explizite Stopp-Befehle (DE/EN/FR) – OHNE "giess" Keyword
   // WICHTIG: "Pumpe aus" stoppt auch die ganze Sequenz (Pumpe erst, dann Computer)
@@ -1495,8 +1592,10 @@ function parseGiessenUmgang(sIn) {
   const minutes = timeMatch
     ? Math.max(1, Math.min(PUMP_MAX_MINUTES, parseInt(timeMatch[1], 10)))
     : PUMP_DEFAULT_MINUTES;
-  // Garten-Sequenz starten: Bewässerungscomputer → Pumpe
-  return { gartenSequenz: true, on: true, minutes };
+  if (zoneHint === "ambiguous_wh1") {
+    return { gartenSequenz: true, on: true, minutes, ambiguousZone: true };
+  }
+  return { gartenSequenz: true, on: true, minutes, zoneId: zoneHint };
 }
 
 /**
@@ -3373,7 +3472,9 @@ const HELP_TEXT =
   `📋 "Bewerber"\n` +
   `📣 "Zimmer teilen" / "Inserat Zimmer" — Inserat-Text + Link (→ WHATSAPP_GROUP_RECIPIENTS)\n\n` +
   `*Bewässerung / Smart Plugs*\n` +
-  `💧 Auch: *"Giesse die Blumen"*, *"Garten bewässern"*, *"kannst du giesen"* (→ *Pumpe* ${PUMP_DEFAULT_MINUTES} min, Zahl in der Nachricht = Minuten; Stop: *Pumpe aus*)\n` +
+  `💧 *Zonen:* *giesse wintergarten* · *giesse links* · *giesse rechts* (${PUMP_DEFAULT_MINUTES} min, Zahl = Minuten)\n` +
+  `💧 Auch: *"Giesse die Blumen"* (= Wintergarten) · *"Garten bewässern 20 min"* · *"garten status"* · *"bewässerung zonen"*\n` +
+  `💧 Stop: *bewässerung stopp* · Regen ±6h: *trotzdem giesse links*\n` +
   `💧 "Pumpe an" / "Pumpe aus" (auto-aus nach ${PUMP_DEFAULT_MINUTES} Min)\n` +
   `💧 "Pumpe 20 Min" (auto-aus nach 20 Min, max. ${PUMP_MAX_MINUTES})\n` +
   `💧 "Beet 20 Min" — andere Steckdose per Name\n` +
@@ -4378,15 +4479,52 @@ async function dispatch(ctx) {
   if (pump) {
     // Garten-Sequenz: "giesse die blumen", "garten bewässern", etc.
     if (pump.gartenSequenz) {
+      if (pump.listZones) {
+        const planData = await loadGartenPlanData();
+        await reply(`🌿 *Bewässerungszonen*\n\n${formatGartenZonesList(planData)}\n\n${GARTEN_ZONE_WHATSAPP_HELP}`);
+        return true;
+      }
+      if (pump.status) {
+        const planData = await loadGartenPlanData();
+        const lines = await formatGartenZonesStatus(planData, pump.zoneId || null);
+        await reply(`🌿 *Garten-Status*\n\n${lines}`);
+        return true;
+      }
+      if (pump.ambiguousZone) {
+        await reply(
+          `🤔 *Wasserhahn 1 (Manu)* hat zwei Ausgänge.\n\n` +
+          `Schreib z. B.:\n• *giesse links* 15 min\n• *giesse rechts* 15 min`
+        );
+        return true;
+      }
       if (pump.on) {
-        // Sequenz starten
-        const result = await startGartenSequenz(pump.minutes, from);
+        const forceRain = /trotzdem|trotz\s*regen/i.test(rawInput);
+        if (!forceRain) {
+          try {
+            const rain = await gartenRainAroundNow();
+            if (rain.rainy) {
+              const zoneLabel = resolveGartenZoneFromPlan(await loadGartenPlanData(), pump.zoneId).label;
+              await reply(
+                `🌧️ *Regen-Warnung* (±6h)\n\n` +
+                `Für *${zoneLabel}* wird Regen gemeldet oder erwartet.\n\n` +
+                `Zum Trotzdem-Starten: *trotzdem giesse ${pump.zoneId === "wh1-links" ? "links" : pump.zoneId === "wh1-rechts" ? "rechts" : "wintergarten"}*`
+              );
+              return true;
+            }
+          } catch (e) {
+            logger.warn("gartenRainAroundNow whatsapp", e?.message || e);
+          }
+        }
+        const cfg = await gartenSequenzConfigForZone(pump.zoneId, { waterLogSource: "whatsapp" });
+        const result = await startGartenSequenz(pump.minutes, from, {
+          ...cfg,
+          skipRainCheck: forceRain,
+        });
         await reply(result.message);
         if (result.success) {
-          await debugLog("garten_seq_whatsapp", { sequenzId: result.sequenzId, minutes: pump.minutes, from });
+          await debugLog("garten_seq_whatsapp", { sequenzId: result.sequenzId, minutes: pump.minutes, zoneId: cfg.zoneId, from });
         }
       } else {
-        // Sequenz stoppen
         const result = await stopGartenSequenz(from);
         await reply(result.message);
       }
@@ -4858,28 +4996,34 @@ function parseSiriCommand(text) {
   const minMatch = s.match(/(\d+)\s*min/i);
   const minutes = minMatch ? parseInt(minMatch[1], 10) : 20;
   
+  const zoneId = parseGartenZoneHint(s);
+
   // STOP zuerst prüfen (wichtig: vor START!)
-  // Bewässerung / Garten STOP
-  if (/(bewässer|garten|blumen|giess|gieß|wasser|pflanz|pumpe).*(stopp?|aus|end|beend|aufhör)/i.test(s) ||
+  if (/(bewässer|garten|blumen|giess|gieß|wasser|pflanz|pumpe|wintergarten|links|rechts).*(stopp?|aus|end|beend|aufhör)/i.test(s) ||
       /(stopp?|beend|schalt.*aus|mach.*aus|hör.*auf).*(bewässer|garten|blumen|giess|gieß|pumpe)?/i.test(s) ||
       /^(stopp?e?n?|aus|ende|stop)$/i.test(s) ||
       /(stopp?e?n?|beenden|ausschalten)$/i.test(s)) {
-    return { action: "garten", cmd: "stop" };
+    return { action: "garten", cmd: "stop", zoneId };
+  }
+
+  if (/^(garten|bewässerung|bewaesserung)\s*(zonen|zones|liste)\b/i.test(s)) {
+    return { action: "garten", cmd: "zones" };
   }
   
   // Bewässerung / Garten START
-  if (/(bewässer|garten|blumen|giess|gieß|wasser|pflanz).*(start|an|ein|los|beginn)/i.test(s) ||
-      /(start|beginn|mach|schalt).*(bewässer|garten|blumen|giess|gieß)/i.test(s) ||
+  if (/(bewässer|garten|blumen|giess|gieß|wasser|pflanz|wintergarten|links|rechts).*(start|an|ein|los|beginn)/i.test(s) ||
+      /(start|beginn|mach|schalt).*(bewässer|garten|blumen|giess|gieß|wintergarten|links|rechts)/i.test(s) ||
       /^(bewässer|garten bewässer|giess|gieß)/i.test(s) ||
       /(starten|einschalten|anmachen)$/i.test(s)) {
-    return { action: "garten", cmd: "start", minutes };
+    if (zoneId === "ambiguous_wh1") return { action: "garten", cmd: "ambiguous", minutes };
+    return { action: "garten", cmd: "start", minutes, zoneId };
   }
   
   // Status abfragen
-  if (/(status|läuft|an\?|aktiv|check).*(bewässer|garten|pump)/i.test(s) ||
-      /(bewässer|garten|pump).*(status|läuft|an\?|aktiv)/i.test(s) ||
+  if (/(status|läuft|an\?|aktiv|check).*(bewässer|garten|pump|wintergarten|links|rechts)/i.test(s) ||
+      /(bewässer|garten|pump|wintergarten|links|rechts).*(status|läuft|an\?|aktiv)/i.test(s) ||
       /^status$/i.test(s)) {
-    return { action: "garten", cmd: "status" };
+    return { action: "garten", cmd: "status", zoneId: zoneId === "ambiguous_wh1" ? null : zoneId };
   }
   
   // Toggle (umschalten)
@@ -4934,6 +5078,7 @@ exports.siriWebhook = onRequest(async (req, res) => {
       action = parsed.action;
       cmd = parsed.cmd;
       if (parsed.minutes) minParam = parsed.minutes;
+      if (parsed.zoneId) params.zoneId = parsed.zoneId;
     } else {
       return res.json({ 
         success: false, 
@@ -4949,18 +5094,33 @@ exports.siriWebhook = onRequest(async (req, res) => {
       return res.json({ success: false, speech: "Smart Home nicht konfiguriert." });
     }
     
+    if (cmd === "zones") {
+      const planData = await loadGartenPlanData();
+      const list = formatGartenZonesList(planData).replace(/\*/g, "");
+      return res.json({ success: true, speech: `Bewässerungszonen: ${list.replace(/\n/g, ". ")}` });
+    }
+
+    if (cmd === "ambiguous") {
+      return res.json({
+        success: false,
+        speech: "Wasserhahn eins hat links und rechts. Sage zum Beispiel: Giesse links, oder Giesse rechts.",
+      });
+    }
+
     if (cmd === "start" || cmd === "an" || cmd === "on") {
       const minutes = parseInt(minParam, 10) || 20;
+      const zoneId = params.zoneId || parseGartenZoneHint(text || "");
       try {
-        const result = await startGartenSequenz(minutes, null);
+        const cfg = await gartenSequenzConfigForZone(zoneId === "ambiguous_wh1" ? null : zoneId, { waterLogSource: "manual" });
+        const result = await startGartenSequenz(minutes, null, cfg);
         if (result.success) {
           return res.json({ 
             success: true, 
-            speech: `Alles klar! Bewässerung läuft für ${minutes} Minuten.`,
+            speech: `Alles klar! ${cfg.zoneLabel} läuft für ${minutes} Minuten.`,
             sequenzId: result.sequenzId 
           });
         } else {
-          return res.json({ success: false, speech: "Bewässerung konnte nicht gestartet werden." });
+          return res.json({ success: false, speech: result.message || "Bewässerung konnte nicht gestartet werden." });
         }
       } catch (e) {
         return res.json({ success: false, speech: `Fehler: ${e.message}` });
@@ -4981,11 +5141,10 @@ exports.siriWebhook = onRequest(async (req, res) => {
     
     if (cmd === "status") {
       try {
-        const status = await plugs.isDeviceOn(GARTEN_DEVICE_COMPUTER);
-        const statusText = status.online 
-          ? (status.on ? "Die Bewässerung läuft gerade." : "Die Bewässerung ist aus.") 
-          : "Der Bewässerungscomputer ist offline.";
-        return res.json({ success: true, speech: statusText, status });
+        const planData = await loadGartenPlanData();
+        const zoneId = params.zoneId || parseGartenZoneHint(text || "");
+        const lines = await formatGartenZonesStatus(planData, zoneId === "ambiguous_wh1" ? null : zoneId);
+        return res.json({ success: true, speech: lines.replace(/\n/g, ". ") });
       } catch (e) {
         return res.json({ success: false, speech: "Status konnte nicht abgefragt werden." });
       }
@@ -4994,9 +5153,11 @@ exports.siriWebhook = onRequest(async (req, res) => {
     // Toggle: Prüft Status und schaltet um
     if (cmd === "toggle") {
       try {
-        const status = await plugs.isDeviceOn(GARTEN_DEVICE_COMPUTER);
+        const planData = await loadGartenPlanData();
+        const zoneId = params.zoneId || parseGartenZoneHint(text || "") || "wh2-wintergarten";
+        const zone = resolveGartenZoneFromPlan(planData, zoneId === "ambiguous_wh1" ? null : zoneId);
+        const status = await isGartenValveOn(zone);
         if (status.on) {
-          // Ist an → ausschalten
           const result = await stopGartenSequenz("siri");
           return res.json({ 
             success: result.success, 
@@ -5004,12 +5165,12 @@ exports.siriWebhook = onRequest(async (req, res) => {
             action: "stopped"
           });
         } else {
-          // Ist aus → einschalten
           const minutes = parseInt(minParam, 10) || 20;
-          const result = await startGartenSequenz(minutes, null);
+          const cfg = await gartenSequenzConfigForZone(zone.id, { waterLogSource: "manual" });
+          const result = await startGartenSequenz(minutes, null, cfg);
           return res.json({ 
             success: result.success, 
-            speech: `Bewässerung gestartet für ${minutes} Minuten.`,
+            speech: `${zone.label} gestartet für ${minutes} Minuten.`,
             action: "started",
             sequenzId: result.sequenzId
           });
