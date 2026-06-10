@@ -8116,12 +8116,12 @@ function openGartenRainWarnDialog(risk) {
           ${detail ? `<p class="garten-rain-detail">${escapeHtml(detail)}</p>` : ""}
         </div>
         <p class="form-note garten-rain-question">
-          Möchtest du die Bewässerung trotzdem starten?
+          Möchtest du die Bewässerung trotzdem starten? (Dauer: ${GARTEN_MANUAL_MINUTES} Min)
         </p>
         ${hint ? `<p class="form-note garten-rain-hint">${escapeHtml(hint)}</p>` : ""}
         <div class="garten-rain-actions">
           <button type="button" class="btn btn-ghost" id="gartenRainCancel">Abbrechen</button>
-          <button type="button" class="btn btn-primary" id="gartenRainForce">💧 Trotzdem bewässern (${GARTEN_MANUAL_MINUTES} Min)</button>
+          <button type="button" class="btn btn-primary" id="gartenRainForce">Bewässern</button>
         </div>
       </form>
     `;

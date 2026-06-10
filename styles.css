@@ -4975,23 +4975,23 @@ body.is-spotify-track .vinyl {
 }
 
 .garten-rain-actions {
-  display: flex;
-  flex-wrap: wrap;
+  display: grid;
+  grid-template-columns: 1fr 1fr;
   gap: 10px;
   margin-top: 4px;
 }
 
 .garten-rain-actions .btn {
-  flex: 1 1 140px;
+  width: 100%;
   min-width: 0;
+  white-space: nowrap;
+  padding-left: 16px;
+  padding-right: 16px;
 }
 
-@media (max-width: 400px) {
+@media (max-width: 360px) {
   .garten-rain-actions {
-    flex-direction: column;
-  }
-  .garten-rain-actions .btn {
-    width: 100%;
+    grid-template-columns: 1fr;
   }
 }
 
