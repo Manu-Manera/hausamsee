@@ -911,25 +911,16 @@ function populateProfileEmojiSelect() {
   if (keep && Array.from(sel.options).some((o) => o.value === keep)) sel.value = keep;
 }
 
-/**
- * Login für eine konkrete Bewohner:in.
- * 1) Persönliches Passwort (falls gesetzt)
- * 2) Gemeinsames WG-Passwort (Fallback – wichtig für Schlüsselbund mit altem WG-PW)
- */
+/** Login für eine konkrete Bewohner:in: eigenes Passwort, sonst gemeinsames WG-Passwort. */
 async function verifyMemberPassword(memberName, pw) {
   const hash = await sha256(normPasswordInput(pw));
   const personal = authConfig.memberHashes[memberName];
-  if (personal && hash === personal) {
-    return { ok: true, kind: "personal" };
+  if (personal) {
+    if (hash === personal) return { ok: true, kind: "personal" };
+    return { ok: false, reason: "wrong", hasPersonal: true };
   }
-  if (hashMatchesWgLoginFallback(hash)) {
-    return {
-      ok: true,
-      kind: "group",
-      usedGroupFallback: !!(personal && hash !== personal),
-    };
-  }
-  return { ok: false, reason: "wrong", hasPersonal: !!personal };
+  if (hashMatchesWgLoginFallback(hash)) return { ok: true, kind: "group" };
+  return { ok: false, reason: "wrong", hasPersonal: false };
 }
 
 // Hash für ein Passwort: nur Gäste + gemeinsames WG-Passwort (für generische Gast-Option)
@@ -1196,12 +1187,12 @@ $("loginForm")?.addEventListener("submit", async (e) => {
     return;
   }
 
-  // Fall 3: WG-Mitglied — persönliches Passwort oder gemeinsames WG-Passwort
+  // Fall 3: WG-Mitglied — eigenes Passwort (falls gesetzt), sonst gemeinsames WG-Passwort
   const mres = await verifyMemberPassword(selected, password);
   if (!mres.ok) {
     if (mres.hasPersonal) {
       showError(
-        "Falsches Passwort. Weder persönliches noch gemeinsames WG-Passwort. " +
+        "Falsches Passwort. Du hast ein persönliches Passwort – das WG-Passwort gilt nicht mehr für dich. " +
         "Passwort-App-Eintrag prüfen oder unter WG-Intern → Einstellungen neu setzen."
       );
     } else {
@@ -1212,14 +1203,6 @@ $("loginForm")?.addEventListener("submit", async (e) => {
   resetSubmitBtn();
   auth.login(selected, { isGuest: false, loginKind: mres.kind });
   $("loginDialog").close();
-  if (mres.usedGroupFallback) {
-    setTimeout(() => {
-      showToast(
-        "Eingeloggt mit WG-Passwort. In der Passwort-App bitte dein persönliches Passwort speichern (oder unter Einstellungen angleichen).",
-        "info"
-      );
-    }, 400);
-  }
 });
 
 /* Guard helper: prüft Auth, zeigt sonst Hinweis */
