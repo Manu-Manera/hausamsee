@@ -88,6 +88,25 @@ const GARTEN_LEGACY_ZONE_LABELS = new Set([
   "Wasserhahn 1 – rechts (Manu)",
 ]);
 
+const GARTEN_LEGACY_DEVICE_NAMES = new Set([
+  "Bewässerungscomputer",
+  "Bewässerungs-Computer",
+]);
+
+function normalizeGartenZoneDevice(name, defDevice) {
+  const n = String(name || "").trim();
+  if (!n || GARTEN_LEGACY_DEVICE_NAMES.has(n)) return defDevice;
+  return n;
+}
+
+function speechFromGartenResult(message) {
+  return String(message || "")
+    .replace(/\*/g, "")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim()
+    .slice(0, 500);
+}
+
 const GARTEN_DEFAULT_ZONES = [
   {
     id: "wh2-wintergarten",
@@ -858,7 +877,7 @@ function normalizeGartenPlanZones(raw) {
         id: String(z.id || def.id).trim() || def.id,
         label,
         subtitle: String(z.subtitle || def.subtitle || "").trim() || def.subtitle || "",
-        device: String(z.device || def.device).trim() || def.device,
+        device: normalizeGartenZoneDevice(z.device, def.device),
         valveType: z.valveType === "dual" ? "dual" : "irrigation",
         channel: z.valveType === "dual" ? (z.channel === 2 ? 2 : 1) : null,
         enabled: z.enabled !== false,
@@ -877,7 +896,7 @@ function normalizeGartenPlanZones(raw) {
       }))
       : [];
   });
-  const legacyDevice = String(raw?.deviceComputer || GARTEN_DEVICE_WH2).trim() || GARTEN_DEVICE_WH2;
+  const legacyDevice = normalizeGartenZoneDevice(raw?.deviceComputer, GARTEN_DEVICE_WH2);
 
   return GARTEN_DEFAULT_ZONES.map((def) => ({
     ...def,
@@ -1000,15 +1019,15 @@ function gartenZoneFromConfig(config = {}) {
     return {
       id: config.zoneId || "wh2-wintergarten",
       label: config.zoneLabel || config.device || GARTEN_DEVICE_WH2,
-      device: config.device || config.deviceComputer || GARTEN_DEVICE_WH2,
+      device: normalizeGartenZoneDevice(config.device || config.deviceComputer, GARTEN_DEVICE_WH2),
       valveType: config.valveType === "dual" ? "dual" : "irrigation",
       channel: config.valveType === "dual" ? (config.channel === 2 ? 2 : 1) : null,
     };
   }
   return {
     id: "wh2-wintergarten",
-    label: config.deviceComputer || GARTEN_DEVICE_WH2,
-    device: config.deviceComputer || GARTEN_DEVICE_WH2,
+    label: normalizeGartenZoneDevice(config.deviceComputer, GARTEN_DEVICE_WH2),
+    device: normalizeGartenZoneDevice(config.deviceComputer, GARTEN_DEVICE_WH2),
     valveType: "irrigation",
     channel: null,
   };
@@ -5031,11 +5050,11 @@ function parseSiriCommand(text) {
     return { action: "garten", cmd: "zones" };
   }
   
-  // Bewässerung / Garten START
-  if (/(bewässer|garten|blumen|giess|gieß|wasser|pflanz|wintergarten|links|rechts).*(start|an|ein|los|beginn)/i.test(s) ||
-      /(start|beginn|mach|schalt).*(bewässer|garten|blumen|giess|gieß|wintergarten|links|rechts)/i.test(s) ||
-      /^(bewässer|garten bewässer|giess|gieß)/i.test(s) ||
-      /(starten|einschalten|anmachen)$/i.test(s)) {
+  // Bewässerung / Garten START (inkl. beet / schlauch / tomaten)
+  if (/(bewässer|garten|blumen|giess|gieß|giesse|wasser|pflanz|wintergarten|links|rechts|beet|schlauch|tomaten?)/i.test(s) &&
+      (/(start|an|ein|los|beginn|giess|gieß|giesse|bewäss|wässer|arrose|water)/i.test(s) ||
+        /^(bewässer|garten bewässer|giess|gieß|giesse|beet|schlauch|tomaten?)\b/i.test(s) ||
+        /(starten|einschalten|anmachen)$/i.test(s))) {
     if (zoneId === "ambiguous_wh1") return { action: "garten", cmd: "ambiguous", minutes };
     return { action: "garten", cmd: "start", minutes, zoneId };
   }
@@ -5089,11 +5108,14 @@ exports.siriWebhook = onRequest(async (req, res) => {
   
   // Secret prüfen
   if (secret !== SIRI_SECRET) {
-    return res.status(401).json({ success: false, speech: "Zugriff verweigert. Falsches Secret." });
+    return res.status(401).json({
+      success: false,
+      speech: "Zugriff verweigert. Das Secret im Kurzbefehl muss mit SIRI_SECRET in functions/.env übereinstimmen.",
+    });
   }
   
-  // Natürliche Sprache interpretieren wenn "text" übergeben wird
-  if (text && !action) {
+  // Natürliche Sprache interpretieren (auch wenn action ohne cmd gesetzt ist)
+  if (text && (!action || !cmd)) {
     const parsed = parseSiriCommand(text);
     if (parsed) {
       action = parsed.action;
@@ -5141,7 +5163,10 @@ exports.siriWebhook = onRequest(async (req, res) => {
             sequenzId: result.sequenzId 
           });
         } else {
-          return res.json({ success: false, speech: result.message || "Bewässerung konnte nicht gestartet werden." });
+          return res.json({
+            success: false,
+            speech: speechFromGartenResult(result.message) || "Bewässerung konnte nicht gestartet werden.",
+          });
         }
       } catch (e) {
         return res.json({ success: false, speech: `Fehler: ${e.message}` });
@@ -5189,8 +5214,14 @@ exports.siriWebhook = onRequest(async (req, res) => {
           const minutes = parseInt(minParam, 10) || 20;
           const cfg = await gartenSequenzConfigForZone(zone.id, { waterLogSource: "manual" });
           const result = await startGartenSequenz(minutes, null, cfg);
+          if (!result.success) {
+            return res.json({
+              success: false,
+              speech: speechFromGartenResult(result.message) || "Start fehlgeschlagen.",
+            });
+          }
           return res.json({ 
-            success: result.success, 
+            success: true, 
             speech: `${zone.label} gestartet für ${minutes} Minuten.`,
             action: "started",
             sequenzId: result.sequenzId

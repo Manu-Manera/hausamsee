@@ -7331,6 +7331,17 @@ const GARTEN_LEGACY_ZONE_LABELS = new Set([
   "Wasserhahn 1 – rechts (Manu)",
 ]);
 
+const GARTEN_LEGACY_DEVICE_NAMES = new Set([
+  "Bewässerungscomputer",
+  "Bewässerungs-Computer",
+]);
+
+function normalizeGartenZoneDevice(name, defDevice) {
+  const n = String(name || "").trim();
+  if (!n || GARTEN_LEGACY_DEVICE_NAMES.has(n)) return defDevice;
+  return n;
+}
+
 const GARTEN_DEFAULT_ZONES = [
   {
     id: "wh2-wintergarten",
@@ -7521,7 +7532,7 @@ function normalizeGartenPlan(raw) {
         id: String(z.id || def.id).trim() || def.id,
         label,
         subtitle: String(z.subtitle || def.subtitle || "").trim() || def.subtitle || "",
-        device: String(z.device || def.device).trim() || def.device,
+        device: normalizeGartenZoneDevice(z.device, def.device),
         valveType: z.valveType === "dual" ? "dual" : "irrigation",
         channel: z.valveType === "dual" ? (z.channel === 2 ? 2 : 1) : null,
         enabled: z.enabled !== false,
@@ -7541,7 +7552,7 @@ function normalizeGartenPlan(raw) {
       }))
       : [];
   });
-  const legacyDevice = (raw.deviceComputer || "Wasserhahn 2 (Wintergarten)").trim() || "Wasserhahn 2 (Wintergarten)";
+  const legacyDevice = normalizeGartenZoneDevice(raw.deviceComputer, "Wasserhahn 2 (Wintergarten)");
   d.zones = GARTEN_DEFAULT_ZONES.map((def) => ({
     ...def,
     subtitle: def.subtitle || "",
