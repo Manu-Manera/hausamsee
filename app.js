@@ -7325,10 +7325,17 @@ function nextYmdForGartenDayKey(dayKey) {
   return null;
 }
 
+const GARTEN_LEGACY_ZONE_LABELS = new Set([
+  "Wasserhahn 2 (Wintergarten)",
+  "Wasserhahn 1 – links (Manu)",
+  "Wasserhahn 1 – rechts (Manu)",
+]);
+
 const GARTEN_DEFAULT_ZONES = [
   {
     id: "wh2-wintergarten",
-    label: "Wasserhahn 2 (Wintergarten)",
+    label: "Beetbewässerung",
+    subtitle: "Wasserhahn 2 (Wintergarten)",
     device: "Wasserhahn 2 (Wintergarten)",
     valveType: "irrigation",
     channel: null,
@@ -7336,7 +7343,8 @@ const GARTEN_DEFAULT_ZONES = [
   },
   {
     id: "wh1-links",
-    label: "Wasserhahn 1 – links (Manu)",
+    label: "Gartenschlauch",
+    subtitle: "Wasserhahn 1 links (Manu) – oft auch manuell am Hahn",
     device: "Wasserhahn 1 (Manu)",
     valveType: "dual",
     channel: 1,
@@ -7344,7 +7352,8 @@ const GARTEN_DEFAULT_ZONES = [
   },
   {
     id: "wh1-rechts",
-    label: "Wasserhahn 1 – rechts (Manu)",
+    label: "Tomatenbewässerung",
+    subtitle: "Wasserhahn 1 rechts (Manu)",
     device: "Wasserhahn 1 (Manu)",
     valveType: "dual",
     channel: 2,
@@ -7506,9 +7515,12 @@ function normalizeGartenPlan(raw) {
           }))
           : [];
       });
+      const rawLabel = String(z.label || "").trim();
+      const label = (!rawLabel || GARTEN_LEGACY_ZONE_LABELS.has(rawLabel)) ? def.label : rawLabel;
       return {
         id: String(z.id || def.id).trim() || def.id,
-        label: String(z.label || def.label).trim() || def.label,
+        label,
+        subtitle: String(z.subtitle || def.subtitle || "").trim() || def.subtitle || "",
         device: String(z.device || def.device).trim() || def.device,
         valveType: z.valveType === "dual" ? "dual" : "irrigation",
         channel: z.valveType === "dual" ? (z.channel === 2 ? 2 : 1) : null,
@@ -7532,6 +7544,7 @@ function normalizeGartenPlan(raw) {
   const legacyDevice = (raw.deviceComputer || "Wasserhahn 2 (Wintergarten)").trim() || "Wasserhahn 2 (Wintergarten)";
   d.zones = GARTEN_DEFAULT_ZONES.map((def) => ({
     ...def,
+    subtitle: def.subtitle || "",
     device: def.id === "wh2-wintergarten" ? legacyDevice : def.device,
     days: def.id === "wh2-wintergarten" ? legacyDays : { ...emptyDays },
   }));
@@ -7634,7 +7647,7 @@ function renderGartenWeek() {
         <input type="checkbox" class="garten-zone-enabled" data-zone="${escapeHtml(zone.id)}" ${zone.enabled !== false ? "checked" : ""} />
         <span>Zeitplan für diese Zone aktiv</span>
       </label>
-      <p class="form-note garten-zone-device">${escapeHtml(zone.device)}${zone.channel ? ` · Ausgang ${zone.channel}` : ""}</p>
+      <p class="form-note garten-zone-device">${escapeHtml(zone.subtitle || zone.device)}${zone.channel ? ` · Ausgang ${zone.channel}` : ""}</p>
       <div class="garten-week garten-zone-week">${renderGartenZoneWeek(zone, data)}</div>
     </fieldset>
   `).join("");
@@ -7862,6 +7875,7 @@ $("gartenPlanForm")?.addEventListener("submit", async (e) => {
     zones: (gartenPlanCache.zones || []).map((z) => ({
       id: z.id,
       label: z.label,
+      subtitle: z.subtitle || "",
       device: z.device,
       valveType: z.valveType,
       channel: z.channel,

@@ -82,10 +82,17 @@ const GARTEN_DEVICE_WH1 = "Wasserhahn 1 (Manu)";
 const GARTEN_DEVICE_COMPUTER = GARTEN_DEVICE_WH2; // Legacy-Alias / Default-Zone
 const GARTEN_DEVICE_PUMPE = "Pumpe";
 
+const GARTEN_LEGACY_ZONE_LABELS = new Set([
+  "Wasserhahn 2 (Wintergarten)",
+  "Wasserhahn 1 – links (Manu)",
+  "Wasserhahn 1 – rechts (Manu)",
+]);
+
 const GARTEN_DEFAULT_ZONES = [
   {
     id: "wh2-wintergarten",
-    label: "Wasserhahn 2 (Wintergarten)",
+    label: "Beetbewässerung",
+    subtitle: "Wasserhahn 2 (Wintergarten)",
     device: GARTEN_DEVICE_WH2,
     valveType: "irrigation",
     channel: null,
@@ -93,7 +100,8 @@ const GARTEN_DEFAULT_ZONES = [
   },
   {
     id: "wh1-links",
-    label: "Wasserhahn 1 – links (Manu)",
+    label: "Gartenschlauch",
+    subtitle: "Wasserhahn 1 links (Manu) – oft auch manuell am Hahn",
     device: GARTEN_DEVICE_WH1,
     valveType: "dual",
     channel: 1,
@@ -101,13 +109,18 @@ const GARTEN_DEFAULT_ZONES = [
   },
   {
     id: "wh1-rechts",
-    label: "Wasserhahn 1 – rechts (Manu)",
+    label: "Tomatenbewässerung",
+    subtitle: "Wasserhahn 1 rechts (Manu)",
     device: GARTEN_DEVICE_WH1,
     valveType: "dual",
     channel: 2,
     enabled: true,
   },
 ];
+
+function gartenZoneDisplayLabel(zone) {
+  return zone?.label || zone?.id || "Zone";
+}
 
 // Geräte ohne Auto-Off-Timer (bleiben an bis manuell ausgeschaltet)
 const NO_TIMER_DEVICES = ["lichterkette", "licht"];
@@ -839,9 +852,12 @@ function normalizeGartenPlanZones(raw) {
           }))
           : [];
       });
+      const rawLabel = String(z.label || "").trim();
+      const label = (!rawLabel || GARTEN_LEGACY_ZONE_LABELS.has(rawLabel)) ? def.label : rawLabel;
       return {
         id: String(z.id || def.id).trim() || def.id,
-        label: String(z.label || def.label).trim() || def.label,
+        label,
+        subtitle: String(z.subtitle || def.subtitle || "").trim() || def.subtitle || "",
         device: String(z.device || def.device).trim() || def.device,
         valveType: z.valveType === "dual" ? "dual" : "irrigation",
         channel: z.valveType === "dual" ? (z.channel === 2 ? 2 : 1) : null,
@@ -865,6 +881,7 @@ function normalizeGartenPlanZones(raw) {
 
   return GARTEN_DEFAULT_ZONES.map((def) => ({
     ...def,
+    subtitle: def.subtitle || "",
     device: def.id === "wh2-wintergarten" ? legacyDevice : def.device,
     days: def.id === "wh2-wintergarten" ? legacyDays : { ...emptyDays },
   }));
@@ -896,6 +913,9 @@ function resolveGartenZoneFromPlan(planData, zoneId) {
  */
 function parseGartenZoneHint(text) {
   const s = String(text || "").toLowerCase();
+  if (/tomaten?/.test(s)) return "wh1-rechts";
+  if (/gartenschlauch|\bschlauch\b/.test(s)) return "wh1-links";
+  if (/beetbewässerung|beetbewaesserung|\bbeet\b/.test(s)) return "wh2-wintergarten";
   if (/\b(rechts|rechte|right)\b/.test(s) || /ausgang\s*2/.test(s) || /kanal\s*2/.test(s)) return "wh1-rechts";
   if (/\b(links|linke|left)\b/.test(s) || /ausgang\s*1/.test(s) || /kanal\s*1/.test(s)) return "wh1-links";
   if (/wintergarten/.test(s) || /wasserhahn\s*2/.test(s) || /\bwh\s*2\b/.test(s)) return "wh2-wintergarten";
@@ -969,9 +989,9 @@ function formatGartenZonesList(planData) {
 
 const GARTEN_ZONE_WHATSAPP_HELP =
   `📍 *Zonen:*\n` +
-  `• *giesse wintergarten* (oder nur *giesse die blumen*)\n` +
-  `• *giesse links* / *giesse rechts*\n` +
-  `• *bewässerung wintergarten 20 min*\n` +
+  `• *giesse beet* / *giesse die blumen* (= Beet, WH2 Wintergarten)\n` +
+  `• *giesse schlauch* / *giesse links* (= Gartenschlauch)\n` +
+  `• *giesse tomaten* / *giesse rechts* (= Tomaten)\n` +
   `• *garten status* · *bewässerung zonen*\n` +
   `• Stoppen: *bewässerung stopp* (alle Zonen)`;
 
@@ -3472,9 +3492,9 @@ const HELP_TEXT =
   `📋 "Bewerber"\n` +
   `📣 "Zimmer teilen" / "Inserat Zimmer" — Inserat-Text + Link (→ WHATSAPP_GROUP_RECIPIENTS)\n\n` +
   `*Bewässerung / Smart Plugs*\n` +
-  `💧 *Zonen:* *giesse wintergarten* · *giesse links* · *giesse rechts* (${PUMP_DEFAULT_MINUTES} min, Zahl = Minuten)\n` +
-  `💧 Auch: *"Giesse die Blumen"* (= Wintergarten) · *"Garten bewässern 20 min"* · *"garten status"* · *"bewässerung zonen"*\n` +
-  `💧 Stop: *bewässerung stopp* · Regen ±6h: *trotzdem giesse links*\n` +
+  `💧 *Zonen:* *giesse beet* · *giesse schlauch* · *giesse tomaten* (${PUMP_DEFAULT_MINUTES} min, Zahl = Minuten)\n` +
+  `💧 Auch: *"Giesse die Blumen"* (= Beet) · *"garten status"* · *"bewässerung zonen"*\n` +
+  `💧 Stop: *bewässerung stopp* · Regen ±6h: *trotzdem giesse tomaten*\n` +
   `💧 "Pumpe an" / "Pumpe aus" (auto-aus nach ${PUMP_DEFAULT_MINUTES} Min)\n` +
   `💧 "Pumpe 20 Min" (auto-aus nach 20 Min, max. ${PUMP_MAX_MINUTES})\n` +
   `💧 "Beet 20 Min" — andere Steckdose per Name\n` +
@@ -4492,8 +4512,9 @@ async function dispatch(ctx) {
       }
       if (pump.ambiguousZone) {
         await reply(
-          `🤔 *Wasserhahn 1 (Manu)* hat zwei Ausgänge.\n\n` +
-          `Schreib z. B.:\n• *giesse links* 15 min\n• *giesse rechts* 15 min`
+          `🤔 *Wasserhahn 1 (Manu)* – welche Leitung?\n\n` +
+          `• *giesse schlauch* – Gartenschlauch (links)\n` +
+          `• *giesse tomaten* – Tomaten (rechts)`
         );
         return true;
       }
@@ -4507,7 +4528,7 @@ async function dispatch(ctx) {
               await reply(
                 `🌧️ *Regen-Warnung* (±6h)\n\n` +
                 `Für *${zoneLabel}* wird Regen gemeldet oder erwartet.\n\n` +
-                `Zum Trotzdem-Starten: *trotzdem giesse ${pump.zoneId === "wh1-links" ? "links" : pump.zoneId === "wh1-rechts" ? "rechts" : "wintergarten"}*`
+                `Zum Trotzdem-Starten: *trotzdem giesse ${pump.zoneId === "wh1-links" ? "schlauch" : pump.zoneId === "wh1-rechts" ? "tomaten" : "beet"}*`
               );
               return true;
             }
@@ -5103,7 +5124,7 @@ exports.siriWebhook = onRequest(async (req, res) => {
     if (cmd === "ambiguous") {
       return res.json({
         success: false,
-        speech: "Wasserhahn eins hat links und rechts. Sage zum Beispiel: Giesse links, oder Giesse rechts.",
+        speech: "Sage zum Beispiel: Giesse Schlauch für den Gartenschlauch, oder Giesse Tomaten.",
       });
     }
 

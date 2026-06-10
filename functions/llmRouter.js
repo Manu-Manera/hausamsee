@@ -95,7 +95,7 @@ Beispiele:
   Examples: "Jacuzzi besetzt von mir bis 15 Uhr" -> *Wellness belegen: Jacuzzi | SENDER | jetzt | 15:00*
   "Sauna for Andy until 8pm" -> *Wellness belegen: Sauna | Andy | jetzt | 20:00*
   Use SENDER when user says ich/mir/mich/me/myself; otherwise the named person.
-- Water garden/Giesse die Blumen -> Wintergarten (Default). Zonen: *Giesse links*, *Giesse rechts*, *Giesse Wintergarten*, *Bewässerung links 20 min*
+- Water garden/Giesse die Blumen -> Beetbewässerung (Default). Zonen: *Giesse schlauch* (Gartenschlauch), *Giesse tomaten*, *Giesse beet*, auch links/rechts
 - Garten status / Bewässerung zonen -> Status bzw. Zonenliste
 - Stop watering/Bewässerung stopp/Garten aus -> Stoppt alle Zonen + Pumpe
 - Who's cleaning?/Qui nettoie?/Wer putzt? -> *Wer putzt?*
