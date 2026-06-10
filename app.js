@@ -605,20 +605,26 @@ function applyMemberPasswordsDoc(data) {
   authConfig.memberHashes = parseMemberPasswordHashes(data);
 }
 
+const LOGIN_AUTH_WAIT_MS = 3000;
+
+function promiseWithTimeout(promise, ms) {
+  return new Promise((resolve, reject) => {
+    const t = setTimeout(() => reject(new Error("timeout")), ms);
+    promise.then(
+      (v) => { clearTimeout(t); resolve(v); },
+      (e) => { clearTimeout(t); reject(e); }
+    );
+  });
+}
+
+/** Nur wenn die App noch lädt – Hashes kommen sonst laufend per onSnapshot. */
 async function ensureAuthConfigForLogin() {
-  if (!authConfig.ready) {
-    try { await loadAuthConfig(); } catch (_) { /* */ }
-  }
-  if (!firebaseReady) return;
+  if (authConfig.ready) return;
   try {
-    const mp = await getDoc(doc(db, "config", "memberPasswords"));
-    if (mp.exists()) applyMemberPasswordsDoc(mp.data());
-    const authSnap = await getDoc(doc(db, "config", "auth"));
-    if (authSnap.exists() && authSnap.data()?.passwordHash) {
-      authConfig.passwordHash = authSnap.data().passwordHash;
-    }
+    await promiseWithTimeout(loadAuthConfig(), LOGIN_AUTH_WAIT_MS);
   } catch (e) {
     console.warn("ensureAuthConfigForLogin", e?.message || e);
+    authConfig.ready = true;
   }
 }
 
@@ -1154,7 +1160,13 @@ $("loginForm")?.addEventListener("submit", async (e) => {
     resetSubmitBtn();
   };
 
-  await ensureAuthConfigForLogin();
+  try {
+    await ensureAuthConfigForLogin();
+  } catch (err) {
+    console.error(err);
+    showError("Anmeldung hat zu lange gedauert – bitte nochmal versuchen.");
+    return;
+  }
 
   // Fall 1: Konkreter Gast-Eintrag gewählt (mit ID/Namen)
   if (selected.startsWith("__guest__:")) {
@@ -10151,7 +10163,15 @@ function renderAllFromCaches() {
   renderDeferredFromCaches();
 }
 
+let loadAuthConfigPromise = null;
+
 async function loadAuthConfig() {
+  if (loadAuthConfigPromise) return loadAuthConfigPromise;
+  loadAuthConfigPromise = loadAuthConfigOnce();
+  return loadAuthConfigPromise;
+}
+
+async function loadAuthConfigOnce() {
   if (firebaseReady) {
     try {
       const snap = await getDoc(doc(db, "config", "auth"));
