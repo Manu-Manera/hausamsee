@@ -1279,7 +1279,7 @@
     <form method="dialog" id="loginForm" class="auth-form" autocomplete="on" name="login">
       <button type="button" class="dialog-close" aria-label="Schliessen">×</button>
       <h2 class="auth-title">🔑 Login</h2>
-      <p class="auth-sub">Bewohner:innen und Gäste. Der zweite Konto-Name dient iOS/Passwort-App; er folgt deiner Namenswahl.</p>
+      <p class="auth-sub">Bewohner:innen und Gäste. In der Passwort-App als Konto-Name exakt <strong>Manu</strong> (Vorname) speichern – gleich wie «Ich bin».</p>
       <div class="field">
         <label for="loginMember">Ich bin</label>
         <select id="loginMember" name="account_choice" required autocomplete="off"></select>
@@ -1290,11 +1290,13 @@
           type="text"
           id="loginKeychainUser"
           name="username"
-          readonly
-          tabindex="-1"
           autocomplete="username"
+          autocapitalize="off"
+          autocorrect="off"
+          spellcheck="false"
           class="keychain-username"
           data-keychain-username
+          placeholder="z. B. Manu"
         />
       </div>
       <div class="field">

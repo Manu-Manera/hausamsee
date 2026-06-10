@@ -420,8 +420,15 @@ async function sha256(text) {
 
 /** Eingabe vor SHA-256 (iOS, Autofill, Unicode) – muss identisch für Speichern und Login sein */
 function normPasswordInput(s) {
-  return String(s ?? "").normalize("NFC").trim();
+  return String(s ?? "")
+    .normalize("NFC")
+    .replace(/[\u200B-\u200D\uFEFF\u2060]/g, "")
+    .replace(/\u00A0/g, " ")
+    .replace(/[\r\n]+/g, "")
+    .trim();
 }
+
+const LOGIN_LAST_MEMBER_KEY = "has_last_login_member";
 
 /* ==========================================================================
    Auth (WG-Login + Gast-Zugänge)
@@ -484,6 +491,9 @@ const auth = {
     this.member = member;
     this.isGuest = isGuest;
     this.loginKind = isGuest ? null : loginKind;
+    if (!isGuest && member) {
+      try { sessionStorage.setItem(LOGIN_LAST_MEMBER_KEY, member); } catch (_) { /* */ }
+    }
     localStorage.setItem(SESSION_KEY, JSON.stringify({
       member,
       isGuest,
@@ -572,9 +582,9 @@ function hashMatchesWgLoginFallback(hash) {
   return hash === authConfig.passwordHash || hash === WG_PASSWORD_HASH;
 }
 
-function applyMemberPasswordsDoc(data) {
-  authConfig.memberHashes = {};
-  if (!data || typeof data !== "object") return;
+function parseMemberPasswordHashes(data) {
+  const out = {};
+  if (!data || typeof data !== "object") return out;
   const skipKeys = new Set(["updatedAt", "updatedBy", "createdAt"]);
   for (const [k, v] of Object.entries(data)) {
     if (skipKeys.has(k)) continue;
@@ -586,7 +596,29 @@ function applyMemberPasswordsDoc(data) {
     let canonical = [...ADULT_NAMES].find((n) => n === kTrim);
     if (!canonical) canonical = [...ADULT_NAMES].find((n) => n.toLowerCase() === kTrim.toLowerCase());
     if (!canonical) continue;
-    authConfig.memberHashes[canonical] = raw;
+    out[canonical] = raw;
+  }
+  return out;
+}
+
+function applyMemberPasswordsDoc(data) {
+  authConfig.memberHashes = parseMemberPasswordHashes(data);
+}
+
+async function ensureAuthConfigForLogin() {
+  if (!authConfig.ready) {
+    try { await loadAuthConfig(); } catch (_) { /* */ }
+  }
+  if (!firebaseReady) return;
+  try {
+    const mp = await getDoc(doc(db, "config", "memberPasswords"));
+    if (mp.exists()) applyMemberPasswordsDoc(mp.data());
+    const authSnap = await getDoc(doc(db, "config", "auth"));
+    if (authSnap.exists() && authSnap.data()?.passwordHash) {
+      authConfig.passwordHash = authSnap.data().passwordHash;
+    }
+  } catch (e) {
+    console.warn("ensureAuthConfigForLogin", e?.message || e);
   }
 }
 
@@ -916,7 +948,7 @@ function syncKeychainUserFields() {
       lku.value = g ? g.name : "";
     } else if (v === "__guest__") {
       lku.value = "Gast (Haus am See)";
-    } else {
+    } else if (v) {
       lku.value = v;
     }
   }
@@ -925,6 +957,60 @@ function syncKeychainUserFields() {
     if (auth.isMember && !auth.isGuest) cpu.value = auth.member;
     else cpu.value = "";
   }
+}
+
+/** Keychain füllt oft zuerst Konto-Name – Dropdown muss dann nachziehen. */
+function syncSelectFromKeychainUser() {
+  const lku = $("loginKeychainUser");
+  const sel = $("loginMember");
+  if (!lku || !sel) return;
+  const name = lku.value.trim();
+  if (!name) return;
+  if (name === "Gast (Haus am See)" && [...sel.options].some((o) => o.value === "__guest__")) {
+    sel.value = "__guest__";
+    return;
+  }
+  if ([...sel.options].some((o) => o.value === name)) sel.value = name;
+}
+
+function resolveLoginMemberSelection() {
+  syncSelectFromKeychainUser();
+  const sel = $("loginMember");
+  let selected = sel?.value || "";
+  const keychainName = ($("loginKeychainUser")?.value || "").trim();
+  if (!selected && keychainName) {
+    syncSelectFromKeychainUser();
+    selected = sel?.value || "";
+  }
+  if (selected && keychainName && !selected.startsWith("__guest__") && keychainName !== selected) {
+    if ([...ADULT_NAMES, ...getActiveBewohner().filter((b) => b.kid).map((b) => b.name)].includes(keychainName)) {
+      sel.value = keychainName;
+      selected = keychainName;
+      syncKeychainUserFields();
+    }
+  }
+  return selected;
+}
+
+function scheduleLoginAutofillSync() {
+  syncKeychainUserFields();
+  syncSelectFromKeychainUser();
+  [80, 280, 700].forEach((ms) => {
+    setTimeout(() => {
+      syncSelectFromKeychainUser();
+      syncKeychainUserFields();
+    }, ms);
+  });
+}
+
+function wireLoginAutofillSync() {
+  const lku = $("loginKeychainUser");
+  const pw = $("loginPassword");
+  const sel = $("loginMember");
+  lku?.addEventListener("input", () => { syncSelectFromKeychainUser(); });
+  lku?.addEventListener("change", () => { syncSelectFromKeychainUser(); });
+  pw?.addEventListener("change", () => { syncSelectFromKeychainUser(); });
+  sel?.addEventListener("change", () => { syncKeychainUserFields(); });
 }
 
 function updateLoginChip() {
@@ -985,10 +1071,20 @@ $("loginMember")?.addEventListener("change", () => { syncKeychainUserFields(); }
 
 function openLoginDialog() {
   $("loginError")?.classList.add("hidden");
-  $("loginForm")?.reset();
+  const pw = $("loginPassword");
+  if (pw) pw.value = "";
   populateLoginMemberSelect();
+  const last = sessionStorage.getItem(LOGIN_LAST_MEMBER_KEY);
+  const sel = $("loginMember");
+  if (last && sel && [...sel.options].some((o) => o.value === last)) {
+    sel.value = last;
+  }
   syncKeychainUserFields();
-  try { $("loginDialog")?.showModal(); } catch (_) { /* */ }
+  try {
+    $("loginDialog")?.showModal();
+    scheduleLoginAutofillSync();
+    $("loginPassword")?.focus();
+  } catch (_) { /* */ }
 }
 
 function populateAufgabenWhoSelect() {
@@ -1022,17 +1118,39 @@ $("loginDialog")?.addEventListener("click", (e) => {
 
 $("loginForm")?.addEventListener("submit", async (e) => {
   e.preventDefault();
-  const selected = $("loginMember").value;
+  syncSelectFromKeychainUser();
+  const selected = resolveLoginMemberSelection();
   const password = $("loginPassword").value;
-  if (!selected) return;
+  if (!selected) {
+    const errorEl = $("loginError");
+    errorEl.textContent = "Bitte zuerst «Ich bin» wählen (oder Konto-Name aus der Passwort-App).";
+    errorEl.classList.remove("hidden");
+    return;
+  }
+
+  const submitBtn = $("loginForm")?.querySelector('button[type="submit"]');
+  const prevBtnText = submitBtn?.textContent;
+  if (submitBtn) {
+    submitBtn.disabled = true;
+    submitBtn.textContent = "Prüfe…";
+  }
 
   const errorEl = $("loginError");
+  const resetSubmitBtn = () => {
+    if (submitBtn) {
+      submitBtn.disabled = false;
+      submitBtn.textContent = prevBtnText || "Anmelden";
+    }
+  };
   const showError = (msg) => {
     errorEl.textContent = msg;
     errorEl.classList.remove("hidden");
     $("loginPassword").value = "";
     $("loginPassword").focus();
+    resetSubmitBtn();
   };
+
+  await ensureAuthConfigForLogin();
 
   // Fall 1: Konkreter Gast-Eintrag gewählt (mit ID/Namen)
   if (selected.startsWith("__guest__:")) {
@@ -1043,6 +1161,7 @@ $("loginForm")?.addEventListener("submit", async (e) => {
     if (guest.expiresAt && guest.expiresAt < now) { showError("Dieser Gast-Zugang ist abgelaufen."); return; }
     const hash = await sha256(normPasswordInput(password));
     if (hash !== guest.hash) { showError("Falsches Passwort · versuch's nochmal."); return; }
+    resetSubmitBtn();
     auth.login(guest.name, { isGuest: true });
     $("loginDialog").close();
     return;
@@ -1058,6 +1177,7 @@ $("loginForm")?.addEventListener("submit", async (e) => {
       return;
     }
     if (result.kind !== "guest") { showError("Das ist kein Gast-Passwort."); return; }
+    resetSubmitBtn();
     auth.login(result.guestName, { isGuest: true });
     $("loginDialog").close();
     return;
@@ -1066,9 +1186,17 @@ $("loginForm")?.addEventListener("submit", async (e) => {
   // Fall 3: WG-Mitglied — eigenes Passwort oder gemeinsames Fallback (siehe verifyMemberPassword)
   const mres = await verifyMemberPassword(selected, password);
   if (!mres.ok) {
-    showError("Falsches Passwort · versuch's nochmal.");
+    if (authConfig.memberHashes[selected]) {
+      showError(
+        "Falsches Passwort. Du hast ein persönliches Passwort – das in der Passwort-App gespeicherte kann veraltet sein. " +
+        "Unter WG-Intern → Einstellungen neu setzen oder einmal manuell eintippen."
+      );
+    } else {
+      showError("Falsches Passwort · versuch's nochmal.");
+    }
     return;
   }
+  resetSubmitBtn();
   auth.login(selected, { isGuest: false, loginKind: mres.kind });
   $("loginDialog").close();
 });
@@ -10035,7 +10163,8 @@ async function loadAuthConfig() {
       const mp = await getDoc(doc(db, "config", "memberPasswords"));
       if (mp.exists()) applyMemberPasswordsDoc(mp.data());
       onSnapshot(doc(db, "config", "memberPasswords"), (d) => {
-        applyMemberPasswordsDoc(d.exists() ? d.data() : {});
+        if (!d.exists()) return;
+        applyMemberPasswordsDoc(d.data());
       }, (err) => console.warn("memberPasswords listener:", err.message));
 
       const mPrefSnap = await getDoc(doc(db, "config", "memberPrefs"));
@@ -10305,6 +10434,8 @@ placeWeatherWidget();
 initWeather();
 
 // Auth-Config parallel (Firestore-Listener starten schon oben via setupListeners)
+wireLoginAutofillSync();
+
 loadAuthConfig().then(() => {
   auth.init();
   onMovedOutChanged();
