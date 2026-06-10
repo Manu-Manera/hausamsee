@@ -613,7 +613,9 @@ function applyMemberPasswordsDoc(data) {
 }
 
 const LOGIN_AUTH_BOOTSTRAP_MS = 5000;
-const LOGIN_HASH_REFRESH_MS = 8000;
+const LOGIN_HASH_REFRESH_MS = 15000;
+const AUTH_HASHES_SESSION_KEY = "has_auth_hashes_v1";
+const AUTH_HASHES_SESSION_TTL_MS = 30 * 60 * 1000;
 
 function promiseWithTimeout(promise, ms) {
   return new Promise((resolve, reject) => {
@@ -625,9 +627,80 @@ function promiseWithTimeout(promise, ms) {
   });
 }
 
-/** Nur die für Login kritischen Docs – parallel, kurz, vor jeder Passwortprüfung. */
-async function refreshLoginHashesFromFirestore() {
-  if (!firebaseReady) return true;
+function firestoreRestFieldsToPlain(fields) {
+  const out = {};
+  if (!fields || typeof fields !== "object") return out;
+  for (const [k, v] of Object.entries(fields)) {
+    if (!v || typeof v !== "object") continue;
+    if (v.stringValue != null) out[k] = v.stringValue;
+  }
+  return out;
+}
+
+function persistAuthHashesSessionCache() {
+  try {
+    sessionStorage.setItem(AUTH_HASHES_SESSION_KEY, JSON.stringify({
+      passwordHash: authConfig.passwordHash,
+      memberHashes: authConfig.memberHashes,
+      t: Date.now(),
+    }));
+  } catch (_) { /* Privatmodus / Speicher voll */ }
+}
+
+function hydrateAuthHashesSessionCache() {
+  try {
+    const raw = sessionStorage.getItem(AUTH_HASHES_SESSION_KEY);
+    if (!raw) return;
+    const d = JSON.parse(raw);
+    if (!d?.t || Date.now() - d.t > AUTH_HASHES_SESSION_TTL_MS) return;
+    if (d.passwordHash) authConfig.passwordHash = d.passwordHash;
+    if (d.memberHashes && typeof d.memberHashes === "object") {
+      authConfig.memberHashes = { ...authConfig.memberHashes, ...d.memberHashes };
+    }
+  } catch (_) { /* */ }
+}
+
+/** Firestore REST – auf Mobile/Privatmodus zuverlässiger als SDK (kein Listener-Queueing). */
+async function refreshLoginHashesViaRest() {
+  if (!firebaseReady || !firebaseConfig.projectId || !firebaseConfig.apiKey) return false;
+  const base = `https://firestore.googleapis.com/v1/projects/${firebaseConfig.projectId}/databases/(default)/documents`;
+  const key = encodeURIComponent(firebaseConfig.apiKey);
+  try {
+    const [authRes, mpRes] = await promiseWithTimeout(
+      Promise.all([
+        fetch(`${base}/config/auth?key=${key}`, { cache: "no-store" }),
+        fetch(`${base}/config/memberPasswords?key=${key}`, { cache: "no-store" }),
+      ]),
+      LOGIN_HASH_REFRESH_MS
+    );
+    let got = false;
+    if (authRes.ok) {
+      const authData = await authRes.json();
+      const plain = firestoreRestFieldsToPlain(authData.fields);
+      if (plain.passwordHash) {
+        authConfig.passwordHash = plain.passwordHash;
+        got = true;
+      }
+    }
+    if (mpRes.ok) {
+      const mpData = await mpRes.json();
+      const plain = firestoreRestFieldsToPlain(mpData.fields);
+      if (Object.keys(plain).length) {
+        applyMemberPasswordsDoc(plain);
+        got = true;
+      }
+    }
+    if (got) persistAuthHashesSessionCache();
+    return got;
+  } catch (e) {
+    console.warn("refreshLoginHashesViaRest", e?.message || e);
+    return false;
+  }
+}
+
+/** SDK-Fallback, falls REST scheitert. */
+async function refreshLoginHashesViaSdk() {
+  if (!firebaseReady) return false;
   try {
     const [authSnap, mpSnap] = await promiseWithTimeout(
       Promise.all([
@@ -636,19 +709,34 @@ async function refreshLoginHashesFromFirestore() {
       ]),
       LOGIN_HASH_REFRESH_MS
     );
+    let got = false;
     if (authSnap.exists() && authSnap.data()?.passwordHash) {
       authConfig.passwordHash = authSnap.data().passwordHash;
+      got = true;
     }
-    if (mpSnap.exists()) applyMemberPasswordsDoc(mpSnap.data());
-    return true;
+    if (mpSnap.exists()) {
+      applyMemberPasswordsDoc(mpSnap.data());
+      got = true;
+    }
+    if (got) persistAuthHashesSessionCache();
+    return got;
   } catch (e) {
-    console.warn("refreshLoginHashesFromFirestore", e?.message || e);
+    console.warn("refreshLoginHashesViaSdk", e?.message || e);
     return false;
   }
 }
 
-/** Vor Login: App-Start abwarten, dann Hashes frisch aus Firestore (kein leerer Cache). */
+/** Vor Login: Session-Cache, dann REST (primär), dann SDK. Login nie wegen Netzwerk blockieren. */
+async function refreshLoginHashesFromFirestore() {
+  if (!firebaseReady) return true;
+  hydrateAuthHashesSessionCache();
+  if (await refreshLoginHashesViaRest()) return true;
+  if (await refreshLoginHashesViaSdk()) return true;
+  return Object.keys(authConfig.memberHashes).length > 0;
+}
+
 async function ensureAuthConfigForLogin() {
+  hydrateAuthHashesSessionCache();
   if (!authConfig.ready) {
     try {
       await promiseWithTimeout(loadAuthConfig(), LOGIN_AUTH_BOOTSTRAP_MS);
@@ -656,10 +744,7 @@ async function ensureAuthConfigForLogin() {
       console.warn("ensureAuthConfigForLogin bootstrap", e?.message || e);
     }
   }
-  const ok = await refreshLoginHashesFromFirestore();
-  if (!ok && firebaseReady && !Object.keys(authConfig.memberHashes).length) {
-    throw new Error("auth_hashes_unavailable");
-  }
+  await refreshLoginHashesFromFirestore();
 }
 
 function applyMemberPrefsDoc(data) {
@@ -1211,17 +1296,7 @@ $("loginForm")?.addEventListener("submit", async (e) => {
     resetSubmitBtn();
   };
 
-  try {
-    await ensureAuthConfigForLogin();
-  } catch (err) {
-    console.error(err);
-    showError(
-      err?.message === "auth_hashes_unavailable"
-        ? "Passwort-Daten konnten nicht geladen werden (Netzwerk?). Kurz warten und nochmal versuchen."
-        : "Anmeldung hat zu lange gedauert – bitte nochmal versuchen."
-    );
-    return;
-  }
+  await ensureAuthConfigForLogin();
 
   // Fall 1: Konkreter Gast-Eintrag gewählt (mit ID/Namen)
   if (selected.startsWith("__guest__:")) {
@@ -1265,6 +1340,11 @@ $("loginForm")?.addEventListener("submit", async (e) => {
       showError(
         "Falsches Passwort. Du hast ein persönliches Passwort – das WG-Passwort gilt nicht mehr für dich. " +
         "Passwort-App-Eintrag prüfen oder unter WG-Intern → Einstellungen neu setzen."
+      );
+    } else if (firebaseReady && !Object.keys(authConfig.memberHashes).length) {
+      showError(
+        "Passwort-Daten konnten nicht geladen werden – bitte kurz warten und nochmal versuchen. " +
+        "Falls du ein persönliches Passwort hast: WLAN prüfen."
       );
     } else {
       showError("Falsches Passwort · versuch's nochmal.");
@@ -10676,6 +10756,7 @@ initWeather();
 
 // Auth-Config parallel (Firestore-Listener starten schon oben via setupListeners)
 wireLoginAutofillSync();
+hydrateAuthHashesSessionCache();
 
 loadAuthConfig().then(() => {
   auth.init();
