@@ -5157,10 +5157,85 @@ $("aufgabenForm")?.addEventListener("submit", async (e) => {
 
 let termineCache = [];
 
+/** Geburtstag aus Profil (MM-TT, MM-DD oder JJJJ-MM-TT) – gleiche Logik wie functions/birthdays.js */
+function parseBirthDate(raw) {
+  const s = String(raw || "").trim();
+  const iso = s.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if (iso) return { month: +iso[2], day: +iso[3], year: +iso[1] };
+  const md = s.match(/^(\d{1,2})[.\-/](\d{1,2})$/);
+  if (md) return { month: +md[2] || +md[1], day: +md[1] || +md[2], year: null };
+  const md2 = s.match(/^(\d{2})-(\d{2})$/);
+  if (md2) return { month: +md2[1], day: +md2[2], year: null };
+  return null;
+}
+
+function zurichYmdParts(date = new Date()) {
+  const [y, m, d] = new Intl.DateTimeFormat("en-CA", {
+    timeZone: "Europe/Zurich",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).format(date).split("-");
+  return { year: +y, month: +m, day: +d };
+}
+
+function birthdayAgeTurning(birth, celebrationYear) {
+  if (!birth?.year || !celebrationYear) return null;
+  return celebrationYear - birth.year;
+}
+
+/** Nächstes Geburtstagsdatum (09:00 Europe/Zurich) für Kalender-Eintrag */
+function nextBirthdayDateTime(birth) {
+  const zurich = zurichYmdParts();
+  let year = zurich.year;
+  if (birth.month < zurich.month || (birth.month === zurich.month && birth.day < zurich.day)) {
+    year += 1;
+  }
+  let month = birth.month;
+  let day = birth.day;
+  if (month === 2 && day === 29) {
+    const leap = (year % 4 === 0 && year % 100 !== 0) || year % 400 === 0;
+    if (!leap) day = 28;
+  }
+  const pad = (n) => String(n).padStart(2, "0");
+  return `${year}-${pad(month)}-${pad(day)}T09:00`;
+}
+
+/** Automatische Kalender-Termine aus memberPrefs.birthDate */
+function getBirthdayTermine() {
+  const out = [];
+  for (const b of getActiveBewohner()) {
+    const birth = parseBirthDate(authConfig.memberPrefs[b.name]?.birthDate);
+    if (!birth) continue;
+    const date = nextBirthdayDateTime(birth);
+    const celebrationYear = +date.slice(0, 4);
+    const label = mLabel(b.name);
+    const age = birthdayAgeTurning(birth, celebrationYear);
+    out.push({
+      id: `birthday:${b.name}:${celebrationYear}`,
+      title: `🎂 Geburtstag ${label}`,
+      note: age != null
+        ? `${label} wird ${age} – Zeit zu feiern! 🎉`
+        : `Geburtstag von ${label} 🎉`,
+      date,
+      isBirthday: true,
+      birthdayPerson: b.name,
+      createdBy: b.name,
+      responses: {},
+    });
+  }
+  return out;
+}
+
+function isBirthdayTerminId(id) {
+  return String(id || "").startsWith("birthday:");
+}
+
 function renderTermine() {
   const list = $("termineList");
-  const upcoming = termineCache
-    .filter(t => new Date(t.date) >= new Date(new Date().setHours(0,0,0,0)))
+  const todayStart = new Date(new Date().setHours(0, 0, 0, 0));
+  const upcoming = [...termineCache, ...getBirthdayTermine()]
+    .filter(t => new Date(t.date) >= todayStart)
     .sort((a, b) => new Date(a.date) - new Date(b.date));
 
   if (upcoming.length === 0) {
@@ -5182,7 +5257,7 @@ function renderTermine() {
     }).join("");
 
     return `
-      <div class="termin-card">
+      <div class="termin-card${t.isBirthday ? " termin-birthday" : ""}">
         <div class="termin-date">
           <span class="day">${String(d.getDate()).padStart(2,"0")}</span>
           <span class="month">${monthShort[d.getMonth()]}</span>
@@ -5191,7 +5266,9 @@ function renderTermine() {
         <div class="termin-body">
           <h3>${escapeHtml(t.title)}</h3>
           ${t.note ? `<p class="termin-note">${escapeHtml(t.note)}</p>` : ""}
-          ${t.createdBy ? `<p class="termin-creator">Erstellt von ${escapeHtml(mLabel(t.createdBy))}</p>` : ""}
+          ${t.isBirthday
+            ? `<p class="termin-creator">Automatisch aus Profil-Einstellungen</p>`
+            : (t.createdBy ? `<p class="termin-creator">Erstellt von ${escapeHtml(mLabel(t.createdBy))}</p>` : "")}
           <div class="termin-responses">${badges}</div>
           ${auth.isAuthed ? `
             <div class="termin-my-response">
@@ -5208,7 +5285,7 @@ function renderTermine() {
             <button class="event-share-btn termin-share-btn" data-action="share" data-id="${t.id}" title="Termin teilen">📤 Teilen</button>
           </div>
         </div>
-        ${auth.isAuthed ? `<button class="mini-btn danger termin-delete" data-id="${t.id}">Löschen</button>` : ""}
+        ${auth.isAuthed && !t.isBirthday ? `<button class="mini-btn danger termin-delete" data-id="${t.id}">Löschen</button>` : ""}
       </div>
     `;
   }).join("");
@@ -5242,6 +5319,7 @@ function renderTermine() {
 
 async function setTerminResponse(terminId, response) {
   if (!requireAuth("Zu-/Absagen")) return;
+  if (isBirthdayTerminId(terminId)) return;
   if (firebaseReady) {
     const current = termineCache.find(t => t.id === terminId);
     const existing = current?.responses?.[auth.member];
@@ -5270,6 +5348,7 @@ async function setTerminResponse(terminId, response) {
 }
 
 async function deleteTermin(id) {
+  if (isBirthdayTerminId(id)) return;
   if (firebaseReady) {
     await deleteDoc(doc(db, "termine", id));
   } else {

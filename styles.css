@@ -2325,6 +2325,11 @@ textarea { resize: vertical; font-family: inherit; }
 }
 
 /* Termine mit WG-RSVP */
+.termin-card.termin-birthday {
+  border-color: color-mix(in srgb, var(--accent) 35%, var(--border));
+  background: color-mix(in srgb, var(--accent) 6%, var(--card));
+}
+
 .termin-card {
   padding: 20px 22px;
   background: var(--card);
