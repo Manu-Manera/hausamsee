@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 /**
- * Signierte iOS/macOS-Kurzbefehle für Gartenbewässerung.
- * URL direkt in «Inhalte von URL abrufen» (WFURL) – sichtbar in der Shortcuts-App.
+ * Signierte Kurzbefehle für macOS/iOS – nur 3 Aktionen, kein JSON-Parsing.
+ * Webhook liefert mit format=plain Klartext (speech).
  */
 const { execFileSync } = require("child_process");
 const crypto = require("crypto");
@@ -13,31 +13,32 @@ const UNSIGNED = path.join(ROOT, "shortcuts", "unsigned");
 const SIGNED = path.join(ROOT, "shortcuts", "signed");
 const SECRET = "HausAmSee2026Garten";
 const BASE = "https://siriwebhook-dcl7qtm3uq-ew.a.run.app";
+const PLAIN = "format=plain";
 
 const SHORTCUTS = [
   {
     file: "beet-giessen",
     name: "Beet gießen",
     color: 4282601983,
-    webhookUrl: `${BASE}?action=garten&cmd=start&zoneId=wh2-wintergarten&minutes=20&secret=${SECRET}`,
+    webhookUrl: `${BASE}?action=garten&cmd=start&zoneId=wh2-wintergarten&minutes=20&${PLAIN}&secret=${SECRET}`,
   },
   {
     file: "salat-giessen",
     name: "Salat gießen",
     color: 4292093695,
-    webhookUrl: `${BASE}?action=garten&cmd=start&zoneId=wh1-salat&minutes=20&secret=${SECRET}`,
+    webhookUrl: `${BASE}?action=garten&cmd=start&zoneId=wh1-salat&minutes=20&${PLAIN}&secret=${SECRET}`,
   },
   {
     file: "tomaten-giessen",
     name: "Tomaten gießen",
     color: 4251333119,
-    webhookUrl: `${BASE}?action=garten&cmd=start&zoneId=wh1-rechts&minutes=20&secret=${SECRET}`,
+    webhookUrl: `${BASE}?action=garten&cmd=start&zoneId=wh1-rechts&minutes=20&${PLAIN}&secret=${SECRET}`,
   },
   {
     file: "bewaesserung-stoppen",
     name: "Bewässerung stoppen",
     color: 463140863,
-    webhookUrl: `${BASE}?action=garten&cmd=stop&secret=${SECRET}`,
+    webhookUrl: `${BASE}?action=garten&cmd=stop&${PLAIN}&secret=${SECRET}`,
   },
 ];
 
@@ -51,22 +52,6 @@ function xmlEscape(s) {
     .replace(/</g, "&lt;")
     .replace(/>/g, "&gt;")
     .replace(/"/g, "&quot;");
-}
-
-function outputRef(outputUuid, outputName) {
-  return `<dict>
-        <key>Value</key>
-        <dict>
-          <key>OutputName</key>
-          <string>${xmlEscape(outputName)}</string>
-          <key>OutputUUID</key>
-          <string>${outputUuid}</string>
-          <key>Type</key>
-          <string>ActionOutput</string>
-        </dict>
-        <key>WFSerializationType</key>
-        <string>WFTextTokenAttachment</string>
-      </dict>`;
 }
 
 function tokenRef(outputUuid, outputName) {
@@ -106,8 +91,6 @@ function action(identifier, paramsXml, id) {
 
 function buildPlist({ name, color, webhookUrl }) {
   const idFetch = uuid();
-  const idDict = uuid();
-  const idSpeech = uuid();
   const idSpeak = uuid();
   const idShow = uuid();
   const url = xmlEscape(webhookUrl);
@@ -119,24 +102,14 @@ function buildPlist({ name, color, webhookUrl }) {
         <string>${url}</string>
         <key>WFHTTPMethod</key>
         <string>GET</string>`, idFetch),
-    action("is.workflow.actions.getdictionaryfrominput", `
-        <key>WFInput</key>
-        ${outputRef(idFetch, "Contents of URL")}`, idDict),
-    action("is.workflow.actions.getvalueforkey", `
-        <key>WFGetDictionaryValueType</key>
-        <string>Value</string>
-        <key>WFDictionaryKey</key>
-        <string>speech</string>
-        <key>WFInput</key>
-        ${outputRef(idDict, "Dictionary")}`, idSpeech),
     action("is.workflow.actions.speaktext", `
         <key>WFText</key>
-        ${tokenRef(idSpeech, "Dictionary Value")}
+        ${tokenRef(idFetch, "Contents of URL")}
         <key>WFSpeakTextLanguage</key>
         <string>de-DE</string>`, idSpeak),
     action("is.workflow.actions.showresult", `
         <key>Text</key>
-        ${tokenRef(idSpeech, "Dictionary Value")}`, idShow),
+        ${tokenRef(idFetch, "Contents of URL")}`, idShow),
   ].join("\n    ");
 
   return `<?xml version="1.0" encoding="UTF-8"?>

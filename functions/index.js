@@ -5307,6 +5307,32 @@ exports.whatsappWebhook = onRequest(
    ========================================================================== */
 
 const SIRI_SECRET = process.env.SIRI_SECRET || "hausamsee2026";
+const SIRI_WEBHOOK_URL = "https://siriwebhook-dcl7qtm3uq-ew.a.run.app";
+
+function buildSiriZoneShortcuts(secret, minutes = 20) {
+  const base = SIRI_WEBHOOK_URL;
+  const s = encodeURIComponent(secret);
+  const m = Math.max(1, Math.min(120, parseInt(minutes, 10) || 20));
+  const q = (params) => `${base}?${params.map(([k, v]) => `${k}=${encodeURIComponent(v)}`).join("&")}`;
+  const zones = [
+    { key: "beet", label: "Beetbewässerung", zoneId: "wh2-wintergarten", siriName: "Beet gießen", textStart: "Beet bewässern", textStatus: "Beet Status" },
+    { key: "salat", label: "Salatbeete", zoneId: "wh1-salat", siriName: "Salat gießen", textStart: "Giesse Salat", textStatus: "Salat Status" },
+    { key: "tomaten", label: "Tomatenbewässerung", zoneId: "wh1-rechts", siriName: "Tomaten gießen", textStart: "Tomaten bewässern", textStatus: "Tomaten Status" },
+  ];
+  const out = { base, minutes: m, stop: q([["action", "garten"], ["cmd", "stop"], ["secret", secret]]) };
+  for (const z of zones) {
+    out[z.key] = {
+      label: z.label,
+      zoneId: z.zoneId,
+      siriName: z.siriName,
+      start: q([["action", "garten"], ["cmd", "start"], ["zoneId", z.zoneId], ["minutes", String(m)], ["secret", secret]]),
+      startText: `${base}?text=${encodeURIComponent(z.textStart)}&secret=${s}`,
+      status: q([["action", "garten"], ["cmd", "status"], ["zoneId", z.zoneId], ["secret", secret]]),
+      statusText: `${base}?text=${encodeURIComponent(z.textStatus)}&secret=${s}`,
+    };
+  }
+  return out;
+}
 
 // Interpretiert natürliche Sprache für Siri-Befehle
 function parseSiriCommand(text) {
@@ -5390,13 +5416,20 @@ exports.siriWebhook = onRequest(async (req, res) => {
   
   const params = { ...req.query, ...req.body };
   let { action, cmd, secret, minutes: minParam, text } = params;
+  const wantPlain = params.format === "plain" || params.format === "text";
+  const replyJson = res.json.bind(res);
+  res.json = (body) => {
+    if (wantPlain && body && typeof body.speech === "string") {
+      return res.type("text/plain; charset=utf-8").send(body.speech);
+    }
+    return replyJson(body);
+  };
   
   // Secret prüfen
   if (secret !== SIRI_SECRET) {
-    return res.status(401).json({
-      success: false,
-      speech: "Zugriff verweigert. Das Secret im Kurzbefehl muss mit SIRI_SECRET in functions/.env übereinstimmen.",
-    });
+    const msg = "Zugriff verweigert. Das Secret im Kurzbefehl muss mit SIRI_SECRET in functions/.env übereinstimmen.";
+    if (wantPlain) return res.status(401).type("text/plain; charset=utf-8").send(msg);
+    return res.status(401).json({ success: false, speech: msg });
   }
   
   // Natürliche Sprache interpretieren (auch wenn action ohne cmd gesetzt ist)
@@ -5426,6 +5459,20 @@ exports.siriWebhook = onRequest(async (req, res) => {
       const planData = await loadGartenPlanData();
       const list = formatGartenZonesList(planData).replace(/\*/g, "");
       return res.json({ success: true, speech: `Bewässerungszonen: ${list.replace(/\n/g, ". ")}` });
+    }
+
+    if (cmd === "shortcuts") {
+      const minutes = parseInt(minParam, 10) || 20;
+      const shortcuts = buildSiriZoneShortcuts(SIRI_SECRET, minutes);
+      return res.json({
+        success: true,
+        speech: "Kurzbefehl-URLs für Beet, Salat und Tomaten sind in shortcuts.",
+        shortcuts,
+        setup: [
+          "Shortcuts App → + → URL → Inhalte von URL abrufen → optional Ergebnis anzeigen",
+          "Pro Zone einen Kurzbefehl mit start oder startText; ein gemeinsamer Kurzbefehl mit stop",
+        ],
+      });
     }
 
     if (cmd === "ambiguous") {
@@ -5565,18 +5612,15 @@ exports.siriWebhook = onRequest(async (req, res) => {
     return res.json({ success: false, speech: "Unbekannter Befehl für Licht." });
   }
   
+  const shortcuts = buildSiriZoneShortcuts("DEIN_SECRET");
   return res.json({ 
     success: false, 
-    speech: "Sag zum Beispiel: Beet bewässern, Tomaten bewässern, oder Bewässerung stoppen.",
+    speech: "Sag zum Beispiel: Giesse Salat, Beet bewässern, Tomaten bewässern, oder Bewässerung stoppen.",
     help: {
-      url: "https://siriwebhook-dcl7qtm3uq-ew.a.run.app",
-      examples: ["Beet bewässern", "Tomaten bewässern", "Beet aus", "Tomaten aus", "Bewässerung stoppen"],
-      shortcuts: {
-        beet_an: "?action=garten&cmd=start&zoneId=wh2-wintergarten&minutes=20&secret=DEIN_SECRET",
-        beet_aus: "?action=garten&cmd=stop&secret=DEIN_SECRET",
-        tomaten_an: "?action=garten&cmd=start&zoneId=wh1-rechts&minutes=20&secret=DEIN_SECRET",
-        tomaten_aus: "?action=garten&cmd=stop&secret=DEIN_SECRET",
-      },
+      url: SIRI_WEBHOOK_URL,
+      allShortcuts: `${SIRI_WEBHOOK_URL}?action=garten&cmd=shortcuts&secret=DEIN_SECRET`,
+      examples: ["Giesse Salat", "Beet bewässern", "Tomaten bewässern", "Bewässerung stoppen", "Beet Status"],
+      shortcuts,
     }
   });
 });
