@@ -516,7 +516,7 @@ async function notifyGartenRainSkippedZones(zoneLabels) {
   await broadcastToWG(
     `🌧️ *Garten-Zeitplan übersprungen*\n\n` +
     `${list}\n\n` +
-    `Regen im ±6h-Fenster um die geplante Zeit – heute nicht gegossen.`
+    `Regen im ±6h-Fenster um eine geplante Zeit heute – alle Zonen ausgelassen.`
   );
 }
 
@@ -886,7 +886,7 @@ function gartenYmdZurichNow() {
 
 /**
  * Wenn in den ±6h um eine geplante Gieß-Ein-Zeit Regen (oder Schnee) fällt/— hat:
- * true → ganzer Gießplan an diesem Tag (dieses dayKey) wird nicht geschaltet.
+ * true → dieser Slot (bzw. bei gartenPlanSkipAllZonesRainToday: der ganze Tag für alle Zonen).
  * API-Fehler: false (Gießplan normal; lieber wässern als dauernd zu blocken).
  */
 async function gartenDayShouldSkipDueToRain(slots, ymd) {
@@ -916,6 +916,19 @@ async function gartenDayShouldSkipDueToRain(slots, ymd) {
     if (gartenHourlyRainOverlapsWindow(hourly, ws, we)) return true;
   }
   return false;
+}
+
+/** Alle Ein-Zeiten heute (alle Zonen) – ein Regenfenster → kein Gießen für irgendeine Zone. */
+async function gartenPlanSkipAllZonesRainToday(zones, dayKey, ymd) {
+  const allSlots = [];
+  for (const zone of zones) {
+    const slots = Array.isArray(zone.days?.[dayKey]) ? zone.days[dayKey] : [];
+    for (const slot of slots) {
+      if (normHM(slot?.on)) allSlots.push(slot);
+    }
+  }
+  if (!allSlots.length) return false;
+  return gartenDayShouldSkipDueToRain(allSlots, ymd);
 }
 
 function emptyGartenDays() {
@@ -6407,18 +6420,23 @@ async function runGartenPlanTick() {
   const dayLog = normalizeGartenWaterLogDay(data.waterLog?.[ymd]);
   const zonesSkippingRainToday = [];
   let anyZoneNewlySkippedRain = false;
+  const skipAllRainToday = await gartenPlanSkipAllZonesRainToday(zones, dayKey, ymd);
+  if (skipAllRainToday) {
+    await debugLog("garten_plan_skip_rain_all", { ymd, dayKey, zoneCount: zones.length });
+  }
 
   for (const zone of zones) {
     const slots = Array.isArray(zone.days?.[dayKey]) ? zone.days[dayKey] : [];
     if (!slots.length) continue;
 
-    if (await gartenDayShouldSkipDueToRain(slots, ymd)) {
+    if (skipAllRainToday) {
       zonesSkippingRainToday.push(zone.label);
-      if (dayLog[zone.id]?.status !== "skipped_rain") {
+      const prev = dayLog[zone.id]?.status;
+      if (prev !== "skipped_rain" && prev !== "done" && prev !== "started") {
         anyZoneNewlySkippedRain = true;
-        await debugLog("garten_plan_skip_rain", { ymd, dayKey, zoneId: zone.id });
+        await debugLog("garten_plan_skip_rain", { ymd, dayKey, zoneId: zone.id, allZones: true });
         await setGartenWaterLog(ymd, zone.id, { status: "skipped_rain", source: "plan", dayKey }, { noOverwriteDone: true });
-        logger.info(`Garten: ${zone.label} heute (${dayKey}) wegen Niederschlag übersprungen.`);
+        logger.info(`Garten: ${zone.label} heute (${dayKey}) wegen Niederschlag übersprungen (alle Zonen).`);
       }
       continue;
     }

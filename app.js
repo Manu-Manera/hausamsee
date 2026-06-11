@@ -7964,7 +7964,7 @@ function formatGartenWaterLogLine(entry) {
   const tail = [timeStr, src].filter(Boolean).join(" · ");
   if (entry.status === "done") return `✅ Gegossen${tail ? ` · ${tail}` : ""}`;
   if (entry.status === "started") return `💧 Läuft${tail ? ` · ${tail}` : ""}`;
-  if (entry.status === "skipped_rain") return "🌧️ Regen – übersprungen";
+  if (entry.status === "skipped_rain") return "🌧️ Regen – heute alle Zonen übersprungen";
   if (entry.status === "failed") return "❌ Fehlgeschlagen";
   return "Noch nicht gegossen";
 }
