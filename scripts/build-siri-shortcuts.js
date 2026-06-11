@@ -1,9 +1,9 @@
 #!/usr/bin/env node
 /**
- * Erzeugt signierte iOS-Kurzbefehle für Siri-Gartensteuerung.
- * Ausgabe: shortcuts/signed/*.shortcut (für GitHub Pages Download)
+ * Signierte iOS-Kurzbefehle nur für Gartenbewässerung.
  */
 const { execFileSync } = require("child_process");
+const crypto = require("crypto");
 const fs = require("fs");
 const path = require("path");
 
@@ -38,19 +38,11 @@ const SHORTCUTS = [
     color: 463140863,
     webhookUrl: `${BASE}?action=garten&cmd=stop&secret=${SECRET}`,
   },
-  {
-    file: "licht-an",
-    name: "Licht an",
-    color: 2071128575,
-    webhookUrl: `${BASE}?action=licht&cmd=an&secret=${SECRET}`,
-  },
-  {
-    file: "licht-aus",
-    name: "Licht aus",
-    color: 2846468607,
-    webhookUrl: `${BASE}?action=licht&cmd=aus&secret=${SECRET}`,
-  },
 ];
+
+function uuid() {
+  return crypto.randomUUID().toUpperCase();
+}
 
 function xmlEscape(s) {
   return String(s)
@@ -60,60 +52,103 @@ function xmlEscape(s) {
     .replace(/"/g, "&quot;");
 }
 
+function outputRef(outputUuid, outputName) {
+  return `<dict>
+        <key>Value</key>
+        <dict>
+          <key>OutputName</key>
+          <string>${xmlEscape(outputName)}</string>
+          <key>OutputUUID</key>
+          <string>${outputUuid}</string>
+          <key>Type</key>
+          <string>ActionOutput</string>
+        </dict>
+        <key>WFSerializationType</key>
+        <string>WFTextTokenAttachment</string>
+      </dict>`;
+}
+
+function tokenRef(outputUuid, outputName) {
+  return `<dict>
+        <key>Value</key>
+        <dict>
+          <key>attachmentsByRange</key>
+          <dict>
+            <key>{0, 1}</key>
+            <dict>
+              <key>OutputName</key>
+              <string>${xmlEscape(outputName)}</string>
+              <key>OutputUUID</key>
+              <string>${outputUuid}</string>
+              <key>Type</key>
+              <string>ActionOutput</string>
+            </dict>
+          </dict>
+          <key>string</key>
+          <string>￼</string>
+        </dict>
+        <key>WFSerializationType</key>
+        <string>WFTextTokenString</string>
+      </dict>`;
+}
+
+function action(identifier, paramsXml, id) {
+  return `<dict>
+      <key>WFWorkflowActionIdentifier</key>
+      <string>${identifier}</string>
+      <key>WFWorkflowActionParameters</key>
+      <dict>${paramsXml}</dict>
+      <key>UUID</key>
+      <string>${id}</string>
+    </dict>`;
+}
+
 function buildPlist({ name, color, webhookUrl }) {
+  const idUrl = uuid();
+  const idFetch = uuid();
+  const idDict = uuid();
+  const idSpeech = uuid();
+  const idSpeak = uuid();
+  const idShow = uuid();
   const url = xmlEscape(webhookUrl);
   const wfName = xmlEscape(name);
+
+  const actions = [
+    action("is.workflow.actions.url", `
+        <key>WFURLActionURL</key>
+        <string>${url}</string>`, idUrl),
+    action("is.workflow.actions.downloadurl", `
+        <key>WFHTTPMethod</key>
+        <string>GET</string>
+        <key>WFInput</key>
+        ${outputRef(idUrl, "URL")}`, idFetch),
+    action("is.workflow.actions.getdictionaryfrominput", `
+        <key>WFInput</key>
+        ${outputRef(idFetch, "Contents of URL")}`, idDict),
+    action("is.workflow.actions.getvalueforkey", `
+        <key>WFGetDictionaryValueType</key>
+        <string>Value</string>
+        <key>WFDictionaryKey</key>
+        <string>speech</string>
+        <key>WFInput</key>
+        ${outputRef(idDict, "Dictionary")}`, idSpeech),
+    action("is.workflow.actions.speaktext", `
+        <key>WFText</key>
+        ${tokenRef(idSpeech, "Dictionary Value")}
+        <key>WFSpeakTextLanguage</key>
+        <string>de-DE</string>`, idSpeak),
+    action("is.workflow.actions.showresult", `
+        <key>Text</key>
+        ${tokenRef(idSpeech, "Dictionary Value")}`, idShow),
+  ].join("\n    ");
+
   return `<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
   <key>WFWorkflowActions</key>
   <array>
-    <dict>
-      <key>WFWorkflowActionIdentifier</key>
-      <string>is.workflow.actions.url</string>
-      <key>WFWorkflowActionParameters</key>
-      <dict>
-        <key>WFURLActionURL</key>
-        <string>${url}</string>
-      </dict>
-    </dict>
-    <dict>
-      <key>WFWorkflowActionIdentifier</key>
-      <string>is.workflow.actions.downloadurl</string>
-      <key>WFWorkflowActionParameters</key>
-      <dict>
-        <key>WFHTTPMethod</key>
-        <string>GET</string>
-      </dict>
-    </dict>
-    <dict>
-      <key>WFWorkflowActionIdentifier</key>
-      <string>is.workflow.actions.showresult</string>
-      <key>WFWorkflowActionParameters</key>
-      <dict>
-        <key>Text</key>
-        <dict>
-          <key>Value</key>
-          <dict>
-            <key>attachmentsByRange</key>
-            <dict>
-              <key>{0, 1}</key>
-              <dict>
-                <key>Type</key>
-                <string>Variable</string>
-                <key>VariableName</key>
-                <string>Contents of URL</string>
-              </dict>
-            </dict>
-            <key>string</key>
-            <string>￼</string>
-          </dict>
-          <key>WFSerializationType</key>
-          <string>WFTextTokenString</string>
-        </dict>
-      </dict>
-    </dict>
+    ${actions}
   </array>
   <key>WFWorkflowClientVersion</key>
   <string>1113</string>
@@ -150,7 +185,12 @@ for (const sc of SHORTCUTS) {
   fs.writeFileSync(xmlPath, buildPlist(sc), "utf8");
   run("plutil", ["-convert", "binary1", "-o", unsignedPath, xmlPath]);
   run("shortcuts", ["sign", "--mode", "anyone", "--input", unsignedPath, "--output", signedPath]);
-  console.log(`✓ ${sc.name} → ${signedPath}`);
+  console.log(`✓ ${sc.name}`);
 }
 
-console.log("\nFertig. Dateien in shortcuts/signed/");
+for (const old of ["licht-an.shortcut", "licht-aus.shortcut"]) {
+  const p = path.join(SIGNED, old);
+  if (fs.existsSync(p)) fs.unlinkSync(p);
+}
+
+console.log("\nFertig: shortcuts/signed/ (4 Bewässerungs-Kurzbefehle)");
