@@ -1,0 +1,177 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+  <title>Siri Kurzbefehle · Haus am See</title>
+  <meta name="description" content="Importierbare Siri-Kurzbefehle für Gartenbewässerung und Licht – Haus am See." />
+  <meta name="theme-color" content="#fdf9f2" />
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Ctext y='.9em' font-size='90'%3E🏡%3C/text%3E%3C/svg%3E" />
+  <style>
+    :root {
+      --cream: #faf4ea;
+      --linen: #fdf9f2;
+      --wood: #8b5e3c;
+      --cocoa: #3d2817;
+      --terracotta: #c67a50;
+      --moss: #6b8e5a;
+      --text: #2e2015;
+      --text-soft: #5a4634;
+      --text-muted: #8a7763;
+      --card: rgba(255, 251, 243, 0.92);
+      --border: rgba(139, 94, 60, 0.18);
+      --shadow: 0 14px 40px -18px rgba(61, 40, 23, 0.28);
+      --r: 18px;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font-family: -apple-system, BlinkMacSystemFont, "Inter", "Segoe UI", sans-serif;
+      background: linear-gradient(165deg, var(--linen), var(--cream));
+      color: var(--text);
+      line-height: 1.5;
+      padding: 24px 16px 48px;
+    }
+    .wrap { max-width: 560px; margin: 0 auto; }
+    h1 {
+      font-size: 1.6rem;
+      margin: 0 0 8px;
+      color: var(--cocoa);
+    }
+    .lead { color: var(--text-soft); margin: 0 0 24px; }
+    .steps {
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: var(--r);
+      padding: 16px 18px;
+      margin-bottom: 24px;
+      box-shadow: var(--shadow);
+      font-size: 0.95rem;
+    }
+    .steps ol { margin: 8px 0 0; padding-left: 1.2rem; }
+    .steps li { margin: 6px 0; }
+    .card {
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: var(--r);
+      padding: 18px;
+      margin-bottom: 14px;
+      box-shadow: var(--shadow);
+    }
+    .card h2 {
+      margin: 0 0 4px;
+      font-size: 1.15rem;
+      color: var(--cocoa);
+    }
+    .card p {
+      margin: 0 0 14px;
+      font-size: 0.9rem;
+      color: var(--text-muted);
+    }
+    .btn {
+      display: block;
+      width: 100%;
+      text-align: center;
+      text-decoration: none;
+      font-weight: 600;
+      font-size: 1rem;
+      padding: 14px 16px;
+      border-radius: 12px;
+      border: none;
+      cursor: pointer;
+      margin-bottom: 8px;
+    }
+    .btn-import {
+      background: var(--moss);
+      color: #fff;
+    }
+    .btn-import:active { opacity: 0.9; }
+    .btn-dl {
+      background: transparent;
+      color: var(--wood);
+      border: 1px solid var(--border);
+      font-size: 0.85rem;
+      padding: 10px;
+    }
+    .hint {
+      font-size: 0.85rem;
+      color: var(--text-muted);
+      margin-top: 20px;
+      padding-top: 16px;
+      border-top: 1px solid var(--border);
+    }
+    .back {
+      display: inline-block;
+      margin-bottom: 20px;
+      color: var(--terracotta);
+      text-decoration: none;
+      font-weight: 500;
+    }
+    .siri {
+      display: inline-block;
+      background: #007aff;
+      color: #fff;
+      font-size: 0.8rem;
+      padding: 2px 8px;
+      border-radius: 6px;
+      margin-left: 6px;
+      vertical-align: middle;
+    }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <a class="back" href="index.html">← Zurück zur Website</a>
+    <h1>🎤 Siri Kurzbefehle</h1>
+    <p class="lead">Gartenbewässerung und Licht per Sprache – einmal importieren, dann „Hey Siri …“ sagen.</p>
+
+    <div class="steps">
+      <strong>So importierst du:</strong>
+      <ol>
+        <li>Diese Seite <strong>auf dem iPhone</strong> in Safari öffnen</li>
+        <li>Grünen Button <strong>„In Shortcuts importieren“</strong> tippen</li>
+        <li>Oben rechts <strong>„Hinzufügen“</strong> bestätigen</li>
+        <li>Fertig – danach z. B. „Hey Siri, Salat gießen“</li>
+      </ol>
+    </div>
+
+    <div id="list"></div>
+
+    <p class="hint">
+      <strong>Hinweis:</strong> Import-Links funktionieren nur in Safari auf dem iPhone/iPad.
+      Falls ein Button nicht reagiert: „Datei herunterladen“ tippen, Datei öffnen → „Hinzufügen“.
+    </p>
+  </div>
+
+  <script>
+    const HOST = "https://manu-manera.github.io/hausamsee/shortcuts/signed";
+    const ITEMS = [
+      { file: "beet-giessen", name: "Beet gießen", desc: "Beetbewässerung · Wasserhahn 2 · 20 Min", siri: "Hey Siri, Beet gießen" },
+      { file: "salat-giessen", name: "Salat gießen", desc: "Salatbeete · Wasserhahn 1 links · 20 Min", siri: "Hey Siri, Salat gießen" },
+      { file: "tomaten-giessen", name: "Tomaten gießen", desc: "Tomatenbewässerung · mit Pumpe · 20 Min", siri: "Hey Siri, Tomaten gießen" },
+      { file: "bewaesserung-stoppen", name: "Bewässerung stoppen", desc: "Stoppt Pumpe und alle Ventile", siri: "Hey Siri, Bewässerung stoppen" },
+      { file: "licht-an", name: "Licht an", desc: "Lichterkette einschalten", siri: "Hey Siri, Licht an" },
+      { file: "licht-aus", name: "Licht aus", desc: "Lichterkette ausschalten", siri: "Hey Siri, Licht aus" },
+    ];
+
+    function importUrl(file, name) {
+      const fileUrl = `${HOST}/${file}.shortcut`;
+      return `shortcuts://import-shortcut/?url=${encodeURIComponent(fileUrl)}&name=${encodeURIComponent(name)}`;
+    }
+
+    const list = document.getElementById("list");
+    for (const item of ITEMS) {
+      const fileUrl = `${HOST}/${item.file}.shortcut`;
+      const card = document.createElement("div");
+      card.className = "card";
+      card.innerHTML = `
+        <h2>${item.name}<span class="siri">Siri</span></h2>
+        <p>${item.desc}<br><em>${item.siri}</em></p>
+        <a class="btn btn-import" href="${importUrl(item.file, item.name)}">In Shortcuts importieren</a>
+        <a class="btn btn-dl" href="${fileUrl}" download="${item.file}.shortcut">Datei herunterladen</a>
+      `;
+      list.appendChild(card);
+    }
+  </script>
+</body>
+</html>
