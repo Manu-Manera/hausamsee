@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 /**
- * Signierte iOS-Kurzbefehle nur für Gartenbewässerung.
+ * Signierte iOS/macOS-Kurzbefehle für Gartenbewässerung.
+ * URL direkt in «Inhalte von URL abrufen» (WFURL) – sichtbar in der Shortcuts-App.
  */
 const { execFileSync } = require("child_process");
 const crypto = require("crypto");
@@ -104,7 +105,6 @@ function action(identifier, paramsXml, id) {
 }
 
 function buildPlist({ name, color, webhookUrl }) {
-  const idUrl = uuid();
   const idFetch = uuid();
   const idDict = uuid();
   const idSpeech = uuid();
@@ -114,14 +114,11 @@ function buildPlist({ name, color, webhookUrl }) {
   const wfName = xmlEscape(name);
 
   const actions = [
-    action("is.workflow.actions.url", `
-        <key>WFURLActionURL</key>
-        <string>${url}</string>`, idUrl),
     action("is.workflow.actions.downloadurl", `
+        <key>WFURL</key>
+        <string>${url}</string>
         <key>WFHTTPMethod</key>
-        <string>GET</string>
-        <key>WFInput</key>
-        ${outputRef(idUrl, "URL")}`, idFetch),
+        <string>GET</string>`, idFetch),
     action("is.workflow.actions.getdictionaryfrominput", `
         <key>WFInput</key>
         ${outputRef(idFetch, "Contents of URL")}`, idDict),
@@ -188,9 +185,4 @@ for (const sc of SHORTCUTS) {
   console.log(`✓ ${sc.name}`);
 }
 
-for (const old of ["licht-an.shortcut", "licht-aus.shortcut"]) {
-  const p = path.join(SIGNED, old);
-  if (fs.existsSync(p)) fs.unlinkSync(p);
-}
-
-console.log("\nFertig: shortcuts/signed/ (4 Bewässerungs-Kurzbefehle)");
+console.log("\nFertig: shortcuts/signed/");
