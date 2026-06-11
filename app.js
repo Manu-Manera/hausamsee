@@ -7853,9 +7853,9 @@ const GARTEN_DEFAULT_ZONES = [
     enabled: true,
   },
   {
-    id: "wh1-links",
-    label: "Gartenschlauch",
-    subtitle: "Wasserhahn 1 links (Manu) – oft auch manuell am Hahn",
+    id: "wh1-salat",
+    label: "Salatbeete",
+    subtitle: "Wasserhahn 1 links (Manu) – Tropfbewässerung Salat",
     device: "Wasserhahn 1 (Manu)",
     valveType: "dual",
     channel: 1,
@@ -7880,6 +7880,7 @@ function isGartenSlotSkipped(sk, ymd, dayKey, idx, zoneId) {
   if (!sk || typeof sk !== "object") return false;
   if (sk[gartenSlotSkipKey(ymd, dayKey, idx, zoneId)] === true) return true;
   if (zoneId === "wh2-wintergarten" && sk[`${ymd}|${dayKey}|${idx}`] === true) return true;
+  if (zoneId === "wh1-salat" && sk[gartenSlotSkipKey(ymd, dayKey, idx, "wh1-links")] === true) return true;
   return false;
 }
 
@@ -8014,28 +8015,39 @@ function normalizeGartenPlan(raw) {
 
   const emptyDays = emptyGartenDays();
   if (raw.zones && Array.isArray(raw.zones) && raw.zones.length) {
-    d.zones = raw.zones.map((z, i) => {
-      const def = GARTEN_DEFAULT_ZONES[i] || GARTEN_DEFAULT_ZONES[0];
+    const rawById = new Map();
+    for (const z of raw.zones) {
+      let id = String(z.id || "").trim();
+      if (id === "wh1-links") id = "wh1-salat";
+      if (!id) continue;
+      rawById.set(id, { ...z, id });
+    }
+    d.zones = GARTEN_DEFAULT_ZONES.map((def) => {
+      const z = rawById.get(def.id);
       const days = { ...emptyDays };
-      "mon tue wed thu fri sat sun".split(" ").forEach((k) => {
-        const arr = z.days?.[k];
-        days[k] = Array.isArray(arr)
-          ? arr.map((s) => ({
-            on: String(s.on || "07:00").slice(0, 5),
-            off: String(s.off || "07:15").slice(0, 5),
-          }))
-          : [];
-      });
-      const rawLabel = String(z.label || "").trim();
-      const label = (!rawLabel || GARTEN_LEGACY_ZONE_LABELS.has(rawLabel)) ? def.label : rawLabel;
+      if (z) {
+        "mon tue wed thu fri sat sun".split(" ").forEach((k) => {
+          const arr = z.days?.[k];
+          days[k] = Array.isArray(arr)
+            ? arr.map((s) => ({
+              on: String(s.on || "07:00").slice(0, 5),
+              off: String(s.off || "07:15").slice(0, 5),
+            }))
+            : [];
+        });
+      }
+      const rawLabel = String(z?.label || "").trim();
+      const label = (!rawLabel || GARTEN_LEGACY_ZONE_LABELS.has(rawLabel) || rawLabel === "Gartenschlauch")
+        ? def.label
+        : rawLabel;
       return {
-        id: String(z.id || def.id).trim() || def.id,
+        id: def.id,
         label,
-        subtitle: String(z.subtitle || def.subtitle || "").trim() || def.subtitle || "",
-        device: normalizeGartenZoneDevice(z.device, def.device),
-        valveType: z.valveType === "dual" ? "dual" : "irrigation",
-        channel: z.valveType === "dual" ? (z.channel === 2 ? 2 : 1) : null,
-        enabled: z.enabled !== false,
+        subtitle: String(z?.subtitle || def.subtitle || "").trim() || def.subtitle || "",
+        device: normalizeGartenZoneDevice(z?.device, def.device),
+        valveType: def.valveType === "dual" ? "dual" : "irrigation",
+        channel: def.valveType === "dual" ? (z?.channel === 2 ? 2 : 1) : null,
+        enabled: z ? z.enabled !== false : def.enabled !== false,
         days,
       };
     });

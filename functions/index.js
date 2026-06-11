@@ -129,9 +129,9 @@ const GARTEN_DEFAULT_ZONES = [
     enabled: true,
   },
   {
-    id: "wh1-links",
-    label: "Gartenschlauch",
-    subtitle: "Wasserhahn 1 links (Manu) – oft auch manuell am Hahn",
+    id: "wh1-salat",
+    label: "Salatbeete",
+    subtitle: "Wasserhahn 1 links (Manu) – Tropfbewässerung Salat",
     device: GARTEN_DEVICE_WH1,
     valveType: "dual",
     channel: 1,
@@ -922,33 +922,58 @@ function emptyGartenDays() {
   return { mon: [], tue: [], wed: [], thu: [], fri: [], sat: [], sun: [] };
 }
 
+function gartenZoneIdFromRaw(id) {
+  const s = String(id || "").trim();
+  if (s === "wh1-links") return "wh1-salat";
+  return s;
+}
+
+function gartenZoneDaysFromRaw(z) {
+  const emptyDays = emptyGartenDays();
+  const days = { ...emptyDays };
+  "mon tue wed thu fri sat sun".split(" ").forEach((k) => {
+    const arr = z?.days?.[k];
+    days[k] = Array.isArray(arr)
+      ? arr.map((s) => ({
+        on: String(s.on || "07:00").slice(0, 5),
+        off: String(s.off || "07:15").slice(0, 5),
+      }))
+      : [];
+  });
+  return days;
+}
+
+function gartenZoneFromRawAndDef(z, def) {
+  const emptyDays = emptyGartenDays();
+  const days = z ? gartenZoneDaysFromRaw(z) : { ...emptyDays };
+  const rawLabel = String(z?.label || "").trim();
+  const label = (!rawLabel || GARTEN_LEGACY_ZONE_LABELS.has(rawLabel) || rawLabel === "Gartenschlauch")
+    ? def.label
+    : rawLabel;
+  return {
+    id: def.id,
+    label,
+    subtitle: String(z?.subtitle || def.subtitle || "").trim() || def.subtitle || "",
+    device: normalizeGartenZoneDevice(z?.device, def.device),
+    valveType: (z?.valveType || def.valveType) === "dual" ? "dual" : "irrigation",
+    channel: (z?.valveType || def.valveType) === "dual" ? (z?.channel === 2 ? 2 : 1) : null,
+    enabled: z ? z.enabled !== false : def.enabled !== false,
+    days,
+  };
+}
+
 function normalizeGartenPlanZones(raw) {
   const emptyDays = emptyGartenDays();
   if (raw?.zones && Array.isArray(raw.zones) && raw.zones.length) {
-    return raw.zones.map((z, i) => {
-      const def = GARTEN_DEFAULT_ZONES[i] || GARTEN_DEFAULT_ZONES[0];
-      const days = { ...emptyDays };
-      "mon tue wed thu fri sat sun".split(" ").forEach((k) => {
-        const arr = z.days?.[k];
-        days[k] = Array.isArray(arr)
-          ? arr.map((s) => ({
-            on: String(s.on || "07:00").slice(0, 5),
-            off: String(s.off || "07:15").slice(0, 5),
-          }))
-          : [];
-      });
-      const rawLabel = String(z.label || "").trim();
-      const label = (!rawLabel || GARTEN_LEGACY_ZONE_LABELS.has(rawLabel)) ? def.label : rawLabel;
-      return {
-        id: String(z.id || def.id).trim() || def.id,
-        label,
-        subtitle: String(z.subtitle || def.subtitle || "").trim() || def.subtitle || "",
-        device: normalizeGartenZoneDevice(z.device, def.device),
-        valveType: z.valveType === "dual" ? "dual" : "irrigation",
-        channel: z.valveType === "dual" ? (z.channel === 2 ? 2 : 1) : null,
-        enabled: z.enabled !== false,
-        days,
-      };
+    const rawById = new Map();
+    for (const z of raw.zones) {
+      const id = gartenZoneIdFromRaw(z.id);
+      if (!id) continue;
+      rawById.set(id, { ...z, id });
+    }
+    return GARTEN_DEFAULT_ZONES.map((def) => {
+      const z = rawById.get(def.id);
+      return gartenZoneFromRawAndDef(z, def);
     });
   }
 
@@ -980,6 +1005,7 @@ function isGartenSlotSkipped(sk, ymd, dayKey, idx, zoneId) {
   if (!sk || typeof sk !== "object") return false;
   if (sk[gartenSlotSkipKey(ymd, dayKey, idx, zoneId)] === true) return true;
   if (zoneId === "wh2-wintergarten" && sk[`${ymd}|${dayKey}|${idx}`] === true) return true;
+  if (zoneId === "wh1-salat" && sk[gartenSlotSkipKey(ymd, dayKey, idx, "wh1-links")] === true) return true;
   return false;
 }
 
@@ -999,10 +1025,11 @@ function resolveGartenZoneFromPlan(planData, zoneId) {
 function parseGartenZoneHint(text) {
   const s = String(text || "").toLowerCase();
   if (/tomaten?/.test(s)) return "wh1-rechts";
-  if (/gartenschlauch|\bschlauch\b/.test(s)) return "wh1-links";
+  if (/salatbeet|salat\b|\bsalat\b/.test(s)) return "wh1-salat";
+  if (/gartenschlauch|\bschlauch\b/.test(s)) return "wh1-salat";
   if (/beetbewässerung|beetbewaesserung|\bbeet\b/.test(s)) return "wh2-wintergarten";
   if (/\b(rechts|rechte|right)\b/.test(s) || /ausgang\s*2/.test(s) || /kanal\s*2/.test(s)) return "wh1-rechts";
-  if (/\b(links|linke|left)\b/.test(s) || /ausgang\s*1/.test(s) || /kanal\s*1/.test(s)) return "wh1-links";
+  if (/\b(links|linke|left)\b/.test(s) || /ausgang\s*1/.test(s) || /kanal\s*1/.test(s)) return "wh1-salat";
   if (/wintergarten/.test(s) || /wasserhahn\s*2/.test(s) || /\bwh\s*2\b/.test(s)) return "wh2-wintergarten";
   if ((/wasserhahn\s*1\b/.test(s) || /\bmanu\b/.test(s)) && !/\b(links|rechts|left|right)\b/.test(s) && !/ausgang|kanal/.test(s)) {
     return "ambiguous_wh1";
@@ -1126,7 +1153,7 @@ const GARTEN_PUMPE_BEET_CLARIFY =
 const GARTEN_ZONE_WHATSAPP_HELP =
   `📍 *Zonen:*\n` +
   `• *giesse beet* / *giesse die blumen* (= Beet, nur Ventil WH2)\n` +
-  `• *giesse schlauch* / *giesse links* (= Gartenschlauch, nur Ventil)\n` +
+  `• *giesse salat* / *giesse schlauch* / *giesse links* (= Salatbeete, nur Ventil)\n` +
   `• *giesse tomaten* / *giesse rechts* (= Tomaten, Ventil + Pumpe)\n` +
   `• *pumpe an* = *Tomaten* (WH1 rechts + Pumpe) – nicht die Beete!\n` +
   `• *garten status* · *bewässerung zonen*\n` +
@@ -1765,7 +1792,7 @@ function parseGiessenUmgang(sIn) {
     /(plante|jardin|fleur).*\barrose/i.test(s) ||
     /^arrosage$/i.test(s);
   if (!gieAktion) return null;
-  const kontext = /(blu-?m|garten|pflanz|bett?|balkon|draus|aussen|aussen|tropf|kra-?ut|hecke|rasen|beet(?!$))/i.test(s);
+  const kontext = /(blu-?m|garten|pflanz|bett?|balkon|draus|aussen|aussen|tropf|kra-?ut|hecke|rasen|salat|beet(?!$))/i.test(s);
   const anBot = /(@gustav|@g\b|@bot\b|gustav|kannst du|könnt|bitte|hey|hallo|mach mal|sofort|schnell)/i.test(s) || s.length < 100;
   if (!kontext && !anBot) return null;
   
@@ -1823,7 +1850,7 @@ async function verifyGartenValveBeforePumpe(zone, sequenzId) {
 /**
  * Startet die Garten-Bewässerungssequenz:
  *   Tomaten (WH1 rechts): Ventil AN → mehrfacher Status-Check → Pumpe AN → Pumpe AUS → Nachlauf → Ventil AUS
- *   Beet / Gartenschlauch: nur Ventil AN → Dauer → Ventil AUS (keine Pumpe)
+ *   Beet / Salatbeete: nur Ventil AN → Dauer → Ventil AUS (keine Pumpe)
  * 
  * @param {number} minutes - Bewässerungsdauer in Minuten
  * @param {string} requestedBy - WhatsApp-Nummer des Anfordernden
@@ -3747,7 +3774,7 @@ const HELP_TEXT =
   `📋 "Bewerber"\n` +
   `📣 "Zimmer teilen" / "Inserat Zimmer" — Inserat-Text + Link (→ WHATSAPP_GROUP_RECIPIENTS)\n\n` +
   `*Bewässerung / Smart Plugs*\n` +
-  `💧 *Zonen:* *giesse beet* · *giesse schlauch* · *giesse tomaten* (${PUMP_DEFAULT_MINUTES} min, Zahl = Minuten)\n` +
+  `💧 *Zonen:* *giesse beet* · *giesse salat* · *giesse tomaten* (${PUMP_DEFAULT_MINUTES} min, Zahl = Minuten)\n` +
   `💧 Auch: *"Giesse die Blumen"* (= Beet) · *"garten status"* · *"bewässerung zonen"*\n` +
   `💧 Stop: *bewässerung stopp* · Regen ±6h: *trotzdem giesse tomaten*\n` +
   `💧 *pumpe an* = Tomaten (Ventil + Pumpe) – Beete: *giesse beet* (nur Ventil)\n` +
@@ -4773,7 +4800,7 @@ async function dispatch(ctx) {
       if (pump.ambiguousZone) {
         await reply(
           `🤔 *Wasserhahn 1 (Manu)* – welche Leitung?\n\n` +
-          `• *giesse schlauch* – Gartenschlauch (links)\n` +
+          `• *giesse salat* – Salatbeete (links)\n` +
           `• *giesse tomaten* – Tomaten (rechts)`
         );
         return true;
@@ -4788,7 +4815,7 @@ async function dispatch(ctx) {
               await reply(
                 `🌧️ *Regen-Warnung* (±6h)\n\n` +
                 `Für *${zoneLabel}* wird Regen gemeldet oder erwartet.\n\n` +
-                `Zum Trotzdem-Starten: *trotzdem giesse ${pump.zoneId === "wh1-links" ? "schlauch" : pump.zoneId === "wh1-rechts" ? "tomaten" : "beet"}*`
+                `Zum Trotzdem-Starten: *trotzdem giesse ${pump.zoneId === "wh1-salat" || pump.zoneId === "wh1-links" ? "salat" : pump.zoneId === "wh1-rechts" ? "tomaten" : "beet"}*`
               );
               return true;
             }
@@ -5309,9 +5336,9 @@ function parseSiriCommand(text) {
 
   // Bewässerung / Garten START (inkl. beet / schlauch / tomaten)
   if (!hasOffWord &&
-      /(bewässer|garten|blumen|giess|gieß|giesse|wasser|pflanz|wintergarten|links|rechts|beet|schlauch|tomaten?)/i.test(s) &&
+      /(bewässer|garten|blumen|giess|gieß|giesse|wasser|pflanz|wintergarten|links|rechts|beet|salat|schlauch|tomaten?)/i.test(s) &&
       (/(start|an|ein|los|beginn|giess|gieß|giesse|bewäss|wässer|arrose|water)/i.test(s) ||
-        /^(bewässer|garten bewässer|giess|gieß|giesse|beet|schlauch|tomaten?)\b/i.test(s) ||
+        /^(bewässer|garten bewässer|giess|gieß|giesse|beet|salat|schlauch|tomaten?)\b/i.test(s) ||
         /(starten|einschalten|anmachen)$/i.test(s))) {
     if (zoneId === "ambiguous_wh1") return { action: "garten", cmd: "ambiguous", minutes };
     return { action: "garten", cmd: "start", minutes, zoneId };
@@ -5404,7 +5431,7 @@ exports.siriWebhook = onRequest(async (req, res) => {
     if (cmd === "ambiguous") {
       return res.json({
         success: false,
-        speech: "Sage zum Beispiel: Giesse Schlauch für den Gartenschlauch, oder Giesse Tomaten.",
+        speech: "Sage zum Beispiel: Giesse Salat für die Salatbeete, oder Giesse Tomaten.",
       });
     }
 
