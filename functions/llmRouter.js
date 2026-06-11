@@ -84,7 +84,8 @@ Beispiele:
 - I'm here/Je suis la/Bin da -> *Bin da*
 - I'm away/Je suis absent/Bin weg -> *Bin weg*
 - Lights on/Lumieres/Lichterkette an -> *Lichterkette an*
-- Pump/Pompe/Pumpe -> *Pumpe an/aus/X min*
+- Pump/Pompe/Pumpe (ohne Zone) -> *Pumpe an/aus/X min* (= Tomaten: Ventil WH1 rechts + Pumpe). NICHT für Beete!
+- «Pumpe für Beete/Blumen» -> antwort erklären: Beete = nur Ventil (*giesse beet*), Pumpe nur Tomaten (*giesse tomaten* / *pumpe an*) – kein command
 - Watered indoor plants / Zimmerpflanzen gegossen -> *Giessplan gegossen* or *Giessplan gegossen: Wohnzimmer*
 - Jacuzzi? / hot tub status / jacuzzi overview -> *Jacuzzi?* (full status with water quality gauges)
 - Wasserqualität / pH / Chlorgehalt / ORP / water quality / qualité de l'eau (auch ohne Wort "Jacuzzi") -> *Jacuzzi?*
@@ -93,9 +94,9 @@ Beispiele:
 - Sauna/Kino/Jacuzzi free / frei / available -> *Kino frei?* / *Sauna frei?* / *Jacuzzi frei?*
 - Reserve / block / belegt / besetzt Jacuzzi/Sauna/Kino -> *Wellness belegen: Ressource | Wer | Start | Ende*
   Examples: "Jacuzzi besetzt von mir bis 15 Uhr" -> *Wellness belegen: Jacuzzi | SENDER | jetzt | 15:00*
-  "Sauna for Andy until 8pm" -> *Wellness belegen: Sauna | Andy | jetzt | 20:00*
+  "Sauna for Andi until 8pm" -> *Wellness belegen: Sauna | Andi | jetzt | 20:00*
   Use SENDER when user says ich/mir/mich/me/myself; otherwise the named person.
-- Water garden/Giesse die Blumen -> Beetbewässerung (Default). Zonen: *Giesse schlauch* (Gartenschlauch), *Giesse tomaten*, *Giesse beet*, auch links/rechts
+- Water garden/Giesse die Blumen/giesse beet -> *giesse beet* (nur Ventil WH2, keine Pumpe). Zonen: *giesse schlauch*, *giesse tomaten* (Ventil+Pumpe)
 - Garten status / Bewässerung zonen -> Status bzw. Zonenliste
 - Stop watering/Bewässerung stopp/Garten aus -> Stoppt alle Zonen + Pumpe
 - Who's cleaning?/Qui nettoie?/Wer putzt? -> *Wer putzt?*

@@ -44,6 +44,7 @@ const birthdays = require("./birthdays");
 const gustavExtras = require("./gustavExtras");
 const { saturday10Iso } = require("./calendarIcs");
 const blueriiot = require("./blueriiot");
+const { sendBewaesserungAnnounce } = require("./bewaesserungAnnounce");
 
 initializeApp();
 const db = getFirestore();
@@ -66,7 +67,14 @@ const RAIN_ALERT_MAX_MINUTES = 55;
 const RAIN_ALERT_COOLDOWN_MS = 4 * 60 * 60 * 1000;
 const GARTEN_POLSTER_ALERT_DOC = "config/gartenPolsterRainAlert";
 
-const BEWOHNER = ["Corina", "Jasmin", "Dino", "Andy", "Manu", "Hugues", "Fanny", "Eliot", "Oscar"];
+const BEWOHNER = ["Corina", "Jasmin", "Dino", "Andi", "Manu", "Hugues", "Fannie", "Eliot", "Oscar"];
+/** Legacy-Login-/Firestore-Schlüssel → aktueller Vorname */
+/** Legacy-Schreibweisen → offizieller Vorname (Login & Firestore) */
+const BEWOHNER_NAME_ALIASES = { Andy: "Andi", Fanny: "Fannie", Elliot: "Eliot" };
+
+function canonicalBewohnerName(name) {
+  return BEWOHNER_NAME_ALIASES[name] || name;
+}
 const KIDS = new Set(["Eliot", "Oscar"]);
 const ADULTS = BEWOHNER.filter((n) => !KIDS.has(n));
 
@@ -574,7 +582,8 @@ async function downloadMedia(mediaId) {
 
 function resolveResident(input, onlyAdults = false) {
   if (!input) return null;
-  const needle = String(input).toLowerCase().trim();
+  const aliased = BEWOHNER_NAME_ALIASES[input] || BEWOHNER_NAME_ALIASES[String(input).trim()] || input;
+  const needle = String(aliased).toLowerCase().trim();
   const pool = onlyAdults ? ADULTS : BEWOHNER;
   const exact = pool.find((n) => n.toLowerCase() === needle);
   if (exact) return exact;
@@ -585,9 +594,10 @@ function resolveResident(input, onlyAdults = false) {
 }
 
 async function updateMemberPrefField(name, fields) {
-  if (!name || !ADULTS.includes(name)) return;
+  const canonical = canonicalBewohnerName(name);
+  if (!canonical || !ADULTS.includes(canonical)) return;
   await db.collection("config").doc("memberPrefs").set(
-    { [name]: { ...fields, updatedAt: FieldValue.serverTimestamp() } },
+    { [canonical]: { ...fields, updatedAt: FieldValue.serverTimestamp() } },
     { merge: true }
   );
 }
@@ -636,12 +646,12 @@ async function resolveResidentFromWhatsApp(from, senderName) {
   }
   const phonebook = {
     Manu: "41798385590",
-    Corina: "41795553906",
-    Jasmin: "41762988934",
-    Dino: "41765740020",
-    Andy: "41798489999",
+    Corina: "41784082785",
+    Jasmin: "41789561100",
+    Dino: "41798489999",
+    Andi: "41765740020",
     Hugues: "41795911251",
-    Fanny: "41789561100",
+    Fannie: "41795553906",
   };
   for (const [name, num] of Object.entries(phonebook)) {
     if (num === normFrom && ADULTS.includes(name)) return name;
@@ -1106,14 +1116,55 @@ function formatGartenZonesList(planData) {
   }).join("\n");
 }
 
+const GARTEN_PUMPE_BEET_CLARIFY =
+  `🤔 *Pumpe und Beete?*\n\n` +
+  `Die *Beetbewässerung* schaltet nur *Wasserhahn 2* (Ventil) – *ohne* die separate Pumpe.\n\n` +
+  `Die *Pumpe* gehört zur *Tomatenbewässerung* (Wasserhahn 1 rechts).\n\n` +
+  `• Beete gießen: *giesse beet* / *giesse die blumen*\n` +
+  `• Tomaten mit Pumpe: *giesse tomaten* / *pumpe an*`;
+
 const GARTEN_ZONE_WHATSAPP_HELP =
   `📍 *Zonen:*\n` +
   `• *giesse beet* / *giesse die blumen* (= Beet, nur Ventil WH2)\n` +
   `• *giesse schlauch* / *giesse links* (= Gartenschlauch, nur Ventil)\n` +
   `• *giesse tomaten* / *giesse rechts* (= Tomaten, Ventil + Pumpe)\n` +
-  `• *pumpe an* = Tomatenbewässerung (WH1 rechts + Pumpe)\n` +
+  `• *pumpe an* = *Tomaten* (WH1 rechts + Pumpe) – nicht die Beete!\n` +
   `• *garten status* · *bewässerung zonen*\n` +
   `• Stoppen: *bewässerung stopp* (alle Zonen)`;
+
+function formatGartenCompletionWhatsApp(d) {
+  const mins = d.bewässerungsMinuten || "?";
+  const zoneName = d.zoneLabel || d.device || "Zone";
+  if (d.needsPumpe) {
+    return (
+      `✅ *Garten-Bewässerung abgeschlossen!*\n\n` +
+      `📍 *${zoneName}* (Ventil + Pumpe)\n` +
+      `🌿 Dauer: ${mins} Minuten\n` +
+      `🔌 Pumpe: AUS\n` +
+      `🔌 Ventil: AUS\n\n` +
+      `Alles hat geklappt – der Garten ist gegossen! 🌻💧`
+    );
+  }
+  return (
+    `✅ *Garten-Bewässerung abgeschlossen!*\n\n` +
+    `📍 *${zoneName}* (nur Ventil)\n` +
+    `🌿 Dauer: ${mins} Minuten\n` +
+    `🔌 Ventil: AUS\n` +
+    `ℹ️ Keine Pumpe (nur bei Tomaten)\n\n` +
+    `Alles hat geklappt! 🌻💧`
+  );
+}
+
+/** «Pumpe für Beete» – physikalisch getrennte Kreise; nicht als giesse beet starten. */
+function parseGartenPumpeBeetConflict(sIn) {
+  const s = String(sIn || "").toLowerCase();
+  if (!/\b(pumpe|pump|pompe)\b/.test(s)) return null;
+  if (/\b(tomaten?|rechts|wh\s*1)\b/.test(s)) return null;
+  if (/\b(beet|beete|blumen|wintergarten|wh\s*2)\b/.test(s)) {
+    return { gartenSequenz: true, pumpeBeetConflict: true };
+  }
+  return null;
+}
 
 function gartenZoneFromConfig(config = {}) {
   if (config.zoneId || config.valveType || config.channel != null) {
@@ -1978,6 +2029,7 @@ async function startGartenSequenz(minutes, requestedBy, config = {}) {
     channel: zone.channel,
     zoneId: zone.id,
     zoneLabel: zone.label,
+    needsPumpe,
     executeAt: new Date(t_ende).toISOString(),
     requestedBy,
     done: false,
@@ -2168,6 +2220,8 @@ async function abortGartenSequenz(sequenzId, requestedBy, reason, userMessage) {
 //   "Bewässerung Rasen 20 Min"                → { device: "rasen", on: true, minutes: 20 }
 function parseBewaesserungMessage(raw) {
   const s = String(raw).trim();
+  const pumpeBeet = parseGartenPumpeBeetConflict(s);
+  if (pumpeBeet) return pumpeBeet;
   const giessen = parseGiessenUmgang(s);
   if (giessen) return giessen;
   const firstWord = (s.split(/\s+/)[0] || "").toLowerCase();
@@ -3696,7 +3750,8 @@ const HELP_TEXT =
   `💧 *Zonen:* *giesse beet* · *giesse schlauch* · *giesse tomaten* (${PUMP_DEFAULT_MINUTES} min, Zahl = Minuten)\n` +
   `💧 Auch: *"Giesse die Blumen"* (= Beet) · *"garten status"* · *"bewässerung zonen"*\n` +
   `💧 Stop: *bewässerung stopp* · Regen ±6h: *trotzdem giesse tomaten*\n` +
-  `💧 "Pumpe an" / "Pumpe aus" (auto-aus nach ${PUMP_DEFAULT_MINUTES} Min)\n` +
+  `💧 *pumpe an* = Tomaten (Ventil + Pumpe) – Beete: *giesse beet* (nur Ventil)\n` +
+  `💧 "Pumpe aus" (auto-aus nach ${PUMP_DEFAULT_MINUTES} Min)\n` +
   `💧 "Pumpe 20 Min" (auto-aus nach 20 Min, max. ${PUMP_MAX_MINUTES})\n` +
   `💧 "Beet 20 Min" — andere Steckdose per Name\n` +
   `💡 "Lichterkette an" / "Licht aus"\n` +
@@ -4700,6 +4755,10 @@ async function dispatch(ctx) {
   if (pump) {
     // Garten-Sequenz: "giesse die blumen", "garten bewässern", etc.
     if (pump.gartenSequenz) {
+      if (pump.pumpeBeetConflict) {
+        await reply(GARTEN_PUMPE_BEET_CLARIFY);
+        return true;
+      }
       if (pump.listZones) {
         const planData = await loadGartenPlanData();
         await reply(`🌿 *Bewässerungszonen*\n\n${formatGartenZonesList(planData)}\n\n${GARTEN_ZONE_WHATSAPP_HELP}`);
@@ -5722,12 +5781,13 @@ function isMemberWhatsappEnabled(allPrefs, name, prefKey, defaultOn = true) {
 
 // Mapping von Bewohner-Namen zu WhatsApp-Nummern (aus gespeicherten WhatsApp-Nummern, memberPrefs oder hardcoded)
 async function getBewohnerPhone(name) {
+  const lookup = canonicalBewohnerName(name);
   // 1. Priorität: Gespeicherte WhatsApp-Nummer (von eingehenden Nachrichten)
   try {
     const waSnap = await db.collection("config").doc("whatsappNumbers").get();
-    if (waSnap.exists && waSnap.data()[name]) {
-      return String(waSnap.data()[name]).replace(/\D/g, "");
-    }
+    const wa = waSnap.exists ? waSnap.data() : {};
+    if (wa[lookup]) return String(wa[lookup]).replace(/\D/g, "");
+    if (lookup !== name && wa[name]) return String(wa[name]).replace(/\D/g, "");
   } catch (e) {
     logger.warn("getBewohnerPhone: whatsappNumbers", e);
   }
@@ -5735,19 +5795,20 @@ async function getBewohnerPhone(name) {
   // 2. Priorität: memberPrefs.phone
   const prefsSnap = await db.collection("config").doc("memberPrefs").get();
   const prefs = prefsSnap.exists ? prefsSnap.data() : {};
-  if (prefs[name]?.phone) return prefs[name].phone.replace(/\D/g, "");
+  if (prefs[lookup]?.phone) return prefs[lookup].phone.replace(/\D/g, "");
+  if (lookup !== name && prefs[name]?.phone) return prefs[name].phone.replace(/\D/g, "");
   
   // Fallback: Hardcoded Mapping (kann erweitert werden)
   const phonebook = {
     "Manu": "41798385590",
-    "Corina": "41795553906",
-    "Jasmin": "41762988934",
-    "Dino": "41765740020",
-    "Andy": "41798489999",
+    "Corina": "41784082785",
+    "Jasmin": "41789561100",
+    "Dino": "41798489999",
+    "Andi": "41765740020",
     "Hugues": "41795911251",
-    "Fanny": "41789561100",
+    "Fannie": "41795553906",
   };
-  return phonebook[name] || null;
+  return phonebook[lookup] || phonebook[name] || null;
 }
 
 exports.checkGiessplanReminders = onSchedule(
@@ -6587,16 +6648,7 @@ exports.checkBewaesserung = onSchedule(
           logger.info(`Sequenz ${d.sequenzId} Step ${d.step}: ${d.device} ${d.action}`);
           
           if (d.sendSuccessMessage && d.requestedBy) {
-            const mins = d.bewässerungsMinuten || "?";
-            const zoneName = d.zoneLabel || d.device || "Ventil";
-            await sendWhatsApp(d.requestedBy, 
-              `✅ *Garten-Bewässerung abgeschlossen!*\n\n` +
-              `📍 ${zoneName}\n` +
-              `🌿 Dauer: ${mins} Minuten\n` +
-              `🔌 Pumpe: AUS\n` +
-              `🔌 Ventil: AUS\n\n` +
-              `Alles hat geklappt – der Garten ist gegossen! 🌻💧`
-            );
+            await sendWhatsApp(d.requestedBy, formatGartenCompletionWhatsApp(d));
             await debugLog("garten_seq_success_msg", { sequenzId: d.sequenzId, minutes: mins });
             await setGartenWaterLog(gartenYmdZurichNow(), d.zoneId || "wh2-wintergarten", {
               status: "done",
@@ -7214,6 +7266,58 @@ exports.jacuzziReading = onRequest(async (req, res) => {
   const source = String(req.body?.source || req.query?.source || "manual").slice(0, 32);
   await persistJacuzziReading({ tempC, at: new Date().toISOString(), source });
   return res.json({ ok: true, tempC, warm: tempC >= JACUZZI_WARM_TEMP_C });
+});
+
+exports.debugPhoneMap = onRequest(async (req, res) => {
+  const secret = req.query.secret || req.body?.secret;
+  if (secret !== process.env.SIRI_SECRET) return res.status(401).json({ error: "Unauthorized" });
+  const names = ADULTS;
+  const out = {};
+  for (const name of names) {
+    const phone = await getBewohnerPhone(name);
+    out[name] = phone ? `…${phone.slice(-4)}` : null;
+  }
+  return res.json(out);
+});
+
+/** Firestore-Telefonbuch korrigieren (ohne Nachrichten zu senden). */
+exports.fixPhoneNumbers = onRequest(async (req, res) => {
+  const secret = req.query.secret || req.body?.secret;
+  if (secret !== process.env.SIRI_SECRET) return res.status(401).json({ error: "Unauthorized" });
+  const numbers = {
+    Corina: "41784082785",
+    Jasmin: "41789561100",
+    Fannie: "41795553906",
+    Dino: "41798489999",
+    Andi: "41765740020",
+  };
+  await db.collection("config").doc("whatsappNumbers").set(
+    { ...numbers, updatedAt: FieldValue.serverTimestamp() },
+    { merge: true }
+  );
+  const masked = Object.fromEntries(Object.entries(numbers).map(([k, v]) => [k, `…${v.slice(-4)}`]));
+  return res.json({ ok: true, numbers: masked });
+});
+
+exports.sendBewaesserungAnnounce = onRequest(async (req, res) => {
+  res.set("Access-Control-Allow-Origin", "*");
+  if (req.method === "OPTIONS") {
+    res.set("Access-Control-Allow-Methods", "GET, POST");
+    res.set("Access-Control-Allow-Headers", "Content-Type");
+    return res.status(204).send("");
+  }
+  const secret = req.query.secret || req.body?.secret;
+  if (secret !== process.env.SIRI_SECRET) {
+    return res.status(401).json({ error: "Unauthorized" });
+  }
+  try {
+    const only = req.query.to || req.body?.to || null;
+    const out = await sendBewaesserungAnnounce({ getBewohnerPhone, sendWhatsApp, logger, onlyName: only });
+    return res.json({ ok: out.sent > 0, ...out });
+  } catch (err) {
+    logger.error("sendBewaesserungAnnounce", err);
+    return res.status(500).json({ error: err.message });
+  }
 });
 
 exports.testPolsterAlert = onRequest(async (req, res) => {
