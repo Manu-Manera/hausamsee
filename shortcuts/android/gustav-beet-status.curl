@@ -1,0 +1,3 @@
+# Gustav Beet Status
+# Sprachbefehl: Gustav Beet Status
+curl -sL 'https://siriwebhook-dcl7qtm3uq-ew.a.run.app?action=garten&cmd=status&zoneId=wh2-wintergarten&format=plain&secret=HausAmSee2026Garten'

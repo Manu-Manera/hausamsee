@@ -1,0 +1,3 @@
+# Gustav Tomaten gießen
+# Sprachbefehl: Gustav Tomaten gießen
+curl -sL 'https://siriwebhook-dcl7qtm3uq-ew.a.run.app?action=garten&cmd=start&zoneId=wh1-rechts&minutes=20&format=plain&secret=HausAmSee2026Garten'

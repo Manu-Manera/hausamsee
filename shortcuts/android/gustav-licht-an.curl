@@ -1,0 +1,3 @@
+# Gustav Licht an
+# Sprachbefehl: Gustav Licht an
+curl -sL 'https://siriwebhook-dcl7qtm3uq-ew.a.run.app?action=licht&cmd=an&format=plain&secret=HausAmSee2026Garten'

@@ -1,46 +1,17 @@
 #!/usr/bin/env node
 /**
- * Signierte Kurzbefehle für macOS/iOS – nur 3 Aktionen, kein JSON-Parsing.
- * Webhook liefert mit format=plain Klartext (speech).
+ * Baut iOS/macOS .shortcut-Dateien und Android .curl-Dateien aus voice-catalog.js.
  */
 const { execFileSync } = require("child_process");
 const crypto = require("crypto");
 const fs = require("fs");
 const path = require("path");
+const { CATALOG } = require("./voice-catalog");
 
 const ROOT = path.join(__dirname, "..");
 const UNSIGNED = path.join(ROOT, "shortcuts", "unsigned");
 const SIGNED = path.join(ROOT, "shortcuts", "signed");
-const SECRET = "HausAmSee2026Garten";
-const BASE = "https://siriwebhook-dcl7qtm3uq-ew.a.run.app";
-const PLAIN = "format=plain";
-
-const SHORTCUTS = [
-  {
-    file: "beet-giessen",
-    name: "Beet gießen",
-    color: 4282601983,
-    webhookUrl: `${BASE}?action=garten&cmd=start&zoneId=wh2-wintergarten&minutes=20&${PLAIN}&secret=${SECRET}`,
-  },
-  {
-    file: "salat-giessen",
-    name: "Salat gießen",
-    color: 4292093695,
-    webhookUrl: `${BASE}?action=garten&cmd=start&zoneId=wh1-salat&minutes=20&${PLAIN}&secret=${SECRET}`,
-  },
-  {
-    file: "tomaten-giessen",
-    name: "Tomaten gießen",
-    color: 4251333119,
-    webhookUrl: `${BASE}?action=garten&cmd=start&zoneId=wh1-rechts&minutes=20&${PLAIN}&secret=${SECRET}`,
-  },
-  {
-    file: "bewaesserung-stoppen",
-    name: "Bewässerung stoppen",
-    color: 463140863,
-    webhookUrl: `${BASE}?action=garten&cmd=stop&${PLAIN}&secret=${SECRET}`,
-  },
-];
+const ANDROID = path.join(ROOT, "shortcuts", "android");
 
 function uuid() {
   return crypto.randomUUID().toUpperCase();
@@ -146,16 +117,59 @@ function run(cmd, args) {
 
 fs.mkdirSync(UNSIGNED, { recursive: true });
 fs.mkdirSync(SIGNED, { recursive: true });
+fs.mkdirSync(ANDROID, { recursive: true });
 
-for (const sc of SHORTCUTS) {
+const catalogForWeb = {
+  generatedAt: new Date().toISOString(),
+  wakeHint: {
+    ios: "Hey Siri, Gustav …",
+    android: "Hey Google, Gustav …",
+  },
+  categories: [
+    { id: "bewaesserung", label: "Bewässerung", emoji: "💧" },
+    { id: "licht", label: "Licht", emoji: "💡" },
+  ],
+  items: CATALOG.map((item) => ({
+    ...item,
+    iosFile: `${item.file}.shortcut`,
+    androidFile: `${item.file}.curl`,
+  })),
+};
+
+for (const sc of CATALOG) {
   const xmlPath = path.join(UNSIGNED, `${sc.file}.plist`);
   const unsignedPath = path.join(UNSIGNED, `${sc.file}.shortcut`);
   const signedPath = path.join(SIGNED, `${sc.file}.shortcut`);
+  const curlPath = path.join(ANDROID, `${sc.file}.curl`);
 
   fs.writeFileSync(xmlPath, buildPlist(sc), "utf8");
   run("plutil", ["-convert", "binary1", "-o", unsignedPath, xmlPath]);
   run("shortcuts", ["sign", "--mode", "anyone", "--input", unsignedPath, "--output", signedPath]);
+
+  fs.writeFileSync(
+    curlPath,
+    `# ${sc.name}\n# Sprachbefehl: ${sc.phrase}\ncurl -sL '${sc.webhookUrl}'\n`,
+    "utf8"
+  );
   console.log(`✓ ${sc.name}`);
 }
 
-console.log("\nFertig: shortcuts/signed/");
+fs.writeFileSync(path.join(ROOT, "voice-catalog.json"), JSON.stringify(catalogForWeb, null, 2));
+
+// Alte Dateien ohne gustav- Präfix entfernen
+for (const old of fs.readdirSync(SIGNED)) {
+  if (!old.startsWith("gustav-") && old.endsWith(".shortcut")) {
+    fs.unlinkSync(path.join(SIGNED, old));
+    console.log(`  entfernt: ${old}`);
+  }
+}
+
+const zipPath = path.join(ANDROID, "gustav-android.zip");
+try {
+  run("zip", ["-j", zipPath, ...CATALOG.map((sc) => path.join(ANDROID, `${sc.file}.curl`))]);
+  console.log(`✓ ZIP ${zipPath}`);
+} catch (e) {
+  console.warn("ZIP übersprungen:", e.message);
+}
+
+console.log(`\n${CATALOG.length} Kurzbefehle → shortcuts/signed/ + shortcuts/android/ + voice-catalog.json`);

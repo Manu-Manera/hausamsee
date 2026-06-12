@@ -1,0 +1,3 @@
+# Gustav Salat Status
+# Sprachbefehl: Gustav Salat Status
+curl -sL 'https://siriwebhook-dcl7qtm3uq-ew.a.run.app?action=garten&cmd=status&zoneId=wh1-salat&format=plain&secret=HausAmSee2026Garten'
