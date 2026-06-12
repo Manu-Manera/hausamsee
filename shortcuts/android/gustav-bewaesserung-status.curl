@@ -1,3 +1,0 @@
-# Gustav Bewässerung Status
-# Sprachbefehl: Gustav Bewässerung Status
-curl -sL 'https://siriwebhook-dcl7qtm3uq-ew.a.run.app?action=garten&cmd=status&format=plain&secret=HausAmSee2026Garten'

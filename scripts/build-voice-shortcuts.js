@@ -122,12 +122,12 @@ fs.mkdirSync(ANDROID, { recursive: true });
 const catalogForWeb = {
   generatedAt: new Date().toISOString(),
   wakeHint: {
-    ios: "Hey Siri, Gustav …",
-    android: "Hey Google, Gustav …",
+    ios: "Hey Gustav, Salat gießen",
+    android: "Hey Google, Salat gießen",
   },
   categories: [
     { id: "bewaesserung", label: "Bewässerung", emoji: "💧" },
-    { id: "licht", label: "Licht", emoji: "💡" },
+    { id: "licht", label: "Lichterkette", emoji: "💡" },
   ],
   items: CATALOG.map((item) => ({
     ...item,
@@ -156,15 +156,21 @@ for (const sc of CATALOG) {
 
 fs.writeFileSync(path.join(ROOT, "voice-catalog.json"), JSON.stringify(catalogForWeb, null, 2));
 
-// Alte Dateien ohne gustav- Präfix entfernen
+// Alte gustav-* Dateien entfernen
 for (const old of fs.readdirSync(SIGNED)) {
-  if (!old.startsWith("gustav-") && old.endsWith(".shortcut")) {
+  if (old.startsWith("gustav-") && old.endsWith(".shortcut")) {
     fs.unlinkSync(path.join(SIGNED, old));
     console.log(`  entfernt: ${old}`);
   }
 }
+for (const old of fs.readdirSync(ANDROID)) {
+  if (old.startsWith("gustav-")) {
+    fs.unlinkSync(path.join(ANDROID, old));
+    console.log(`  entfernt: ${old}`);
+  }
+}
 
-const zipPath = path.join(ANDROID, "gustav-android.zip");
+const zipPath = path.join(ANDROID, "haus-am-see-android.zip");
 try {
   run("zip", ["-j", zipPath, ...CATALOG.map((sc) => path.join(ANDROID, `${sc.file}.curl`))]);
   console.log(`✓ ZIP ${zipPath}`);

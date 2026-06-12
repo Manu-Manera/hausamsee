@@ -4,7 +4,7 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
   <title>Gustav Sprachbefehle · Haus am See</title>
-  <meta name="description" content="Gustav Sprachbefehle für iPhone, Mac und Android – Bewässerung, Licht, Status." />
+  <meta name="description" content="Gustav Sprachbefehle für iPhone, Mac und Android – Bewässerung und Lichterkette." />
   <meta name="theme-color" content="#fdf9f2" />
   <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Ctext y='.9em' font-size='90'%3E🦆%3C/text%3E%3C/svg%3E" />
   <style>
@@ -100,6 +100,7 @@
     .steps h3 { margin: 0 0 8px; font-size: 1rem; color: var(--cocoa); }
     .steps ol { margin: 8px 0 0; padding-left: 1.2rem; }
     .steps li { margin: 6px 0; }
+    .steps code { background: rgba(0,0,0,0.06); padding: 2px 6px; border-radius: 4px; font-size: 0.88em; }
     .section-title {
       font-size: 1.05rem;
       color: var(--cocoa);
@@ -169,16 +170,16 @@
       padding-top: 16px;
       border-top: 1px solid var(--border);
     }
-    .note {
-      background: rgba(217,160,58,0.12);
-      border: 1px solid rgba(217,160,58,0.35);
-      border-radius: 12px;
-      padding: 12px 14px;
-      font-size: 0.88rem;
-      margin-bottom: 18px;
-      color: var(--text-soft);
+    .vocal-box {
+      background: linear-gradient(135deg, rgba(0,122,255,0.08), rgba(0,122,255,0.15));
+      border: 1px solid rgba(0,122,255,0.25);
+      border-radius: 14px;
+      padding: 16px 18px;
+      margin-bottom: 20px;
     }
-    .hidden { display: none !important; }
+    .vocal-box h3 { margin: 0 0 10px; color: var(--ios); font-size: 1rem; }
+    .vocal-box ol { margin: 8px 0 0; padding-left: 1.2rem; font-size: 0.9rem; }
+    .vocal-box li { margin: 5px 0; }
   </style>
 </head>
 <body>
@@ -187,15 +188,11 @@
 
     <div class="hero">
       <h1>🦆 Gustav Sprachbefehle</h1>
-      <p class="tagline">Smart Home am See per Sprache – Bewässerung, Licht &amp; Status.</p>
+      <p class="tagline">Smart Home am See per Sprache – Bewässerung &amp; Lichterkette.</p>
       <div class="phrase-box">
-        <span>iPhone/Mac:</span> „Hey Siri, <strong>Gustav Salat gießen</strong>“<br>
-        <span>Android:</span> „Hey Google, <strong>Gustav Salat gießen</strong>“
+        <span>iPhone:</span> „<strong>Hey Gustav</strong>, Salat gießen"<br>
+        <span>Android:</span> „Hey Google, <strong>Salat gießen</strong>"
       </div>
-    </div>
-
-    <div class="note">
-      <strong>Hinweis:</strong> Das Aktivierungswort bleibt <em>Siri</em> bzw. <em>Google</em> – du sagst danach einfach <strong>Gustav …</strong> als Befehl. Gustav antwortet mit Sprachausgabe.
     </div>
 
     <div class="tabs">
@@ -204,20 +201,34 @@
     </div>
 
     <div id="panel-ios" class="panel active">
-      <div class="steps">
-        <h3>iPhone / Mac – einmal einrichten</h3>
+      <div class="vocal-box">
+        <h3>🎤 „Hey Gustav" einrichten (iOS 18+)</h3>
+        <p style="margin:0 0 10px;font-size:0.88rem;color:var(--text-soft)">Mit Vocal Shortcuts sagst du <strong>„Hey Gustav"</strong> statt „Hey Siri":</p>
         <ol>
-          <li>Kurzbefehl importieren (grüner Button oder Datei auf dem Mac öffnen)</li>
-          <li>In der Kurzbefehle-App: Kurzbefehl öffnen → <strong>ⓘ</strong> → <strong>Für Siri vorbereiten</strong></li>
-          <li>Sprachbefehl bestätigen, z.&nbsp;B. <strong>„Gustav Salat gießen“</strong></li>
-          <li>Testen: <strong>„Hey Siri, Gustav Salat gießen“</strong></li>
+          <li><strong>Einstellungen</strong> → <strong>Bedienungshilfen</strong> → <strong>Vocal Shortcuts</strong></li>
+          <li><strong>Vocal Shortcuts einrichten</strong> tippen</li>
+          <li><strong>Siri</strong> auswählen (nicht „Siri Request")</li>
+          <li>Als Phrase <code>Hey Gustav</code> eingeben</li>
+          <li>Die Phrase <strong>3× laut sprechen</strong></li>
+          <li>Fertig! Danach: „<strong>Hey Gustav</strong>" … [kurz warten] … „<strong>Salat gießen</strong>"</li>
         </ol>
       </div>
+
+      <div class="steps">
+        <h3>Kurzbefehle importieren</h3>
+        <ol>
+          <li>Kurzbefehl importieren (grüner Button unten)</li>
+          <li>In der Kurzbefehle-App: oben rechts <strong>„Hinzufügen"</strong></li>
+          <li>Testen: „<strong>Hey Gustav, Salat gießen</strong>"</li>
+        </ol>
+      </div>
+
       <div class="bulk">
         <h3>Alle auf einmal (Mac)</h3>
-        <p style="margin:0 0 10px;font-size:0.9rem;color:var(--text-muted)">Terminal: alle Kurzbefehle öffnen und jeweils „Hinzufügen“ klicken.</p>
-        <code style="font-size:0.78rem;word-break:break-all">open shortcuts/signed/gustav-*.shortcut</code>
+        <p style="margin:0 0 10px;font-size:0.9rem;color:var(--text-muted)">Terminal öffnen und alle Kurzbefehle importieren:</p>
+        <code style="font-size:0.78rem;word-break:break-all">open ~/Downloads/*.shortcut</code>
       </div>
+
       <div id="list-ios"></div>
     </div>
 
@@ -228,18 +239,30 @@
           <li>App <a href="https://play.google.com/store/apps/details?id=ch.rmy.android.http_shortcuts" target="_blank" rel="noopener">HTTP Shortcuts</a> installieren (kostenlos)</li>
           <li>Menü → <strong>Import / Export</strong> → <strong>Import from cURL</strong></li>
           <li>cURL-Datei von unten öffnen/kopieren → Shortcut speichern</li>
-          <li>Widget auf Startbildschirm oder Google-Assistent-Routine mit dem Befehl <strong>„Gustav …“</strong></li>
+          <li>Widget auf Startbildschirm legen</li>
         </ol>
       </div>
+
+      <div class="steps">
+        <h3>Google Assistant Routine (optional)</h3>
+        <ol>
+          <li>Google Home App → <strong>Routinen</strong></li>
+          <li>Neue Routine mit Sprachbefehl <code>Salat gießen</code></li>
+          <li>Aktion: URL öffnen oder HTTP Shortcut starten</li>
+          <li>Dann: „<strong>Hey Google, Salat gießen</strong>"</li>
+        </ol>
+      </div>
+
       <div class="bulk">
         <h3>Alle Befehle als ZIP</h3>
-        <a class="btn btn-android" id="dl-android-zip" href="shortcuts/android/gustav-android.zip" download>📦 Alle cURL-Dateien herunterladen</a>
+        <a class="btn btn-android" href="shortcuts/android/haus-am-see-android.zip" download>📦 Alle cURL-Dateien herunterladen</a>
       </div>
+
       <div id="list-android"></div>
     </div>
 
     <p class="hint">
-      Technik: Gustav-Webhook antwortet mit Klartext – ideal für Siri, Kurzbefehle und Android.
+      Technik: Gustav-Webhook antwortet mit Klartext – ideal für Sprachausgabe.
       Fragen? Einfach im Haus-Chat fragen 🦆
     </p>
   </div>
@@ -283,7 +306,7 @@
           iosCard.innerHTML = `
             <h2>${item.name}</h2>
             <p class="desc">${item.desc}</p>
-            <p class="say">🎤 „Hey Siri, ${item.phrase.replace(/^Gustav /, "Gustav ")}“</p>
+            <p class="say">🎤 „Hey Gustav, ${item.phrase}"</p>
             <a class="btn btn-ios" href="${importUrl(item.iosFile, item.name)}">In Shortcuts importieren</a>
             <a class="btn btn-ghost" href="${IOS_DIR}/${item.iosFile}" download="${item.iosFile}">.shortcut herunterladen</a>
           `;
@@ -294,9 +317,8 @@
           andCard.innerHTML = `
             <h2>${item.name}</h2>
             <p class="desc">${item.desc}</p>
-            <p class="say">🎤 „Hey Google, ${item.phrase}“</p>
+            <p class="say">🎤 „Hey Google, ${item.phrase}"</p>
             <a class="btn btn-android" href="${ANDROID_DIR}/${item.androidFile}" download="${item.androidFile}">cURL-Datei herunterladen</a>
-            <a class="btn btn-ghost" href="${ANDROID_DIR}/${item.androidFile}" target="_blank" rel="noopener">cURL anzeigen / kopieren</a>
           `;
           andRoot.appendChild(andCard);
         }
