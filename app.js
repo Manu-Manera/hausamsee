@@ -410,6 +410,15 @@ function escapeHtml(str) {
   return div.innerHTML;
 }
 
+/** Nur sichere URL-Schemata für href/src zulassen (blockt javascript:, data:text/html …). */
+function safeUrl(url) {
+  const s = String(url || "").trim();
+  if (/^(https?:|mailto:|tel:)/i.test(s)) return s;
+  // Bilder/Audio als Data-URL sind ok; ausführbares HTML nicht.
+  if (/^data:(image\/|audio\/|video\/)/i.test(s)) return s;
+  return "";
+}
+
 function showToast(msg, type = "") {
   const t = $("toast");
   t.textContent = msg;
@@ -434,6 +443,22 @@ function normPasswordInput(s) {
 }
 
 const LOGIN_LAST_MEMBER_KEY = "has_last_login_member";
+
+// Server-Auth: Passwörter werden NICHT mehr im Browser geprüft (Hashes sind
+// nicht mehr öffentlich lesbar), sondern von der authApi-Cloud-Function.
+const AUTH_API_URL = `https://europe-west1-${firebaseConfig.projectId}.cloudfunctions.net/authApi`;
+let authSessionToken = null;
+
+async function authApiCall(action, payload = {}) {
+  const res = await fetch(AUTH_API_URL, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ action, ...payload }),
+  });
+  let data = {};
+  try { data = await res.json(); } catch (_) { /* leere/kaputte Antwort */ }
+  return { status: res.status, ...data };
+}
 
 /* ==========================================================================
    Auth (WG-Login + Gast-Zugänge)
@@ -481,6 +506,7 @@ const auth = {
         this.member = session.member;
         this.isGuest = true;
         this.loginKind = null;
+        authSessionToken = session.token || null;
         this.apply();
       } else {
         const member = canonicalBewohnerName(session.member);
@@ -488,6 +514,7 @@ const auth = {
         this.member = member;
         this.isGuest = false;
         this.loginKind = session.loginKind === "personal" ? "personal" : "group";
+        authSessionToken = session.token || null;
         this.apply();
         } else {
           localStorage.removeItem(SESSION_KEY);
@@ -495,10 +522,11 @@ const auth = {
       }
     } catch { localStorage.removeItem(SESSION_KEY); }
   },
-  login(member, { isGuest = false, loginKind = null } = {}) {
+  login(member, { isGuest = false, loginKind = null, token = null } = {}) {
     this.member = member;
     this.isGuest = isGuest;
     this.loginKind = isGuest ? null : loginKind;
+    authSessionToken = token || null;
     if (!isGuest && member) {
       try { sessionStorage.setItem(LOGIN_LAST_MEMBER_KEY, member); } catch (_) { /* */ }
     }
@@ -506,16 +534,31 @@ const auth = {
       member,
       isGuest,
       loginKind: this.loginKind,
+      token: authSessionToken,
       until: Date.now() + SESSION_DURATION
     }));
     this.apply();
     const greeting = isGuest ? `Willkommen als Gast, ${member} 🎟️` : `Willkommen zurück, ${mLabel(member)} 🌿`;
     showToast(greeting, "success");
   },
+  /** Session-Token still aktualisieren (nach Passwortwechsel) – ohne Begrüßung. */
+  refreshToken(token) {
+    if (!token) return;
+    authSessionToken = token;
+    try {
+      const raw = localStorage.getItem(SESSION_KEY);
+      const s = raw ? JSON.parse(raw) : {};
+      s.token = token;
+      s.until = Date.now() + SESSION_DURATION;
+      localStorage.setItem(SESSION_KEY, JSON.stringify(s));
+    } catch (_) { /* */ }
+  },
   logout() {
+    if (authSessionToken) authApiCall("logout", { token: authSessionToken }).catch(() => {});
     this.member = null;
     this.isGuest = false;
     this.loginKind = null;
+    authSessionToken = null;
     localStorage.removeItem(SESSION_KEY);
     this.apply();
     showToast("Abgemeldet.");
@@ -612,6 +655,21 @@ function applyMemberPasswordsDoc(data) {
   authConfig.memberHashes = parseMemberPasswordHashes(data);
 }
 
+/**
+ * Server-Auth: statt echter Hashes speichern wir nur noch, WER ein persönliches
+ * Passwort hat (Namen aus dem öffentlichen config/authMeta). Die UI-Checks
+ * (`!!authConfig.memberHashes[name]`) funktionieren damit unverändert weiter.
+ */
+function applyAuthMetaDoc(data) {
+  const names = data && Array.isArray(data.withPersonal) ? data.withPersonal : [];
+  const out = {};
+  for (const n of names) {
+    const canonical = canonicalBewohnerName(String(n));
+    if (ADULT_NAMES.has(canonical)) out[canonical] = true;
+  }
+  authConfig.memberHashes = out;
+}
+
 const LOGIN_REST_MS = 3000;
 const LOGIN_WAIT_MS = 2000;
 const AUTH_HASHES_SESSION_KEY = "has_auth_hashes_v1";
@@ -670,46 +728,27 @@ function markLoginHashesReady() {
   loginHashesReady = true;
 }
 
-/** Firestore batchGet – ein Request statt zwei (schneller auf Mobile). */
+/**
+ * Prefetch: lädt nur noch die öffentliche Namensliste (config/authMeta), wer ein
+ * persönliches Passwort hat. Passwort-Hashes werden NICHT mehr geladen (die prüft
+ * serverseitig die authApi). Reine UI-Beschleunigung, unkritisch bei Fehlern.
+ */
 async function refreshLoginHashesViaRest() {
   if (!firebaseReady || !firebaseConfig.projectId || !firebaseConfig.apiKey) return false;
   const pid = firebaseConfig.projectId;
   const key = encodeURIComponent(firebaseConfig.apiKey);
-  const doc = (id) => `projects/${pid}/databases/(default)/documents/config/${id}`;
-  const url = `https://firestore.googleapis.com/v1/projects/${pid}/databases/(default)/documents:batchGet?key=${key}`;
+  const url = `https://firestore.googleapis.com/v1/projects/${pid}/databases/(default)/documents/config/authMeta?key=${key}`;
   try {
-    const res = await promiseWithTimeout(
-      fetch(url, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ documents: [doc("auth"), doc("memberPasswords")] }),
-        cache: "no-store",
-      }),
-      LOGIN_REST_MS
-    );
+    const res = await promiseWithTimeout(fetch(url, { cache: "no-store" }), LOGIN_REST_MS);
     if (!res.ok) return false;
-    const items = await res.json();
-    let gotAuth = false;
-    let gotMp = false;
-    for (const item of items || []) {
-      const found = item?.found;
-      if (!found?.fields || !found.name) continue;
-      const plain = firestoreRestFieldsToPlain(found.fields);
-      if (found.name.endsWith("/config/auth") && plain.passwordHash) {
-        authConfig.passwordHash = plain.passwordHash;
-        gotAuth = true;
-      }
-      if (found.name.endsWith("/config/memberPasswords") && Object.keys(plain).length) {
-        applyMemberPasswordsDoc(plain);
-        gotMp = true;
-      }
-    }
-    const ok = gotAuth || gotMp;
-    if (ok) {
-      persistAuthHashesSessionCache();
-      markLoginHashesReady();
-    }
-    return ok;
+    const j = await res.json();
+    const plain = firestoreRestFieldsToPlain(j?.fields || {});
+    // withPersonal ist ein Array → in firestoreRestFieldsToPlain nicht enthalten;
+    // separat auslesen:
+    const arr = j?.fields?.withPersonal?.arrayValue?.values || [];
+    applyAuthMetaDoc({ withPersonal: arr.map((v) => v.stringValue).filter(Boolean) });
+    markLoginHashesReady();
+    return true;
   } catch (e) {
     console.warn("refreshLoginHashesViaRest", e?.message || e);
     return false;
@@ -854,8 +893,8 @@ async function clearMemberAppPrefsInCloud(name) {
     applyMemberPrefsDoc(localStore.memberPrefs);
     return;
   }
-  await setDoc(doc(db, "config", "memberPasswords"), { [name]: deleteField() }, { merge: true });
-  await setDoc(doc(db, "config", "memberPrefs"), { [name]: deleteField() }, { merge: true });
+  // Passwort-Hash + Prefs serverseitig entfernen (config/memberPasswords ist gesperrt).
+  await authApiCall("clearPersonal", { token: authSessionToken, target: name });
   delete authConfig.memberHashes[name];
   if (authConfig.memberPrefs[name]) delete authConfig.memberPrefs[name];
 }
@@ -1298,66 +1337,58 @@ $("loginForm")?.addEventListener("submit", async (e) => {
     resetSubmitBtn();
   };
 
-  await ensureAuthConfigForLogin();
-
-  // Fall 1: Konkreter Gast-Eintrag gewählt (mit ID/Namen)
-  if (selected.startsWith("__guest__:")) {
-    const key = selected.slice("__guest__:".length);
-    const guest = (guestsCache || []).find(g => g.id === key || g.name === key);
-    if (!guest) { showError("Gast-Zugang nicht gefunden."); return; }
-    const now = Date.now();
-    if (guest.expiresAt && guest.expiresAt < now) { showError("Dieser Gast-Zugang ist abgelaufen."); return; }
-    const hash = await sha256(normPasswordInput(password));
-    if (hash !== guest.hash) { showError("Falsches Passwort · versuch's nochmal."); return; }
-    resetSubmitBtn();
-    auth.login(guest.name, { isGuest: true });
-    $("loginDialog").close();
-    return;
+  // Ohne Firebase (lokaler Demo-Modus): alte clientseitige Prüfung als Fallback.
+  if (!firebaseReady) {
+    await ensureAuthConfigForLogin();
+    if (selected.startsWith("__guest__:") || selected === "__guest__") {
+      const res = await verifyPassword(password);
+      if (!res.ok || res.kind !== "guest") { showError("Falsches Passwort · versuch's nochmal."); return; }
+      resetSubmitBtn(); auth.login(res.guestName, { isGuest: true }); $("loginDialog").close(); return;
+    }
+    const mres = await verifyMemberPassword(selected, password);
+    if (!mres.ok) { showError("Falsches Passwort · versuch's nochmal."); return; }
+    resetSubmitBtn(); auth.login(selected, { isGuest: false, loginKind: mres.kind }); $("loginDialog").close(); return;
   }
 
-  // Fall 2: Generische Gast-Option (keine Gäste im Cache konfiguriert oder Fallback)
-  if (selected === "__guest__") {
-    const result = await verifyPassword(password);
-    if (!result.ok) {
-      showError(result.reason === "expired"
-        ? "Dieser Gast-Zugang ist abgelaufen."
-        : "Falsches Passwort · versuch's nochmal.");
+  try {
+    // Gast-Login (konkreter Eintrag oder generisch)
+    if (selected.startsWith("__guest__:") || selected === "__guest__") {
+      const guestKey = selected.startsWith("__guest__:") ? selected.slice("__guest__:".length) : "";
+      const r = await authApiCall("guestLogin", { password, guestKey });
+      if (!r.ok) {
+        showError(r.reason === "expired" ? "Dieser Gast-Zugang ist abgelaufen."
+          : r.reason === "throttled" ? "Zu viele Versuche – bitte kurz warten."
+          : "Falsches Passwort · versuch's nochmal.");
+        return;
+      }
+      resetSubmitBtn();
+      auth.login(r.guestName || r.member, { isGuest: true, token: r.token });
+      $("loginDialog").close();
       return;
     }
-    if (result.kind !== "guest") { showError("Das ist kein Gast-Passwort."); return; }
-    resetSubmitBtn();
-    auth.login(result.guestName, { isGuest: true });
-    $("loginDialog").close();
-    return;
-  }
 
-  // Fall 3: WG-Mitglied — eigenes Passwort (falls gesetzt), sonst gemeinsames WG-Passwort
-  let mres = await verifyMemberPassword(selected, password);
-  if (!mres.ok && !mres.hasPersonal && firebaseReady && !loginHashesReady) {
-    loginHashesLoadPromise = null;
-    if (await startLoginHashesLoad()) {
-      mres = await verifyMemberPassword(selected, password);
+    // WG-Mitglied
+    const r = await authApiCall("login", { member: selected, password });
+    if (!r.ok) {
+      if (r.reason === "throttled") {
+        showError("Zu viele Fehlversuche – bitte ein paar Minuten warten.");
+      } else if (r.hasPersonal) {
+        showError(
+          "Falsches Passwort. Du hast ein persönliches Passwort – das WG-Passwort gilt nicht mehr für dich. " +
+          "Passwort-App-Eintrag prüfen oder unter WG-Intern → Einstellungen neu setzen."
+        );
+      } else {
+        showError("Falsches Passwort · versuch's nochmal.");
+      }
+      return;
     }
+    resetSubmitBtn();
+    auth.login(selected, { isGuest: false, loginKind: r.kind, token: r.token });
+    $("loginDialog").close();
+  } catch (err) {
+    console.error("Login fehlgeschlagen", err);
+    showError("Anmeldung nicht möglich – Verbindung prüfen und nochmal versuchen.");
   }
-  if (!mres.ok) {
-    if (mres.hasPersonal) {
-      showError(
-        "Falsches Passwort. Du hast ein persönliches Passwort – das WG-Passwort gilt nicht mehr für dich. " +
-        "Passwort-App-Eintrag prüfen oder unter WG-Intern → Einstellungen neu setzen."
-      );
-    } else if (firebaseReady && !Object.keys(authConfig.memberHashes).length) {
-      showError(
-        "Passwort-Daten konnten nicht geladen werden – bitte kurz warten und nochmal versuchen. " +
-        "Falls du ein persönliches Passwort hast: WLAN prüfen."
-      );
-    } else {
-      showError("Falsches Passwort · versuch's nochmal.");
-    }
-    return;
-  }
-  resetSubmitBtn();
-  auth.login(selected, { isGuest: false, loginKind: mres.kind });
-  $("loginDialog").close();
 });
 
 /* Guard helper: prüft Auth, zeigt sonst Hinweis */
@@ -1532,12 +1563,12 @@ async function uploadHausBild(featureId) {
       const payload = { src: dataUrl, updatedBy: auth.member, updatedAt: Date.now() };
       if (firebaseReady) {
         await setDoc(doc(db, "hausbilder", featureId), { ...payload, updatedAt: serverTimestamp() });
-      } else {
-        localStore.hausbilder[featureId] = payload;
-        hausbilderCache = localStore.hausbilder;
-        saveLocal("hausbilder", localStore.hausbilder);
-        renderHausFeatures();
       }
+      localStore.hausbilder = localStore.hausbilder || {};
+      localStore.hausbilder[featureId] = payload;
+      hausbilderCache[featureId] = payload;
+      saveLocal("hausbilder", localStore.hausbilder);
+      renderHausFeatures();
       showToast("Foto gespeichert.", "success");
     } catch (err) {
       console.error(err);
@@ -1552,12 +1583,11 @@ async function deleteHausBild(featureId) {
   if (firebaseReady) {
     try { await deleteDoc(doc(db, "hausbilder", featureId)); }
     catch (e) { showToast("Entfernen fehlgeschlagen.", "error"); return; }
-  } else {
-    delete localStore.hausbilder[featureId];
-    hausbilderCache = localStore.hausbilder;
-    saveLocal("hausbilder", localStore.hausbilder);
-    renderHausFeatures();
   }
+  if (localStore.hausbilder) delete localStore.hausbilder[featureId];
+  delete hausbilderCache[featureId];
+  saveLocal("hausbilder", localStore.hausbilder || {});
+  renderHausFeatures();
   showToast("Foto entfernt.", "success");
 }
 
@@ -1610,13 +1640,12 @@ function openHausFeatureEditor(featureId) {
       const payload = { emoji, title, text, updatedBy: auth.member, updatedAt: Date.now() };
       if (firebaseReady) {
         await setDoc(doc(db, "hausfeatures", featureId), { ...payload, updatedAt: serverTimestamp() }, { merge: true });
-      } else {
-        localStore.hausfeatures = localStore.hausfeatures || {};
-        localStore.hausfeatures[featureId] = payload;
-        hausfeaturesCache = localStore.hausfeatures;
-        saveLocal("hausfeatures", localStore.hausfeatures);
-        renderHausFeatures();
       }
+      localStore.hausfeatures = localStore.hausfeatures || {};
+      localStore.hausfeatures[featureId] = payload;
+      hausfeaturesCache[featureId] = payload;
+      saveLocal("hausfeatures", localStore.hausfeatures);
+      renderHausFeatures();
       showToast("Gespeichert!", "success");
       dialog.close();
       dialog.remove();
@@ -2275,7 +2304,7 @@ function renderEventCard(ev, isPast) {
         ${flyerBadge}
       </div>
       <div class="event-info">
-        <h3>${ev.emoji || "🎉"} ${escapeHtml(ev.title)} ${flyerButton}</h3>
+        <h3>${escapeHtml(ev.emoji || "🎉")} ${escapeHtml(ev.title)} ${flyerButton}</h3>
         <div class="event-meta">📍 ${escapeHtml(ev.location || "Haus am See")}</div>
         ${ev.description ? `<p>${escapeHtml(ev.description)}</p>` : ""}
         ${signupBlock}
@@ -6517,7 +6546,7 @@ function renderGbCard(gb) {
   const headerStyle = color ? `style="--gb-accent:${escapeHtml(color)}"` : "";
   const headBlock = `
     <div class="gb-head">
-      <div class="gb-avatar" ${headerStyle}>${gb.emoji || "🌿"}</div>
+      <div class="gb-avatar" ${headerStyle}>${escapeHtml(gb.emoji || "🌿")}</div>
       <div class="gb-who">
         <strong>${escapeHtml(gb.name || "Anonym")}</strong>
         <span>${fmtDate(gb.createdAt)}</span>
@@ -6574,7 +6603,7 @@ function renderGbCard(gb) {
   if (linkUrl) {
     const host = guessLinkDomain(linkUrl);
     body += `
-      <a class="gb-link" href="${escapeHtml(linkUrl)}" target="_blank" rel="noopener noreferrer">
+      <a class="gb-link" href="${escapeAttr(safeUrl(linkUrl))}" target="_blank" rel="noopener noreferrer">
         <span class="gb-link-icon">🔗</span>
         <div class="gb-link-body">
           <strong>${escapeHtml(gb.linkText || host)}</strong>
@@ -9162,7 +9191,7 @@ function renderSchaeden() {
           ${s.addedBy ? `<span>· gemeldet von ${escapeHtml(mLabel(s.addedBy) || s.addedBy)}</span>` : ""}
         </div>
         ${s.beschreibung ? `<p class="schaden-body">${escapeHtml(s.beschreibung)}</p>` : ""}
-        ${s.image ? `<div class="schaden-foto"><img src="${s.image}" alt="Foto zum Schaden: ${escapeAttr(s.titel || "")}" loading="lazy" /></div>` : ""}
+        ${s.image ? `<div class="schaden-foto"><img src="${escapeAttr(safeUrl(s.image))}" alt="Foto zum Schaden: ${escapeAttr(s.titel || "")}" loading="lazy" /></div>` : ""}
         <details class="schaden-verlauf">
           <summary>Verlauf (${getSchadenHistory(s).length})</summary>
           ${schadenHistoryHtml(s)}
@@ -9776,20 +9805,13 @@ $("roomPhotos")?.addEventListener("change", async (e) => {
   const files = Array.from(e.target.files || []);
   if (!files.length) return;
   const current = [...(roomOfferCache?.photos || [])];
-  const slotsLeft = Math.max(0, 6 - current.length);
-  const toProcess = files.slice(0, slotsLeft);
-  if (!toProcess.length) {
-    showToast("Maximal 6 Fotos – bitte zuerst welche entfernen.", "error");
-    e.target.value = "";
-    return;
-  }
   try {
-    for (const file of toProcess) {
+    for (const file of files) {
       const dataUrl = await resizeImage(file, 1200);
       current.push(dataUrl);
     }
     await saveRoomOffer({ photos: current });
-    showToast(`${toProcess.length} Foto${toProcess.length > 1 ? "s" : ""} hinzugefügt.`, "success");
+    showToast(`${files.length} Foto${files.length > 1 ? "s" : ""} hinzugefügt.`, "success");
   } catch (err) {
     console.error(err);
     showToast("Upload fehlgeschlagen.", "error");
@@ -10172,9 +10194,8 @@ $("adminSetWgPasswordToHausamsee")?.addEventListener("click", async () => {
   if (!confirm("Das gemeinsame Passwort in der Cloud wirklich auf «hausamsee» setzen? Alle ohne persönliches Passwort loggen so ein.")) return;
   if (firebaseReady) {
     try {
-      await setDoc(doc(db, "config", "auth"), { passwordHash: WG_PASSWORD_HASH, updatedBy: auth.member, updatedAt: serverTimestamp() }, { merge: true });
-      authConfig.passwordHash = WG_PASSWORD_HASH;
-      showToast("Gruppenpasswort ist jetzt «hausamsee» (in der Cloud).", "success");
+      const r = await authApiCall("setGroupDefault", { token: authSessionToken });
+      showToast(r.ok ? "Gruppenpasswort ist jetzt «hausamsee» (in der Cloud)." : (r.reason === "auth" ? "Bitte neu anmelden." : "Speichern fehlgeschlagen."), r.ok ? "success" : "error");
     } catch (e) {
       console.error(e);
       showToast("Speichern fehlgeschlagen.", "error");
@@ -10196,11 +10217,17 @@ $("adminClearPersonalBtn")?.addEventListener("click", async () => {
   }
   if (!confirm(`Persönliches Passwort von ${name} wirklich entfernen? ${name} loggt mit dem Gruppenpasswort ein (und hausamsee, falls das gilt).`)) return;
   try {
-    await clearMemberAppPrefsInCloud(name);
     if (firebaseReady) {
+      const r = await authApiCall("clearPersonal", { token: authSessionToken, target: name });
+      if (!r.ok) {
+        showToast(r.reason === "auth" ? "Bitte neu anmelden." : "Speichern fehlgeschlagen.", "error");
+        return;
+      }
+      if (authConfig.memberHashes[name]) delete authConfig.memberHashes[name];
       onMemberPrefsChanged();
       showToast("Persönliches Passwort entfernt – Login mit Gruppenpasswort.", "success");
     } else {
+      await clearMemberAppPrefsInCloud(name);
       onMemberPrefsChanged();
       showToast("Lokal: Passwort-Profil entfernt.", "success");
     }
@@ -10218,25 +10245,20 @@ $("changePasswordForm")?.addEventListener("submit", async (e) => {
   const newPw2 = $("newPassword2").value;
   if (newPw !== newPw2) { showToast("Die neuen Passwörter stimmen nicht überein.", "error"); return; }
   if (newPw.length < 4) { showToast("Mindestens 4 Zeichen.", "error"); return; }
-  const currentHash = await sha256(normPasswordInput(current));
-  const personal = authConfig.memberHashes[auth.member];
-  const currentOk = personal
-    ? currentHash === personal
-    : hashMatchesWgLoginFallback(currentHash);
-  if (!currentOk) {
-    showToast(personal ? "Aktuelles (persönliches) Passwort ist falsch." : "Aktuelles Passwort ist falsch (gemeinsames Passwort: Cloud oder z. B. «hausamsee»).", "error");
-    return;
-  }
-  const newHash = await sha256(normPasswordInput(newPw));
   if (firebaseReady) {
     try {
-      await setDoc(doc(db, "config", "memberPasswords"), { [auth.member]: newHash, updatedBy: auth.member, updatedAt: serverTimestamp() }, { merge: true });
-      const verSnap = await getDoc(doc(db, "config", "memberPasswords"));
-      if (verSnap.exists()) applyMemberPasswordsDoc(verSnap.data());
-      if (!authConfig.memberHashes[auth.member]) {
-        authConfig.memberHashes[auth.member] = newHash;
-        console.warn("[auth] memberPasswords: lokalen Hash gesetzt, Server-Lesung fehlte für", auth.member);
+      const r = await authApiCall("changePassword", {
+        member: auth.member, currentPassword: current, newPassword: newPw,
+      });
+      if (!r.ok) {
+        showToast(r.reason === "wrong-current"
+          ? (r.hasPersonal ? "Aktuelles (persönliches) Passwort ist falsch." : "Aktuelles Passwort ist falsch (gemeinsames Passwort).")
+          : r.reason === "short" ? "Mindestens 4 Zeichen." : "Speichern fehlgeschlagen.", "error");
+        return;
       }
+      auth.refreshToken(r.token);
+      auth.loginKind = "personal";
+      authConfig.memberHashes[auth.member] = true;
       e.target.reset();
       showToast(`Passwort für ${auth.member} gespeichert. Nur du nutzt dieses Passwort zum Login. 🔑`, "success");
     } catch (err) {
@@ -10244,6 +10266,7 @@ $("changePasswordForm")?.addEventListener("submit", async (e) => {
       showToast("Speichern fehlgeschlagen.", "error");
     }
   } else {
+    const newHash = await sha256(normPasswordInput(newPw));
     authConfig.memberHashes[auth.member] = newHash;
     localStore.memberPasswords = { ...localStore.memberPasswords, [auth.member]: newHash };
     saveLocal("memberPasswords", localStore.memberPasswords);
@@ -10262,20 +10285,16 @@ $("changeSharedPasswordForm")?.addEventListener("submit", async (e) => {
   const newPw2 = $("sharedNewPassword2").value;
   if (newPw !== newPw2) { showToast("Die neuen Passwörter stimmen nicht überein.", "error"); return; }
   if (newPw.length < 4) { showToast("Mindestens 4 Zeichen.", "error"); return; }
-  const currentHash = await sha256(normPasswordInput(current));
-  if (!hashMatchesWgLoginFallback(currentHash)) {
-    showToast("Aktuelles gemeinsames Passwort ist falsch (Cloud-Stand oder «hausamsee»).", "error");
-    return;
-  }
-  const newHash = await sha256(normPasswordInput(newPw));
-  if (Object.values(authConfig.memberHashes).includes(newHash)) {
-    showToast("Dieses Passwort ist schon als persönliches Passwort vergeben.", "error");
-    return;
-  }
   if (firebaseReady) {
     try {
-      await setDoc(doc(db, "config", "auth"), { passwordHash: newHash, updatedBy: auth.member, updatedAt: serverTimestamp() }, { merge: true });
-      authConfig.passwordHash = newHash;
+      const r = await authApiCall("changeShared", { token: authSessionToken, currentPassword: current, newPassword: newPw });
+      if (!r.ok) {
+        showToast(r.reason === "wrong-current" ? "Aktuelles gemeinsames Passwort ist falsch."
+          : r.reason === "taken" ? "Dieses Passwort ist schon als persönliches Passwort vergeben."
+          : r.reason === "auth" ? "Bitte neu anmelden."
+          : r.reason === "short" ? "Mindestens 4 Zeichen." : "Speichern fehlgeschlagen.", "error");
+        return;
+      }
       e.target.reset();
       showToast("Gemeinsames Fallback-Passwort aktualisiert. Nur Leute ohne eigenes Passwort brauchen das Neue.", "success");
     } catch (err) {
@@ -10283,6 +10302,7 @@ $("changeSharedPasswordForm")?.addEventListener("submit", async (e) => {
       showToast("Speichern fehlgeschlagen.", "error");
     }
   } else {
+    const newHash = await sha256(normPasswordInput(newPw));
     authConfig.passwordHash = newHash;
     localStore.config = { ...localStore.config, passwordHash: newHash };
     saveLocal("config", localStore.config);
@@ -10298,25 +10318,20 @@ $("guestForm")?.addEventListener("submit", async (e) => {
   const pw = $("guestPassword").value;
   const expires = $("guestExpires").value;
   if (!name || pw.length < 4) return;
-  const hash = await sha256(normPasswordInput(pw));
-  // Prüfen ob nicht mit Haupt-Passwort identisch
-  if (hashMatchesWgLoginFallback(hash) || Object.values(authConfig.memberHashes).includes(hash)) {
-    showToast("Dieses Passwort ist schon vergeben (WG oder persönlich) – bitte ein anderes wählen.", "error");
-    return;
-  }
-  const entry = {
-    name,
-    hash,
-    expiresAt: expires ? new Date(expires + "T23:59:59").getTime() : null,
-    createdBy: auth.member,
-    createdAt: Date.now()
-  };
+  const expiresAt = expires ? new Date(expires + "T23:59:59").getTime() : null;
   if (firebaseReady) {
     try {
-      await addDoc(collection(db, "guests"), { ...entry, createdAt: serverTimestamp() });
+      const r = await authApiCall("createGuest", { token: authSessionToken, name, password: pw, expiresAt });
+      if (!r.ok) {
+        showToast(r.reason === "taken" ? "Dieses Passwort ist schon vergeben (WG oder persönlich) – bitte ein anderes wählen."
+          : r.reason === "auth" ? "Bitte neu anmelden."
+          : "Speichern fehlgeschlagen.", "error");
+        return;
+      }
     } catch (err) { showToast("Speichern fehlgeschlagen.", "error"); return; }
   } else {
-    entry.id = "local_" + Date.now();
+    const hash = await sha256(normPasswordInput(pw));
+    const entry = { name, hash, expiresAt, createdBy: auth.member, createdAt: Date.now(), id: "local_" + Date.now() };
     localStore.guests.push(entry);
     guestsCache = localStore.guests;
     saveLocal("guests", localStore.guests);
@@ -10365,7 +10380,10 @@ function renderGuestsList() {
 async function deleteGuest(id) {
   if (!requireMember("Gast-Zugang entfernen")) return;
   if (firebaseReady) {
-    try { await deleteDoc(doc(db, "guests", id)); showToast("Gast-Zugang entfernt.", "success"); }
+    try {
+      const r = await authApiCall("deleteGuest", { token: authSessionToken, id });
+      showToast(r.ok ? "Gast-Zugang entfernt." : (r.reason === "auth" ? "Bitte neu anmelden." : "Löschen fehlgeschlagen."), r.ok ? "success" : "error");
+    }
     catch (e) { showToast("Löschen fehlgeschlagen.", "error"); }
   } else {
     localStore.guests = localStore.guests.filter(g => g.id !== id);
@@ -10485,24 +10503,14 @@ async function loadAuthConfig() {
 async function loadAuthConfigOnce() {
   if (firebaseReady) {
     try {
-      const [snap, mp] = await Promise.all([
-        getDoc(doc(db, "config", "auth")),
-        getDoc(doc(db, "config", "memberPasswords")),
-      ]);
-      if (snap.exists() && snap.data().passwordHash) {
-        authConfig.passwordHash = snap.data().passwordHash;
-      } else {
-        await setDoc(doc(db, "config", "auth"), { passwordHash: WG_PASSWORD_HASH, createdAt: serverTimestamp() }, { merge: true });
-      }
-      if (mp.exists()) applyMemberPasswordsDoc(mp.data());
+      // Passwort-Hashes sind nicht mehr öffentlich lesbar. Wir laden nur noch
+      // config/authMeta (reine Namensliste, wer ein persönliches Passwort hat).
+      const meta = await getDoc(doc(db, "config", "authMeta"));
+      if (meta.exists()) applyAuthMetaDoc(meta.data());
 
-      onSnapshot(doc(db, "config", "auth"), (d) => {
-        if (d.exists() && d.data().passwordHash) authConfig.passwordHash = d.data().passwordHash;
-      });
-      onSnapshot(doc(db, "config", "memberPasswords"), (d) => {
-        if (!d.exists()) return;
-        applyMemberPasswordsDoc(d.data());
-      }, (err) => console.warn("memberPasswords listener:", err.message));
+      onSnapshot(doc(db, "config", "authMeta"), (d) => {
+        applyAuthMetaDoc(d.exists() ? d.data() : { withPersonal: [] });
+      }, (err) => console.warn("authMeta listener:", err.message));
 
       const mPrefSnap = await getDoc(doc(db, "config", "memberPrefs"));
       if (mPrefSnap.exists()) applyMemberPrefsDoc(mPrefSnap.data());
