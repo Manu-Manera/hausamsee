@@ -5539,30 +5539,47 @@ exports.siriWebhook = onRequest(async (req, res) => {
         const zoneId = params.zoneId || parseGartenZoneHint(text || "") || "wh2-wintergarten";
         const zone = resolveGartenZoneFromPlan(planData, zoneId === "ambiguous_wh1" ? null : zoneId);
         const status = await isGartenValveOn(zone);
-        if (status.on) {
-          const result = await stopGartenSequenz("siri");
-          return res.json({ 
-            success: result.success, 
-            speech: "Bewässerung wurde gestoppt.",
-            action: "stopped"
-          });
-        } else {
-          const minutes = parseInt(minParam, 10) || 20;
-          const cfg = await gartenSequenzConfigForZone(zone.id, { waterLogSource: "manual" });
-          const result = await startGartenSequenz(minutes, null, cfg);
-          if (!result.success) {
-            return res.json({
-              success: false,
-              speech: speechFromGartenResult(result.message) || "Start fehlgeschlagen.",
-            });
-          }
-          return res.json({ 
-            success: true, 
-            speech: `${zone.label} gestartet für ${minutes} Minuten.`,
-            action: "started",
-            sequenzId: result.sequenzId
+        if (!status.found) {
+          return res.json({
+            success: false,
+            speech: `${zone.label} wurde nicht gefunden.`,
           });
         }
+        if (!status.online) {
+          return res.json({
+            success: false,
+            speech: `${zone.label} ist offline. Router an? Gerät im WLAN?`,
+          });
+        }
+        if (status.on == null) {
+          return res.json({
+            success: false,
+            speech: `Status von ${zone.label} konnte nicht gelesen werden.`,
+          });
+        }
+        if (status.on) {
+          const result = await stopGartenSequenz("siri");
+          return res.json({
+            success: result.success,
+            speech: result.success ? `${zone.label} gestoppt.` : "Fehler beim Stoppen.",
+            action: "stopped",
+          });
+        }
+        const minutes = parseInt(minParam, 10) || 20;
+        const cfg = await gartenSequenzConfigForZone(zone.id, { waterLogSource: "manual" });
+        const result = await startGartenSequenz(minutes, null, cfg);
+        if (!result.success) {
+          return res.json({
+            success: false,
+            speech: speechFromGartenResult(result.message) || "Start fehlgeschlagen.",
+          });
+        }
+        return res.json({
+          success: true,
+          speech: `${zone.label} gestartet für ${minutes} Minuten.`,
+          action: "started",
+          sequenzId: result.sequenzId,
+        });
       } catch (e) {
         return res.json({ success: false, speech: `Fehler: ${e.message}` });
       }

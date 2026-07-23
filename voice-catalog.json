@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-07-23T13:48:49.769Z",
+  "generatedAt": "2026-07-23T14:08:59.893Z",
   "wakeHint": {
     "ios": "Hey Gustav, Salat gießen",
     "android": "Hey Google, Salat gießen"
@@ -23,9 +23,9 @@
       "file": "beet-giessen",
       "name": "Beet gießen",
       "phrase": "Beet gießen",
-      "desc": "Beetbewässerung · Wasserhahn 2 · 20 Min · nur Ventil",
+      "desc": "Beet umschalten · Wasserhahn 2 · 20 Min · nur Ventil",
       "color": 4282601983,
-      "webhookUrl": "https://siriwebhook-dcl7qtm3uq-ew.a.run.app?action=garten&cmd=start&zoneId=wh2-wintergarten&minutes=20&format=plain&secret=HausAmSee2026Garten",
+      "webhookUrl": "https://siriwebhook-dcl7qtm3uq-ew.a.run.app?action=garten&cmd=toggle&zoneId=wh2-wintergarten&minutes=20&format=plain&secret=HausAmSee2026Garten",
       "iosFile": "beet-giessen.shortcut",
       "androidFile": "beet-giessen.curl"
     },
@@ -34,9 +34,9 @@
       "file": "salat-giessen",
       "name": "Salat gießen",
       "phrase": "Salat gießen",
-      "desc": "Salatbeete · Wasserhahn 1 links · 20 Min · nur Ventil",
+      "desc": "Salat umschalten · Wasserhahn 1 links · 20 Min · nur Ventil",
       "color": 4292093695,
-      "webhookUrl": "https://siriwebhook-dcl7qtm3uq-ew.a.run.app?action=garten&cmd=start&zoneId=wh1-salat&minutes=20&format=plain&secret=HausAmSee2026Garten",
+      "webhookUrl": "https://siriwebhook-dcl7qtm3uq-ew.a.run.app?action=garten&cmd=toggle&zoneId=wh1-salat&minutes=20&format=plain&secret=HausAmSee2026Garten",
       "iosFile": "salat-giessen.shortcut",
       "androidFile": "salat-giessen.curl"
     },
@@ -45,9 +45,9 @@
       "file": "tomaten-giessen",
       "name": "Tomaten gießen",
       "phrase": "Tomaten gießen",
-      "desc": "Tomatenbewässerung · Wasserhahn 1 rechts · mit Pumpe · 20 Min",
+      "desc": "Tomaten umschalten · Wasserhahn 1 rechts · mit Pumpe · 20 Min",
       "color": 4251333119,
-      "webhookUrl": "https://siriwebhook-dcl7qtm3uq-ew.a.run.app?action=garten&cmd=start&zoneId=wh1-rechts&minutes=20&format=plain&secret=HausAmSee2026Garten",
+      "webhookUrl": "https://siriwebhook-dcl7qtm3uq-ew.a.run.app?action=garten&cmd=toggle&zoneId=wh1-rechts&minutes=20&format=plain&secret=HausAmSee2026Garten",
       "iosFile": "tomaten-giessen.shortcut",
       "androidFile": "tomaten-giessen.curl"
     },
