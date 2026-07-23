@@ -2,103 +2,145 @@ rules_version = '2';
 
 // Firestore Regeln für Haus am See
 // Projekt: haus-am-see-d91ef (europe-west / Zürich)
+//
+// WICHTIG – Sicherheits-Architektur:
+// Die Website hat KEIN echtes Server-Login (nur ein clientseitiges Passwort +
+// localStorage). Firestore-Regeln können deshalb "Mitglied" nicht zuverlässig
+// von "Angreifer" unterscheiden – wer den öffentlichen Firebase-API-Key kennt
+// (steht im Web-Code), kann jede Client-Logik nachbauen.
+// → Der einzige robuste Schutz gegen anonyme Schreibzugriffe aus dem Internet
+//   ist Firebase App Check (+ ggf. Firebase Auth). Siehe SECURITY.md.
+//
+// Diese Regeln reduzieren die Angriffsfläche so weit wie ohne Auth möglich:
+//  • Collections, die NUR Cloud Functions (Admin SDK, umgeht Regeln) nutzen,
+//    sind für Clients komplett gesperrt (if false).
+//  • Steuer-/Befehls-Collections (Smart Home) sind auf "anlegen + eigenes Doc
+//    lesen" begrenzt, kein Massen-Lesen/Ändern/Löschen.
+//  • Öffentliche Schreib-Collections (Gästebuch, Kontakt, RSVP) bekommen
+//    Feld-/Größen-Validierung gegen Spam & Daten-Bomben.
+
 service cloud.firestore {
   match /databases/{database}/documents {
-    match /events/{document=**} {
-      allow read, write: if true;
+
+    // ---- Helfer -------------------------------------------------------
+    function strOk(v, max) {
+      return v is string && v.size() <= max;
     }
-    match /putzplan/{document=**} {
-      allow read, write: if true;
+    // Grober Schutz gegen Daten-Bomben: begrenzt die Anzahl Felder pro Doc.
+    function fieldsOk(max) {
+      return request.resource.data.keys().size() <= max;
     }
-    match /giessplan/{document=**} {
-      allow read, write: if true;
+    // Base64-/Data-URL-Felder (Bilder, Audio) dürfen groß sein, aber nicht
+    // beliebig. ~4 MB Rohgröße als harte Obergrenze pro String-Feld.
+    function mediaOk(v) {
+      return !(v is string) || v.size() <= 4500000;
     }
-    match /gartentodos/{document=**} {
-      allow read, write: if true;
+
+    // ===================================================================
+    //  Öffentlich beschreibbare Collections (bewusst offen, mit Limits)
+    // ===================================================================
+
+    // Gästebuch: jede:r darf einen Eintrag anlegen; Ändern nicht nötig;
+    // Löschen bleibt offen (kann ohne Auth nicht auf Mitglieder begrenzt
+    // werden – App Check schützt hier real).
+    match /gaestebuch/{id} {
+      allow read: if true;
+      allow create: if fieldsOk(20)
+                    && strOk(request.resource.data.get('name', ''), 120)
+                    && strOk(request.resource.data.get('message', ''), 8000)
+                    && mediaOk(request.resource.data.get('photoSrc', ''))
+                    && mediaOk(request.resource.data.get('drawSrc', ''))
+                    && mediaOk(request.resource.data.get('audioSrc', ''));
+      allow update: if false;
+      allow delete: if true;
     }
-    match /termine/{document=**} {
-      allow read, write: if true;
+
+    // Kontaktformular / Bewerbungen
+    match /nachrichten/{id} {
+      allow read: if true;
+      allow create: if fieldsOk(20)
+                    && strOk(request.resource.data.get('name', ''), 200)
+                    && strOk(request.resource.data.get('email', ''), 320)
+                    && strOk(request.resource.data.get('message', ''), 8000)
+                    && strOk(request.resource.data.get('text', ''), 8000);
+      allow update, delete: if true;
     }
-    match /anwesenheit/{document=**} {
-      allow read, write: if true;
+
+    // Event-Zusagen (RSVP)
+    match /anmeldungen/{id} {
+      allow read: if true;
+      allow create: if fieldsOk(15)
+                    && strOk(request.resource.data.get('name', ''), 200);
+      allow update, delete: if true;
     }
-    match /gaestebuch/{document=**} {
-      allow read, write: if true;
+
+    // ===================================================================
+    //  Smart-Home-Befehle: nur anlegen + eigenes Ergebnis lesen
+    //  (Verarbeitung läuft serverseitig via onGartenCommand / Admin SDK)
+    // ===================================================================
+    match /garten_commands/{id} {
+      allow get: if true;              // Client pollt sein eigenes Ergebnis-Doc
+      allow list: if false;            // kein Massen-Auslesen
+      allow create: if fieldsOk(15)
+                    && request.resource.data.status == 'pending'
+                    && strOk(request.resource.data.get('member', ''), 80);
+      allow update, delete: if false;  // nur Cloud Function darf abschließen
     }
-    match /galerie/{document=**} {
-      allow read, write: if true;
+
+    // ===================================================================
+    //  Inhalts-Collections der Website (öffentlich lesbar zum Anzeigen).
+    //  Schreiben ist ohne echtes Login clientseitig nicht absicherbar –
+    //  Missbrauchsschutz kommt über App Check (siehe SECURITY.md).
+    // ===================================================================
+    match /events/{id}          { allow read: if true; allow write: if fieldsOk(40); }
+    match /eventfotos/{id}       { allow read: if true; allow write: if fieldsOk(20) && mediaOk(request.resource.data.get('src', '')); }
+    match /eventBring/{id}       { allow read: if true; allow write: if fieldsOk(20); }
+    match /putzplan/{id}         { allow read: if true; allow write: if fieldsOk(30); }
+    match /giessplan/{id}        { allow read: if true; allow write: if fieldsOk(30); }
+    match /gartentodos/{id}      { allow read: if true; allow write: if fieldsOk(30); }
+    match /termine/{id}          { allow read: if true; allow write: if fieldsOk(40); }
+    match /anwesenheit/{id}      { allow read: if true; allow write: if fieldsOk(40); }
+    match /galerie/{id}          { allow read: if true; allow write: if fieldsOk(20) && mediaOk(request.resource.data.get('src', '')); }
+    match /musik/{id}            { allow read: if true; allow write: if fieldsOk(20); }
+    match /kandidaten/{id}       { allow read: if true; allow write: if fieldsOk(40); }
+    match /schaeden/{id}         { allow read: if true; allow write: if fieldsOk(40) && mediaOk(request.resource.data.get('image', '')); }
+    match /bewohnerfotos/{id}    { allow read: if true; allow write: if fieldsOk(15) && mediaOk(request.resource.data.get('src', '')); }
+    match /hausbilder/{id}       { allow read: if true; allow write: if fieldsOk(15) && mediaOk(request.resource.data.get('src', '')); }
+    match /hausfeatures/{id}     { allow read: if true; allow write: if fieldsOk(30); }
+    match /bewohnertexte/{id}    { allow read: if true; allow write: if fieldsOk(15); }
+    // Gäste-Namen bleiben lesbar (Login-Dropdown); Anlegen/Löschen nur über die
+    // authApi-Function (Admin SDK). Passwort-Hashes liegen in guestAuth (gesperrt).
+    match /guests/{id}           { allow read: if true; allow write: if false; }
+    match /wellnessBookings/{id} { allow read: if true; allow write: if fieldsOk(20); }
+    match /jacuzziReadings/{id}  { allow read: if true; allow write: if fieldsOk(15); }
+    match /einkaufsliste/{id}    { allow read: if true; allow write: if fieldsOk(30); }
+
+    // Config-Dokumente. WICHTIG: Firestore-Regeln sind eine Vereinigung – ein
+    // separater "if false"-Block für config/auth würde vom breiten config/{id}
+    // NICHT überschrieben. Deshalb die Hash-Dokumente HIER direkt ausschließen.
+    // config/auth & config/memberPasswords: nur authApi-Function (Admin SDK).
+    // authMeta (nur Namen) & übrige Docs: öffentlich lesbar.
+    match /config/{id} {
+      allow read:  if id != 'auth' && id != 'memberPasswords';
+      allow write: if fieldsOk(60) && id != 'auth' && id != 'memberPasswords';
     }
-    match /musik/{document=**} {
-      allow read, write: if true;
-    }
-    match /kandidaten/{document=**} {
-      allow read, write: if true;
-    }
-    match /schaeden/{document=**} {
-      allow read, write: if true;
-    }
-    match /bewohnerfotos/{document=**} {
-      allow read, write: if true;
-    }
-    match /hausbilder/{document=**} {
-      allow read, write: if true;
-    }
-    match /hausfeatures/{document=**} {
-      allow read, write: if true;
-    }
-    match /eventfotos/{document=**} {
-      allow read, write: if true;
-    }
-    match /guests/{document=**} {
-      allow read, write: if true;
-    }
-    match /config/{document=**} {
-      allow read, write: if true;
-    }
-    match /anmeldungen/{document=**} {
-      allow read, write: if true;
-    }
-    match /nachrichten/{document=**} {
-      allow read, write: if true;
-    }
-    match /bewohnertexte/{document=**} {
-      allow read, write: if true;
-    }
-    match /whatsapp_debug/{document=**} {
-      allow read, write: if true;
-    }
-    match /erinnerungen/{document=**} {
-      allow read, write: if true;
-    }
-    match /bewaesserung_tasks/{document=**} {
-      allow read, write: if true;
-    }
-    match /garten_commands/{document=**} {
-      allow read, write: if true;
-    }
-    match /wellnessBookings/{document=**} {
-      allow read, write: if true;
-    }
-    match /jacuzziReadings/{document=**} {
-      allow read, write: if true;
-    }
-    match /polls/{document=**} {
-      allow read, write: if true;
-    }
-    // Gustav Chat-Verlauf (nur Cloud Functions via Admin SDK)
-    match /gustavChatHistory/{document=**} {
-      allow read, write: if false;
-    }
-    match /gustavCalendarLinks/{document=**} {
-      allow read, write: if false;
-    }
-    match /einkaufsliste/{document=**} {
-      allow read, write: if true;
-    }
-    match /eventBring/{document=**} {
-      allow read, write: if true;
-    }
-    match /gustavRemindPending/{document=**} {
+
+    // ===================================================================
+    //  NUR Cloud Functions (Admin SDK umgeht Regeln) – Clients gesperrt
+    // ===================================================================
+    match /guestAuth/{document=**}           { allow read, write: if false; }
+    match /authSessions/{document=**}        { allow read, write: if false; }
+    match /authThrottle/{document=**}         { allow read, write: if false; }
+    match /polls/{document=**}               { allow read, write: if false; }
+    match /whatsapp_debug/{document=**}      { allow read, write: if false; }
+    match /gustavChatHistory/{document=**}   { allow read, write: if false; }
+    match /gustavCalendarLinks/{document=**} { allow read, write: if false; }
+    match /gustavRemindPending/{document=**} { allow read, write: if false; }
+    match /erinnerungen/{document=**}        { allow read, write: if false; }
+    match /bewaesserung_tasks/{document=**}  { allow read, write: if false; }
+
+    // Alles andere: standardmäßig verweigern.
+    match /{document=**} {
       allow read, write: if false;
     }
   }

@@ -349,12 +349,13 @@ Diese Werte findest du in Firebase Console → Projekteinstellungen → Web-App.
 
 ## 🎨 Website anpassen
 
-### Bewohner ändern (index.js)
+### Bewohner ändern
 
-In `functions/index.js`:
+In `app.js` (Website) und `functions/index.js` (Gustav) – gleiche Namen:
 ```javascript
-const BEWOHNER = ["Corina", "Jasmin", "Dino", "Andy", "Manu", "Hugues", "Fanny", "Elliot", "Oscar"];
-const KIDS = new Set(["Elliot", "Oscar"]);
+const BEWOHNER = ["Corina", "Jasmin", "Dino", "Andi", "Manu", "Hugues", "Fannie", "Eliot", "Oscar"];
+const KIDS = new Set(["Eliot", "Oscar"]);
+// Legacy-Alias: Andy→Andi, Fanny→Fannie, Elliot→Eliot
 ```
 
 ### Koordinaten (Wetter)

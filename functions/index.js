@@ -28,6 +28,7 @@ const { setGlobalOptions } = require("firebase-functions/v2");
 const { initializeApp } = require("firebase-admin/app");
 const { getFirestore, FieldValue } = require("firebase-admin/firestore");
 const logger = require("firebase-functions/logger");
+const crypto = require("crypto");
 
 // Smart-Plug-Provider: "tuya" (Default, für Smart Life / Maxcio / Tapo-Tuya-Varianten)
 // oder "meross" (für Refoss / Meross). Beide Module haben die gleiche Schnittstelle.
@@ -45,6 +46,7 @@ const gustavExtras = require("./gustavExtras");
 const { saturday10Iso } = require("./calendarIcs");
 const blueriiot = require("./blueriiot");
 const { sendBewaesserungAnnounce } = require("./bewaesserungAnnounce");
+const { createAuthApi } = require("./auth");
 
 initializeApp();
 const db = getFirestore();
@@ -198,9 +200,54 @@ function cfg() {
     token: process.env.WHATSAPP_TOKEN || "",
     phoneId: process.env.WHATSAPP_PHONE_ID || "",
     verifyToken: process.env.WHATSAPP_VERIFY_TOKEN || "",
+    appSecret: process.env.WHATSAPP_APP_SECRET || "",
     recipients: (process.env.WHATSAPP_GROUP_RECIPIENTS || "")
       .split(",").map((s) => s.trim()).filter(Boolean),
   };
+}
+
+// Bekannte WG-Telefonnummern (Fallback für Absender-Zuordnung + Webhook-Whitelist).
+// Nur international, ohne "+". Zusätzlich zählen WHATSAPP_GROUP_RECIPIENTS.
+const PHONEBOOK = {
+  Manu: "41798385590",
+  Corina: "41784082785",
+  Jasmin: "41789561100",
+  Dino: "41798489999",
+  Andi: "41765740020",
+  Hugues: "41795911251",
+  Fannie: "41795553906",
+};
+
+function normPhone(s) {
+  return String(s || "").replace(/\D/g, "");
+}
+
+/** Erlaubte Absender: WG-Empfänger (.env) + bekannte Nummern. Leer = jede Nummer (Whitelist aus). */
+function allowedSenderSet() {
+  const set = new Set();
+  for (const r of cfg().recipients) { const n = normPhone(r); if (n) set.add(n); }
+  for (const n of Object.values(PHONEBOOK)) { const x = normPhone(n); if (x) set.add(x); }
+  return set;
+}
+
+/** Prüft die Meta-Signatur (X-Hub-Signature-256) gegen den rohen Request-Body. */
+function verifyMetaSignature(req) {
+  const { appSecret } = cfg();
+  // Ohne konfiguriertes App Secret NICHT hart blocken (sonst bricht der Bot,
+  // bis WHATSAPP_APP_SECRET gesetzt ist) – aber warnen. Siehe SECURITY.md.
+  if (!appSecret) return { ok: true, skipped: true };
+  const header = req.get("x-hub-signature-256") || "";
+  const raw = req.rawBody;
+  if (!header || !raw) return { ok: false };
+  const expected =
+    "sha256=" + crypto.createHmac("sha256", appSecret).update(raw).digest("hex");
+  try {
+    const a = Buffer.from(header);
+    const b = Buffer.from(expected);
+    return { ok: a.length === b.length && crypto.timingSafeEqual(a, b) };
+  } catch (e) {
+    return { ok: false };
+  }
 }
 
 async function debugLog(kind, data) {
@@ -644,16 +691,7 @@ async function resolveResidentFromWhatsApp(from, senderName) {
   } catch (e) {
     logger.warn("resolveResidentFromWhatsApp: memberPrefs", e);
   }
-  const phonebook = {
-    Manu: "41798385590",
-    Corina: "41784082785",
-    Jasmin: "41789561100",
-    Dino: "41798489999",
-    Andi: "41765740020",
-    Hugues: "41795911251",
-    Fannie: "41795553906",
-  };
-  for (const [name, num] of Object.entries(phonebook)) {
+  for (const [name, num] of Object.entries(PHONEBOOK)) {
     if (num === normFrom && ADULTS.includes(name)) return name;
   }
   return null;
@@ -5005,6 +5043,21 @@ exports.whatsappWebhook = onRequest(
   }
   if (req.method !== "POST") return res.status(405).send("method not allowed");
 
+  // Authentizität: Nur echte Meta-Webhooks (HMAC über rohen Body mit App Secret).
+  // Verhindert, dass Dritte per gefälschtem POST den Bot (OpenAI-Kosten, Smart
+  // Home, Events löschen …) auslösen.
+  const sig = verifyMetaSignature(req);
+  if (!sig.ok) {
+    logger.warn("whatsappWebhook: ungültige X-Hub-Signature-256 – verworfen");
+    return res.status(403).send("invalid signature");
+  }
+  if (sig.skipped) {
+    logger.warn(
+      "whatsappWebhook: WHATSAPP_APP_SECRET nicht gesetzt – Signaturprüfung deaktiviert. " +
+        "Zum Absichern App Secret aus Meta (App → Einstellungen → Grundlegendes) als WHATSAPP_APP_SECRET setzen."
+    );
+  }
+
   try {
     const body = req.body || {};
     await debugLog("incoming", {
@@ -5032,6 +5085,15 @@ exports.whatsappWebhook = onRequest(
           const contact = contacts.find((c) => c.wa_id === from);
           const senderName = contact?.profile?.name || "";
           const type = msg.type;
+
+          // Absender-Whitelist: Nur bekannte WG-Nummern dürfen Gustav auslösen.
+          // Schützt vor Missbrauch (OpenAI-Kosten, Smart Home) durch Fremde.
+          // Whitelist leer (keine Empfänger konfiguriert) = Prüfung aus.
+          const allowed = allowedSenderSet();
+          if (allowed.size > 0 && !allowed.has(normPhone(from))) {
+            await debugLog("sender_blocked", { from, senderName, type });
+            continue;
+          }
 
           let text = "";
           let caption = "";
@@ -5303,11 +5365,41 @@ exports.whatsappWebhook = onRequest(
 });
 
 /* ==========================================================================
+   Auth-API – serverseitige Passwortprüfung + Session-Token
+   (damit Passwort-Hashes NICHT mehr öffentlich in Firestore liegen müssen)
+   ========================================================================== */
+
+const WG_DEFAULT_GROUP_HASH = "a89881e9359c985da03b139154082072ba21de07e264891470ac67b2be1bd28f"; // sha256("hausamsee")
+
+const authApiHandler = createAuthApi(db, {
+  adults: ADULTS,
+  canonicalName: canonicalBewohnerName,
+  defaultGroupHash: WG_DEFAULT_GROUP_HASH,
+  // Einmal-Migration (Legacy-Gast-Hashes verschieben) über bestehendes Secret.
+  migrateSecret: process.env.SIRI_SECRET || "",
+});
+
+exports.authApi = onRequest(
+  { cors: false, invoker: "public", timeoutSeconds: 30, memory: "256MiB" },
+  authApiHandler
+);
+
+/* ==========================================================================
    Siri / Shortcuts Webhook – Sprachsteuerung mit natürlicher Sprache
    ========================================================================== */
 
-const SIRI_SECRET = process.env.SIRI_SECRET || "hausamsee2026";
+// Kein schwaches Default-Secret mehr: Ist SIRI_SECRET nicht gesetzt, sind die
+// Siri-/Test-Endpunkte deaktiviert (statt mit "hausamsee2026" offen zu stehen).
+const SIRI_SECRET = process.env.SIRI_SECRET || "";
 const SIRI_WEBHOOK_URL = "https://siriwebhook-dcl7qtm3uq-ew.a.run.app";
+
+/** Zeitkonstanter Secret-Vergleich; false, wenn kein SIRI_SECRET konfiguriert ist. */
+function siriSecretOk(provided) {
+  if (!SIRI_SECRET) return false;
+  const a = Buffer.from(String(provided || ""));
+  const b = Buffer.from(SIRI_SECRET);
+  return a.length === b.length && crypto.timingSafeEqual(a, b);
+}
 
 function buildSiriZoneShortcuts(secret, minutes = 20) {
   const base = SIRI_WEBHOOK_URL;
@@ -5416,6 +5508,9 @@ exports.siriWebhook = onRequest(async (req, res) => {
   
   const params = { ...req.query, ...req.body };
   let { action, cmd, secret, minutes: minParam, text } = params;
+  // Secret bevorzugt aus Header (landet nicht in Logs/Referrer/Browser-Historie);
+  // Query/Body bleibt aus Kompatibilität mit bestehenden Shortcuts erlaubt.
+  const providedSecret = req.get("x-siri-secret") || secret;
   const wantPlain = params.format === "plain" || params.format === "text";
   const replyJson = res.json.bind(res);
   res.json = (body) => {
@@ -5425,8 +5520,8 @@ exports.siriWebhook = onRequest(async (req, res) => {
     return replyJson(body);
   };
   
-  // Secret prüfen
-  if (secret !== SIRI_SECRET) {
+  // Secret prüfen (zeitkonstant; ohne konfiguriertes SIRI_SECRET komplett dicht)
+  if (!siriSecretOk(providedSecret)) {
     const msg = "Zugriff verweigert. Das Secret im Kurzbefehl muss mit SIRI_SECRET in functions/.env übereinstimmen.";
     if (wantPlain) return res.status(401).type("text/plain; charset=utf-8").send(msg);
     return res.status(401).json({ success: false, speech: msg });
@@ -6180,7 +6275,7 @@ exports.testNachrichtAlert = onRequest(async (req, res) => {
   }
   
   const secret = req.query.secret || req.body?.secret;
-  if (secret !== process.env.SIRI_SECRET) {
+  if (!siriSecretOk(req.get("x-siri-secret") || secret)) {
     return res.status(401).json({ error: "Unauthorized" });
   }
   
@@ -6245,7 +6340,7 @@ exports.testGiessReminder = onRequest(async (req, res) => {
   }
   
   const secret = req.query.secret || req.body?.secret;
-  if (secret !== process.env.SIRI_SECRET) {
+  if (!siriSecretOk(req.get("x-siri-secret") || secret)) {
     return res.status(401).json({ error: "Unauthorized" });
   }
   
@@ -6276,7 +6371,7 @@ exports.testGartenTodoReminder = onRequest(async (req, res) => {
   }
 
   const secret = req.query.secret || req.body?.secret;
-  if (secret !== process.env.SIRI_SECRET) {
+  if (!siriSecretOk(req.get("x-siri-secret") || secret)) {
     return res.status(401).json({ error: "Unauthorized" });
   }
 
@@ -6314,7 +6409,7 @@ exports.testSchadenReminder = onRequest(async (req, res) => {
   }
 
   const secret = req.query.secret || req.body?.secret;
-  if (secret !== process.env.SIRI_SECRET) {
+  if (!siriSecretOk(req.get("x-siri-secret") || secret)) {
     return res.status(401).json({ error: "Unauthorized" });
   }
 
@@ -7327,7 +7422,7 @@ exports.jacuzziReading = onRequest(async (req, res) => {
     return res.status(204).send("");
   }
   const secret = req.query.secret || req.body?.secret;
-  if (secret !== process.env.SIRI_SECRET) {
+  if (!siriSecretOk(req.get("x-siri-secret") || secret)) {
     return res.status(401).json({ error: "Unauthorized" });
   }
   const tempC = parseFloat(req.query.tempC ?? req.body?.tempC);
@@ -7341,7 +7436,7 @@ exports.jacuzziReading = onRequest(async (req, res) => {
 
 exports.debugPhoneMap = onRequest(async (req, res) => {
   const secret = req.query.secret || req.body?.secret;
-  if (secret !== process.env.SIRI_SECRET) return res.status(401).json({ error: "Unauthorized" });
+  if (!siriSecretOk(req.get("x-siri-secret") || secret)) return res.status(401).json({ error: "Unauthorized" });
   const names = ADULTS;
   const out = {};
   for (const name of names) {
@@ -7354,7 +7449,7 @@ exports.debugPhoneMap = onRequest(async (req, res) => {
 /** Firestore-Telefonbuch korrigieren (ohne Nachrichten zu senden). */
 exports.fixPhoneNumbers = onRequest(async (req, res) => {
   const secret = req.query.secret || req.body?.secret;
-  if (secret !== process.env.SIRI_SECRET) return res.status(401).json({ error: "Unauthorized" });
+  if (!siriSecretOk(req.get("x-siri-secret") || secret)) return res.status(401).json({ error: "Unauthorized" });
   const numbers = {
     Corina: "41784082785",
     Jasmin: "41789561100",
@@ -7378,7 +7473,7 @@ exports.sendBewaesserungAnnounce = onRequest(async (req, res) => {
     return res.status(204).send("");
   }
   const secret = req.query.secret || req.body?.secret;
-  if (secret !== process.env.SIRI_SECRET) {
+  if (!siriSecretOk(req.get("x-siri-secret") || secret)) {
     return res.status(401).json({ error: "Unauthorized" });
   }
   try {
@@ -7399,7 +7494,7 @@ exports.testPolsterAlert = onRequest(async (req, res) => {
     return res.status(204).send("");
   }
   const secret = req.query.secret || req.body?.secret;
-  if (secret !== process.env.SIRI_SECRET) {
+  if (!siriSecretOk(req.get("x-siri-secret") || secret)) {
     return res.status(401).json({ error: "Unauthorized" });
   }
   const to = req.query.to || req.body?.to;
