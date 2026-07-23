@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-06-12T16:18:58.213Z",
+  "generatedAt": "2026-07-23T13:48:49.769Z",
   "wakeHint": {
     "ios": "Hey Gustav, Salat gießen",
     "android": "Hey Google, Salat gießen"
@@ -65,25 +65,14 @@
     {
       "category": "licht",
       "categoryLabel": "Lichterkette",
-      "file": "lichterkette-an",
-      "name": "Lichterkette an",
-      "phrase": "Lichterkette an",
-      "desc": "Lichterkette im Garten einschalten",
+      "file": "lichterkette",
+      "name": "Lichterkette",
+      "phrase": "Lichterkette",
+      "desc": "Lichterkette umschalten (an oder aus)",
       "color": 2071128575,
-      "webhookUrl": "https://siriwebhook-dcl7qtm3uq-ew.a.run.app?action=licht&cmd=an&format=plain&secret=HausAmSee2026Garten",
-      "iosFile": "lichterkette-an.shortcut",
-      "androidFile": "lichterkette-an.curl"
-    },
-    {
-      "category": "licht",
-      "file": "lichterkette-aus",
-      "name": "Lichterkette aus",
-      "phrase": "Lichterkette aus",
-      "desc": "Lichterkette im Garten ausschalten",
-      "color": 2846468607,
-      "webhookUrl": "https://siriwebhook-dcl7qtm3uq-ew.a.run.app?action=licht&cmd=aus&format=plain&secret=HausAmSee2026Garten",
-      "iosFile": "lichterkette-aus.shortcut",
-      "androidFile": "lichterkette-aus.curl"
+      "webhookUrl": "https://siriwebhook-dcl7qtm3uq-ew.a.run.app?action=licht&cmd=toggle&format=plain&secret=HausAmSee2026Garten",
+      "iosFile": "lichterkette.shortcut",
+      "androidFile": "lichterkette.curl"
     }
   ]
 }

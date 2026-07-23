@@ -48,21 +48,12 @@ const CATALOG = [
   {
     category: "licht",
     categoryLabel: "Lichterkette",
-    file: "lichterkette-an",
-    name: "Lichterkette an",
-    phrase: "Lichterkette an",
-    desc: "Lichterkette im Garten einschalten",
+    file: "lichterkette",
+    name: "Lichterkette",
+    phrase: "Lichterkette",
+    desc: "Lichterkette umschalten (an oder aus)",
     color: 2071128575,
-    webhookUrl: q([["action", "licht"], ["cmd", "an"], ["format", "plain"], ["secret", SECRET]]),
-  },
-  {
-    category: "licht",
-    file: "lichterkette-aus",
-    name: "Lichterkette aus",
-    phrase: "Lichterkette aus",
-    desc: "Lichterkette im Garten ausschalten",
-    color: 2846468607,
-    webhookUrl: q([["action", "licht"], ["cmd", "aus"], ["format", "plain"], ["secret", SECRET]]),
+    webhookUrl: q([["action", "licht"], ["cmd", "toggle"], ["format", "plain"], ["secret", SECRET]]),
   },
 ];
 

@@ -1,3 +1,0 @@
-# Lichterkette aus
-# Sprachbefehl: Lichterkette aus
-curl -sL 'https://siriwebhook-dcl7qtm3uq-ew.a.run.app?action=licht&cmd=aus&format=plain&secret=HausAmSee2026Garten'

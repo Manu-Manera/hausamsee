@@ -5597,12 +5597,27 @@ exports.siriWebhook = onRequest(async (req, res) => {
     if (cmd === "toggle") {
       try {
         const status = await plugs.isDeviceOn(device);
+        if (!status.found) {
+          return res.json({ success: false, speech: "Lichterkette wurde nicht gefunden." });
+        }
+        if (!status.online) {
+          return res.json({
+            success: false,
+            speech: "Lichterkette ist offline. Router an? Plug im WLAN?",
+          });
+        }
+        if (status.on == null) {
+          return res.json({
+            success: false,
+            speech: "Status der Lichterkette konnte nicht gelesen werden.",
+          });
+        }
         const newState = !status.on;
         await plugs.setPower(device, newState);
-        return res.json({ 
-          success: true, 
+        return res.json({
+          success: true,
           speech: newState ? "Lichterkette ist jetzt an." : "Lichterkette ist jetzt aus.",
-          action: newState ? "on" : "off"
+          action: newState ? "on" : "off",
         });
       } catch (e) {
         return res.json({ success: false, speech: `Fehler: ${e.message}` });

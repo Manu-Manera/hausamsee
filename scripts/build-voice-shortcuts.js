@@ -156,17 +156,23 @@ for (const sc of CATALOG) {
 
 fs.writeFileSync(path.join(ROOT, "voice-catalog.json"), JSON.stringify(catalogForWeb, null, 2));
 
-// Alte gustav-* Dateien entfernen
+// Alte gustav-* und lichterkette-an/aus Dateien entfernen
 for (const old of fs.readdirSync(SIGNED)) {
-  if (old.startsWith("gustav-") && old.endsWith(".shortcut")) {
+  if (old.endsWith(".shortcut") && (old.startsWith("gustav-") || old.startsWith("lichterkette-an") || old.startsWith("lichterkette-aus"))) {
     fs.unlinkSync(path.join(SIGNED, old));
-    console.log(`  entfernt: ${old}`);
+    console.log(`  entfernt: signed/${old}`);
   }
 }
 for (const old of fs.readdirSync(ANDROID)) {
-  if (old.startsWith("gustav-")) {
+  if (old.startsWith("gustav-") || old.startsWith("lichterkette-an") || old.startsWith("lichterkette-aus")) {
     fs.unlinkSync(path.join(ANDROID, old));
-    console.log(`  entfernt: ${old}`);
+    console.log(`  entfernt: android/${old}`);
+  }
+}
+for (const old of fs.readdirSync(UNSIGNED)) {
+  if (old.startsWith("lichterkette-an") || old.startsWith("lichterkette-aus") || old.startsWith("gustav-")) {
+    fs.unlinkSync(path.join(UNSIGNED, old));
+    console.log(`  entfernt: unsigned/${old}`);
   }
 }
 
