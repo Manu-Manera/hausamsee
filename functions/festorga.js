@@ -223,6 +223,7 @@ function taskPayloadFromTemplate(festId, t, festDate, remindDays) {
     status: "open",
     sort: t.sort || 100,
     remindDaysBefore: Array.isArray(t.remindDaysBefore) ? t.remindDaysBefore : remindDays,
+    gustavRemind: t.gustavRemind !== false,
     lastReminderAt: null,
     lastReminderDayKey: null,
     createdAt: FieldValue.serverTimestamp(),
@@ -251,6 +252,7 @@ async function createFestFromTemplate(db, {
     shareMessage: extras.shareMessage || "",
     templateId: tpl.id,
     remindDaysBefore: remindDays,
+    gustavRemind: extras.gustavRemind !== false,
     eventTitleHint: extras.eventTitleHint || "",
     createdAt: FieldValue.serverTimestamp(),
     updatedAt: FieldValue.serverTimestamp(),
@@ -581,6 +583,9 @@ async function processFestorgaReminders(db, { getBewohnerPhone, sendWhatsApp, lo
 
   for (const festDoc of festSnap.docs) {
     const fest = { id: festDoc.id, ...festDoc.data() };
+    // Master-Schalter am Fest (fehlendes Feld = an)
+    if (fest.gustavRemind === false) continue;
+
     const festDefaults = Array.isArray(fest.remindDaysBefore) && fest.remindDaysBefore.length
       ? fest.remindDaysBefore.map(Number)
       : DEFAULT_REMIND_DAYS;
@@ -591,14 +596,17 @@ async function processFestorgaReminders(db, { getBewohnerPhone, sendWhatsApp, lo
       const remindDaysTask = Array.isArray(t.remindDaysBefore) && t.remindDaysBefore.length
         ? t.remindDaysBefore.map(Number)
         : festDefaults;
+      const taskGustavOn = t.gustavRemind !== false;
 
-      if (t.dueDate && assignees.length) {
+      if (taskGustavOn && t.dueDate && assignees.length) {
         const days = daysUntilDate(t.dueDate);
         if (days !== null && days >= 0 && remindDaysTask.includes(days)) {
           const dayKey = `${todayKey}:${days}`;
           if (t.lastReminderDayKey !== dayKey) {
             const when = days === 0 ? "heute" : days === 1 ? "morgen" : `in ${days} Tagen`;
-            const openSubs = (Array.isArray(t.subtasks) ? t.subtasks : []).filter((s) => s && !s.done);
+            const openSubs = (Array.isArray(t.subtasks) ? t.subtasks : []).filter(
+              (s) => s && !s.done && s.gustavRemind !== false
+            );
             const checklist = openSubs.length
               ? `\nChecklist offen:\n${openSubs.slice(0, 6).map((s) => `▫️ ${s.title}`).join("\n")}\n`
               : "";
@@ -618,12 +626,13 @@ async function processFestorgaReminders(db, { getBewohnerPhone, sendWhatsApp, lo
         }
       }
 
-      // Unteraufgaben mit eigener Fälligkeit
+      // Unteraufgaben: eigene Gustav-Schalter, unabhängig von der Hauptaufgabe
       const subs = Array.isArray(t.subtasks) ? [...t.subtasks] : [];
       let subsChanged = false;
       for (let i = 0; i < subs.length; i++) {
         const s = subs[i];
         if (!s || s.done || !s.dueDate || !assignees.length) continue;
+        if (s.gustavRemind === false) continue;
         const days = daysUntilDate(s.dueDate);
         if (days === null || days < 0) continue;
         const remindDays = Array.isArray(s.remindDaysBefore) && s.remindDaysBefore.length

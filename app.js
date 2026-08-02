@@ -9709,6 +9709,11 @@ function festorgaNewId(prefix = "st") {
   return `${prefix}_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
 }
 
+/** Gustav-Erinnerungen: fehlendes Feld = an (Rückwärtskompatibel) */
+function festorgaGustavOn(obj) {
+  return obj?.gustavRemind !== false;
+}
+
 function normalizeFestorgaSubtasks(raw) {
   if (!Array.isArray(raw)) return [];
   return raw
@@ -9719,11 +9724,12 @@ function normalizeFestorgaSubtasks(raw) {
       dueDate: s.dueDate || null,
       remindDaysBefore: Array.isArray(s.remindDaysBefore) ? s.remindDaysBefore.map(Number) : null,
       lastReminderDayKey: s.lastReminderDayKey || null,
+      gustavRemind: s.gustavRemind !== false,
     }))
     .filter((s) => s.title);
 }
 
-function parseFestorgaSubtaskLines(text) {
+function parseFestorgaSubtaskLines(text, gustavRemind = true) {
   return String(text || "")
     .split(/\r?\n/)
     .map((l) => l.trim())
@@ -9735,6 +9741,7 @@ function parseFestorgaSubtaskLines(text) {
       dueDate: null,
       remindDaysBefore: null,
       lastReminderDayKey: null,
+      gustavRemind: !!gustavRemind,
     }));
 }
 
@@ -9896,7 +9903,16 @@ function renderFestorgaOverview(fest, tasks) {
     : `<li class="form-note">Alles zugewiesen 👍</li>`;
 
   const budgetClass = ov.over ? "danger" : ov.remaining != null && ov.remaining < (ov.budget || 0) * 0.15 ? "warn" : "ok";
+  const festGustav = festorgaGustavOn(fest);
+  const mutedTasks = tasks.filter((t) => !festorgaGustavOn(t)).length;
   el.innerHTML = `
+    ${
+      !festGustav
+        ? `<p class="festorga-blocked-note" style="margin:0;">🔕 Gustav-Erinnerungen für dieses Fest sind aus (Master). Pro Aufgabe/Unteraufgabe erst wieder aktiv, wenn der Master an ist.</p>`
+        : mutedTasks
+          ? `<p class="form-note" style="margin:0;">🔕 ${mutedTasks} Aufgabe(n) mit ausgeschalteten Gustav-Erinnerungen.</p>`
+          : ""
+    }
     <div class="festorga-ov-grid">
       <div class="festorga-ov-stat"><span class="n">${ov.open}</span><span class="l">offen</span></div>
       <div class="festorga-ov-stat ok"><span class="n">${ov.done}</span><span class="l">erledigt</span></div>
@@ -10056,6 +10072,7 @@ function fillFestorgaFestForm(fest) {
     : "7, 3, 1";
   if ($("festorgaEditBudget")) $("festorgaEditBudget").value = fest.budget ?? "";
   if ($("festorgaEditCurrency")) $("festorgaEditCurrency").value = fest.currency || "CHF";
+  if ($("festorgaEditGustavRemind")) $("festorgaEditGustavRemind").checked = festorgaGustavOn(fest);
   $("festorgaEditNotes").value = fest.notes || "";
   $("festorgaEditShare").value = fest.shareMessage || "";
 }
@@ -10083,6 +10100,7 @@ async function createFestorgaTasksFromTemplate(festId, templateId, festDate, rem
       subtasks: [],
       cost: null,
       paidBy: null,
+      gustavRemind: true,
       status: "open",
       sort: t.sort || 100,
       remindDaysBefore: remindDays,
@@ -10226,21 +10244,28 @@ function renderFestorga() {
         .join("");
       const subs = normalizeFestorgaSubtasks(t.subtasks);
       const prog = festorgaSubProgress(t);
+      const taskGustav = festorgaGustavOn(t);
+      const festGustav = festorgaGustavOn(fest);
       const subRows = subs
-        .map(
-          (s) => `
+        .map((s) => {
+          const subGustav = festorgaGustavOn(s);
+          return `
           <div class="festorga-sub-row ${s.done ? "is-done" : ""}" data-sub-id="${escapeAttr(s.id)}">
             <input type="checkbox" class="festorga-sub-done" data-id="${escapeAttr(t.id)}" data-sub-id="${escapeAttr(s.id)}" ${s.done ? "checked" : ""} ${done ? "disabled" : ""} />
             <input type="text" class="festorga-sub-title" data-id="${escapeAttr(t.id)}" data-sub-id="${escapeAttr(s.id)}" value="${escapeAttr(s.title)}" ${done ? "disabled" : ""} />
             <input type="date" class="festorga-sub-due" data-id="${escapeAttr(t.id)}" data-sub-id="${escapeAttr(s.id)}" value="${escapeAttr(s.dueDate || "")}" title="Fällig" ${done ? "disabled" : ""} />
+            <label class="festorga-gustav-chip ${subGustav && festGustav ? "" : "is-off"}" title="Gustav-Erinnerung für diese Unteraufgabe">
+              <input type="checkbox" class="festorga-sub-gustav" data-id="${escapeAttr(t.id)}" data-sub-id="${escapeAttr(s.id)}" ${subGustav ? "checked" : ""} ${done || !festGustav ? "disabled" : ""} />
+              📱
+            </label>
             <button type="button" class="mini-btn danger festorga-sub-del" data-id="${escapeAttr(t.id)}" data-sub-id="${escapeAttr(s.id)}" ${done ? "disabled" : ""} aria-label="Unteraufgabe löschen">×</button>
-          </div>`
-        )
+          </div>`;
+        })
         .join("");
       return `
-      <article class="festorga-card ${done ? "is-done" : ""} ${blocked ? "is-blocked" : ""}" data-id="${escapeAttr(t.id)}">
+      <article class="festorga-card ${done ? "is-done" : ""} ${blocked ? "is-blocked" : ""} ${!taskGustav || !festGustav ? "gustav-off" : ""}" data-id="${escapeAttr(t.id)}">
         <div class="festorga-card-head">
-          <h3 class="festorga-title">${done ? "✅" : blocked ? "⏳" : "⬜"} ${escapeHtml(t.title)} <span class="festorga-cat">${escapeHtml(cat)}</span>${festorgaTaskCost(t) > 0 ? ` <span class="festorga-cat">${escapeHtml(formatFestorgaMoney(festorgaTaskCost(t), currency))}</span>` : ""}</h3>
+          <h3 class="festorga-title">${done ? "✅" : blocked ? "⏳" : "⬜"} ${escapeHtml(t.title)} <span class="festorga-cat">${escapeHtml(cat)}</span>${festorgaTaskCost(t) > 0 ? ` <span class="festorga-cat">${escapeHtml(formatFestorgaMoney(festorgaTaskCost(t), currency))}</span>` : ""}${!taskGustav || !festGustav ? ` <span class="festorga-cat" title="Gustav stumm">🔕</span>` : ""}</h3>
           <span class="festorga-due ${dueClass}">${escapeHtml(dueLabel)}</span>
         </div>
         ${t.description ? `<p class="festorga-desc">${escapeHtml(t.description)}</p>` : ""}
@@ -10276,19 +10301,27 @@ function renderFestorga() {
               : `<div class="festorga-sub-add">
             <input type="text" class="festorga-sub-new-title" data-id="${escapeAttr(t.id)}" placeholder="Unteraufgabe hinzufügen…" />
             <input type="date" class="festorga-sub-new-due" data-id="${escapeAttr(t.id)}" title="Optional fällig" />
+            <label class="festorga-gustav-chip" title="Gustav für neue Unteraufgabe">
+              <input type="checkbox" class="festorga-sub-new-gustav" data-id="${escapeAttr(t.id)}" checked ${!festGustav ? "disabled" : ""} />
+              📱
+            </label>
             <button type="button" class="mini-btn" data-action="festorga-sub-add" data-id="${escapeAttr(t.id)}">+</button>
           </div>`
           }
         </div>
         <div class="festorga-actions">
+          <label class="festorga-gustav-chip ${taskGustav && festGustav ? "" : "is-off"}" title="Gustav-Erinnerungen für diese Aufgabe">
+            <input type="checkbox" class="festorga-task-gustav" data-id="${escapeAttr(t.id)}" ${taskGustav ? "checked" : ""} ${done || !festGustav ? "disabled" : ""} />
+            📱 Gustav
+          </label>
           <label class="form-note" style="display:flex;align-items:center;gap:6px;margin:0;">
             Bis
             <input type="date" class="festorga-due-input" data-id="${escapeAttr(t.id)}" value="${escapeAttr(t.dueDate || "")}" ${done ? "disabled" : ""} />
           </label>
           <select class="festorga-cat-select" data-id="${escapeAttr(t.id)}" ${done ? "disabled" : ""}>${catOpts}</select>
           <label class="form-note" style="display:flex;align-items:center;gap:6px;margin:0;">
-            Reminder
-            <input type="text" class="festorga-remind-input" data-id="${escapeAttr(t.id)}" value="${escapeAttr(remindStr)}" placeholder="7, 3, 1" ${done ? "disabled" : ""} style="width:7rem;" />
+            Reminder-Tage
+            <input type="text" class="festorga-remind-input" data-id="${escapeAttr(t.id)}" value="${escapeAttr(remindStr)}" placeholder="7, 3, 1" ${done || !taskGustav || !festGustav ? "disabled" : ""} style="width:7rem;" />
           </label>
           <button type="button" class="mini-btn" data-action="festorga-claim" data-id="${escapeAttr(t.id)}" ${done ? "disabled" : ""}>Ich dazu</button>
           <button type="button" class="mini-btn" data-action="festorga-toggle" data-id="${escapeAttr(t.id)}" ${blocked && !done ? "disabled" : ""} title="${blocked && !done ? "Zuerst Abhängigkeiten erledigen" : ""}">${done ? "Wieder öffnen" : "Erledigt"}</button>
@@ -10307,6 +10340,16 @@ function renderFestorga() {
   list.querySelectorAll(".festorga-remind-input").forEach((inp) => {
     inp.addEventListener("change", () => {
       updateFestorgaTask(inp.dataset.id, { remindDaysBefore: parseRemindDays(inp.value, festRemind) });
+    });
+  });
+  list.querySelectorAll(".festorga-task-gustav").forEach((cb) => {
+    cb.addEventListener("change", () => {
+      updateFestorgaTask(cb.dataset.id, { gustavRemind: cb.checked });
+    });
+  });
+  list.querySelectorAll(".festorga-sub-gustav").forEach((cb) => {
+    cb.addEventListener("change", () => {
+      setFestorgaSubtaskField(cb.dataset.id, cb.dataset.subId, { gustavRemind: cb.checked });
     });
   });
   list.querySelectorAll(".festorga-cost-input").forEach((inp) => {
@@ -10425,6 +10468,7 @@ async function addFestorgaSubtask(taskId) {
   const card = document.querySelector(`.festorga-card[data-id="${String(taskId).replace(/"/g, "")}"]`);
   const titleInp = card?.querySelector(".festorga-sub-new-title");
   const dueInp = card?.querySelector(".festorga-sub-new-due");
+  const gustavInp = card?.querySelector(".festorga-sub-new-gustav");
   const title = titleInp?.value?.trim();
   if (!title) {
     titleInp?.focus();
@@ -10438,6 +10482,7 @@ async function addFestorgaSubtask(taskId) {
     dueDate: dueInp?.value || null,
     remindDaysBefore: null,
     lastReminderDayKey: null,
+    gustavRemind: gustavInp ? !!gustavInp.checked : true,
   });
   await updateFestorgaTask(taskId, { subtasks: subs });
 }
@@ -10514,6 +10559,7 @@ $("festorgaNewForm")?.addEventListener("submit", async (e) => {
       shareMessage: "",
       templateId: tpl.id,
       remindDaysBefore: remindDays,
+      gustavRemind: true,
       eventTitleHint: "",
       createdAt: serverTimestamp(),
       updatedAt: serverTimestamp(),
@@ -10550,6 +10596,7 @@ $("festorgaFestForm")?.addEventListener("submit", async (e) => {
       maxGuestsTotal: maxTotal === "" ? null : Number(maxTotal),
       budget: parseFestorgaMoney($("festorgaEditBudget")?.value),
       currency: $("festorgaEditCurrency")?.value || "CHF",
+      gustavRemind: !!$("festorgaEditGustavRemind")?.checked,
       remindDaysBefore,
       notes: $("festorgaEditNotes")?.value?.trim() || "",
       shareMessage: $("festorgaEditShare")?.value?.trim() || "",
@@ -10613,6 +10660,9 @@ $("festorgaDuplicateBtn")?.addEventListener("click", async () => {
           dueDate: null,
           dependsOn: [],
           subtasks: subs,
+          cost: t.cost ?? null,
+          paidBy: null,
+          gustavRemind: festorgaGustavOn(t),
           status: "open",
           sort: t.sort || 100,
           remindDaysBefore: Array.isArray(t.remindDaysBefore) ? t.remindDaysBefore : [7, 3, 1],
@@ -10690,7 +10740,8 @@ $("festorgaTaskForm")?.addEventListener("submit", async (e) => {
   const assignees = sel ? [...sel.selectedOptions].map((o) => o.value) : [];
   const depSel = $("festorgaNewDepends");
   const dependsOn = depSel ? [...depSel.selectedOptions].map((o) => o.value) : [];
-  const subtasks = parseFestorgaSubtaskLines($("festorgaNewSubtasks")?.value);
+  const gustavRemind = $("festorgaNewGustavRemind") ? !!$("festorgaNewGustavRemind").checked : true;
+  const subtasks = parseFestorgaSubtaskLines($("festorgaNewSubtasks")?.value, gustavRemind);
   const cost = parseFestorgaMoney($("festorgaNewCost")?.value);
   const paidBy = $("festorgaNewPaidBy")?.value || null;
   const festRemind = Array.isArray(fest.remindDaysBefore) ? fest.remindDaysBefore : [7, 3, 1];
@@ -10713,6 +10764,7 @@ $("festorgaTaskForm")?.addEventListener("submit", async (e) => {
       subtasks,
       cost,
       paidBy,
+      gustavRemind,
       status: "open",
       sort: maxSort + 10,
       remindDaysBefore,
@@ -10722,6 +10774,7 @@ $("festorgaTaskForm")?.addEventListener("submit", async (e) => {
       createdBy: auth.member || null,
     });
     e.target.reset();
+    if ($("festorgaNewGustavRemind")) $("festorgaNewGustavRemind").checked = true;
     populateFestorgaAssigneeSelect();
     populateFestorgaPaidBySelect($("festorgaNewPaidBy"));
     populateFestorgaNewDependsSelect(fest.id);

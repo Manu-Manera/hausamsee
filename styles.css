@@ -6771,6 +6771,9 @@ body:not(.wg-member) #ternTabFestorga #festorgaTaskForm {
   outline: 2px solid rgba(78, 179, 196, 0.7);
   outline-offset: 2px;
 }
+.festorga-card.gustav-off {
+  border-left-color: #999;
+}
 .festorga-blocked-note {
   margin: 0;
   font-size: 0.86rem;
@@ -6792,19 +6795,44 @@ body:not(.wg-member) #ternTabFestorga #festorgaTaskForm {
   font-size: 0.85rem;
   color: var(--text-muted);
 }
+.festorga-gustav-toggle {
+  margin: 8px 0 12px;
+  align-items: flex-start;
+}
+.festorga-gustav-toggle input {
+  margin-top: 3px;
+}
+.festorga-gustav-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 0.82rem;
+  color: var(--text-muted);
+  white-space: nowrap;
+  user-select: none;
+  cursor: pointer;
+}
+.festorga-gustav-chip.is-off {
+  opacity: 0.55;
+  text-decoration: line-through;
+}
+.festorga-gustav-chip input {
+  margin: 0;
+}
 .festorga-sub-row {
   display: grid;
-  grid-template-columns: auto 1fr auto auto;
+  grid-template-columns: auto 1fr auto auto auto;
   gap: 6px;
   align-items: center;
 }
 @media (max-width: 640px) {
   .festorga-sub-row {
-    grid-template-columns: auto 1fr;
+    grid-template-columns: auto 1fr auto;
   }
   .festorga-sub-row .festorga-sub-due,
-  .festorga-sub-row .festorga-sub-del {
-    grid-column: 2;
+  .festorga-sub-row .festorga-sub-del,
+  .festorga-sub-row .festorga-gustav-chip {
+    grid-column: 2 / -1;
   }
 }
 .festorga-sub-row.is-done .festorga-sub-title {
