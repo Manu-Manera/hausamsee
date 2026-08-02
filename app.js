@@ -195,6 +195,184 @@ function buildHourlyOutlookHTML(hourly, curTimeIso, esc) {
   );
 }
 
+/* Event-Vorhersage (Open-Meteo, bis 16 Tage) */
+const EVENT_FORECAST_TTL_MS = 30 * 60 * 1000;
+let eventForecastCache = { t: 0, byDay: null, byHour: null };
+
+function zurichParts(date) {
+  const d = date instanceof Date ? date : new Date(date);
+  const parts = new Intl.DateTimeFormat("en-GB", {
+    timeZone: "Europe/Zurich",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    hour12: false,
+  }).formatToParts(d);
+  const get = (type) => parts.find((p) => p.type === type)?.value || "";
+  const ymd = `${get("year")}-${get("month")}-${get("day")}`;
+  const hour = get("hour").padStart(2, "0");
+  return { ymd, hour, hourKey: `${ymd}T${hour}:00` };
+}
+
+function daysUntilZurich(date) {
+  const now = zurichParts(new Date()).ymd;
+  const target = zurichParts(date).ymd;
+  const a = new Date(`${now}T12:00:00`);
+  const b = new Date(`${target}T12:00:00`);
+  return Math.round((b - a) / 86400000);
+}
+
+async function loadEventForecast() {
+  if (eventForecastCache.byDay && Date.now() - eventForecastCache.t < EVENT_FORECAST_TTL_MS) {
+    return eventForecastCache;
+  }
+  const u = new URL("https://api.open-meteo.com/v1/forecast");
+  u.searchParams.set("latitude", String(WEATHER_SPOT.lat));
+  u.searchParams.set("longitude", String(WEATHER_SPOT.lon));
+  u.searchParams.set(
+    "daily",
+    "weather_code,temperature_2m_max,temperature_2m_min,precipitation_probability_max,precipitation_sum"
+  );
+  u.searchParams.set("hourly", "temperature_2m,weather_code,precipitation_probability");
+  u.searchParams.set("timezone", "Europe/Zurich");
+  u.searchParams.set("forecast_days", "16");
+  const res = await fetch(u.toString());
+  if (!res.ok) throw new Error("Event-Wetter HTTP " + res.status);
+  const j = await res.json();
+  const byDay = Object.create(null);
+  const days = j.daily?.time || [];
+  for (let i = 0; i < days.length; i++) {
+    byDay[days[i]] = {
+      code: j.daily.weather_code?.[i],
+      tmax: j.daily.temperature_2m_max?.[i],
+      tmin: j.daily.temperature_2m_min?.[i],
+      precipProb: j.daily.precipitation_probability_max?.[i],
+      precipSum: j.daily.precipitation_sum?.[i],
+    };
+  }
+  const byHour = Object.create(null);
+  const hours = j.hourly?.time || [];
+  for (let i = 0; i < hours.length; i++) {
+    const key = String(hours[i]).slice(0, 16); // YYYY-MM-DDTHH:MM
+    byHour[key] = {
+      temp: j.hourly.temperature_2m?.[i],
+      code: j.hourly.weather_code?.[i],
+      precipProb: j.hourly.precipitation_probability?.[i],
+    };
+  }
+  eventForecastCache = { t: Date.now(), byDay, byHour };
+  return eventForecastCache;
+}
+
+function getEventWeather(ev) {
+  if (!ev?.date || !eventForecastCache.byDay) return null;
+  const d = new Date(ev.date);
+  if (Number.isNaN(d.getTime())) return null;
+  const delta = daysUntilZurich(d);
+  if (delta < 0) return { kind: "past" };
+  if (delta > 15) {
+    return { kind: "far", label: "Vorhersage später", emoji: "📅" };
+  }
+  const { ymd, hourKey } = zurichParts(d);
+  const hour =
+    eventForecastCache.byHour?.[hourKey] ||
+    eventForecastCache.byHour?.[`${hourKey.slice(0, 13)}:00`];
+  const day = eventForecastCache.byDay[ymd];
+  if (!day && !hour) return { kind: "far", label: "Keine Daten", emoji: "🌡️" };
+  const code = hour?.code ?? day?.code;
+  const { text, emoji } = wmoWeatherGerman(code);
+  const temp =
+    hour?.temp != null
+      ? Math.round(Number(hour.temp))
+      : day?.tmax != null
+        ? Math.round(Number(day.tmax))
+        : null;
+  const tmin = day?.tmin != null ? Math.round(Number(day.tmin)) : null;
+  const tmax = day?.tmax != null ? Math.round(Number(day.tmax)) : null;
+  const precip =
+    hour?.precipProb != null
+      ? Math.round(Number(hour.precipProb))
+      : day?.precipProb != null
+        ? Math.round(Number(day.precipProb))
+        : null;
+  return {
+    kind: "ok",
+    emoji,
+    text,
+    temp,
+    tmin,
+    tmax,
+    precip,
+    atEvent: hour?.temp != null,
+  };
+}
+
+function renderEventWeatherBlock(ev, isPast) {
+  if (isPast) return "";
+  const w = getEventWeather(ev);
+  if (!w || w.kind === "past") {
+    return `<div class="event-weather event-weather--pending" data-weather-for="${escapeHtml(ev.id)}" aria-label="Wetter wird geladen">
+      <span class="event-weather-emoji" aria-hidden="true">⏳</span>
+      <span class="event-weather-temp">…</span>
+      <span class="event-weather-label">Wetter</span>
+    </div>`;
+  }
+  if (w.kind === "far") {
+    return `<div class="event-weather event-weather--far" data-weather-for="${escapeHtml(ev.id)}" title="Open-Meteo liefert Vorhersagen ca. 16 Tage im Voraus">
+      <span class="event-weather-emoji" aria-hidden="true">${w.emoji}</span>
+      <span class="event-weather-temp">—</span>
+      <span class="event-weather-label">${escapeHtml(w.label)}</span>
+    </div>`;
+  }
+  const tempTxt = w.temp != null ? `${w.temp}°` : "—";
+  const range =
+    w.tmin != null && w.tmax != null ? `${w.tmin}–${w.tmax}°` : "";
+  const rain = w.precip != null ? `${w.precip}% Regen` : "";
+  const sub = [w.text, range || rain].filter(Boolean).join(" · ");
+  const title = [
+    w.atEvent ? `Um Event-Zeit ca. ${tempTxt}` : `Tageswert ${tempTxt}`,
+    w.text,
+    range && `Tag ${range}`,
+    rain,
+    "Open-Meteo · Pfäffikon",
+  ]
+    .filter(Boolean)
+    .join(" · ");
+  return `<div class="event-weather" data-weather-for="${escapeHtml(ev.id)}" title="${escapeHtml(title)}">
+    <span class="event-weather-emoji" aria-hidden="true">${w.emoji}</span>
+    <span class="event-weather-temp">${escapeHtml(tempTxt)}</span>
+    <span class="event-weather-label">${escapeHtml(sub)}</span>
+  </div>`;
+}
+
+async function hydrateEventWeather() {
+  const nodes = document.querySelectorAll("[data-weather-for]");
+  if (!nodes.length) return;
+  try {
+    await loadEventForecast();
+  } catch (e) {
+    console.warn("[Event-Wetter]", e);
+    nodes.forEach((el) => {
+      el.classList.add("event-weather--far");
+      el.innerHTML = `<span class="event-weather-emoji" aria-hidden="true">🌡️</span><span class="event-weather-temp">—</span><span class="event-weather-label">Wetter offline</span>`;
+    });
+    return;
+  }
+  // Re-render upcoming cards’ weather slots without full list rebuild
+  nodes.forEach((el) => {
+    const id = el.getAttribute("data-weather-for");
+    const ev = eventsCache.find((x) => x.id === id);
+    if (!ev) return;
+    const html = renderEventWeatherBlock(ev, false);
+    if (!html) return;
+    const tmp = document.createElement("div");
+    tmp.innerHTML = html.trim();
+    const next = tmp.firstElementChild;
+    if (next) el.replaceWith(next);
+  });
+}
+
 async function initWeather() {
   const w = document.getElementById("weatherWidget");
   if (!w) return;
@@ -2223,6 +2401,7 @@ function renderEvents() {
   });
 
   $("statEvents").textContent = upcoming.length;
+  void hydrateEventWeather();
 }
 
 let eventBringCache = [];
@@ -2468,6 +2647,7 @@ function renderEventCard(ev, isPast) {
           return "";
         })()}</span>
         ${flyerBadge}
+        ${renderEventWeatherBlock(ev, isPast)}
       </div>
       <div class="event-info">
         <h3>${escapeHtml(ev.emoji || "🎉")} ${escapeHtml(ev.title)} ${flyerButton}</h3>

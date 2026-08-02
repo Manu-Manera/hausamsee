@@ -3,34 +3,34 @@
    ============================================ */
 
 :root {
-  /* Sommerfrisch: See, Sonne, Garten – warm, aber leichter */
-  --cream: #fff8ef;
-  --cream-2: #f3edd8;
-  --sand: #e8dfc4;
-  --linen: #f7faf8;
-  --wood: #8f6a45;
-  --wood-dark: #5c422c;
-  --cocoa: #2f2a22;
-  --terracotta: #e08a4f;
-  --terracotta-dark: #c46a32;
-  --moss: #5fa86e;
-  --moss-dark: #3f8a52;
-  --amber: #f0b429;
-  --berry: #e15b4a;
-  --sun: #ffd56a;
-  --coral: #ff8b6a;
+  /* Cool summer: See, Himmel, Gras – ohne Beige */
+  --cream: #f3fafb;
+  --cream-2: #e5f3f6;
+  --sand: #d7ecef;
+  --linen: #f2f8f9;
+  --wood: #3d8fa0;
+  --wood-dark: #2a6d7c;
+  --cocoa: #1e2a2e;
+  --terracotta: #ff7a59;
+  --terracotta-dark: #e85a38;
+  --moss: #3db87a;
+  --moss-dark: #2a945e;
+  --amber: #ffc53d;
+  --berry: #ef5b6a;
+  --sun: #ffcc33;
+  --coral: #ff7a59;
 
-  --lake: #4eb3c4;
-  --lake-deep: #2f7f92;
-  --sky: #c9e8ef;
+  --lake: #2eb8d1;
+  --lake-deep: #178aa3;
+  --sky: #d4f1f7;
 
-  --card: rgba(255, 252, 247, 0.86);
-  --card-border: rgba(79, 143, 146, 0.16);
-  --card-shadow: 0 16px 42px -20px rgba(47, 127, 146, 0.28), 0 2px 8px rgba(47, 42, 34, 0.05);
+  --card: rgba(255, 255, 255, 0.82);
+  --card-border: rgba(46, 184, 209, 0.18);
+  --card-shadow: 0 18px 44px -22px rgba(23, 138, 163, 0.35), 0 2px 8px rgba(30, 42, 46, 0.04);
 
-  --text: #2a2620;
-  --text-soft: #51483c;
-  --text-muted: #7d7466;
+  --text: #1e2a2e;
+  --text-soft: #3d5056;
+  --text-muted: #6b7f86;
 
   --r-sm: 10px;
   --r-md: 18px;
@@ -67,11 +67,11 @@ body::before {
   inset: 0;
   z-index: -2;
   background:
-    radial-gradient(ellipse at 12% 0%, rgba(255, 213, 106, 0.28), transparent 50%),
-    radial-gradient(ellipse at 95% 18%, rgba(78, 179, 196, 0.22), transparent 52%),
-    radial-gradient(ellipse at 70% 100%, rgba(95, 168, 110, 0.18), transparent 55%),
-    radial-gradient(ellipse at 0% 70%, rgba(255, 139, 106, 0.12), transparent 45%),
-    linear-gradient(180deg, #f7faf8 0%, #eef6f4 42%, #fff6e8 100%);
+    radial-gradient(ellipse at 10% -10%, rgba(255, 204, 51, 0.22), transparent 48%),
+    radial-gradient(ellipse at 100% 10%, rgba(46, 184, 209, 0.28), transparent 50%),
+    radial-gradient(ellipse at 80% 100%, rgba(61, 184, 122, 0.16), transparent 52%),
+    radial-gradient(ellipse at 0% 80%, rgba(255, 122, 89, 0.1), transparent 42%),
+    linear-gradient(180deg, #f2f8f9 0%, #e8f5f8 45%, #eef9f4 100%);
 }
 
 body::after {
@@ -80,8 +80,8 @@ body::after {
   inset: 0;
   z-index: -1;
   pointer-events: none;
-  background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='200' height='200'><filter id='n'><feTurbulence baseFrequency='0.9' numOctaves='2' stitchTiles='stitch'/><feColorMatrix values='0 0 0 0 0.6 0 0 0 0 0.45 0 0 0 0 0.3 0 0 0 0.04 0'/></filter><rect width='200' height='200' filter='url(%23n)'/></svg>");
-  opacity: 0.6;
+  background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='200' height='200'><filter id='n'><feTurbulence baseFrequency='0.9' numOctaves='2' stitchTiles='stitch'/><feColorMatrix values='0 0 0 0 0.2 0 0 0 0 0.45 0 0 0 0 0.5 0 0 0 0.03 0'/></filter><rect width='200' height='200' filter='url(%23n)'/></svg>");
+  opacity: 0.35;
   mix-blend-mode: multiply;
 }
 
@@ -113,10 +113,10 @@ a:hover { color: var(--terracotta); }
   align-items: center;
   justify-content: space-between;
   padding: 0 20px;
-  background: rgba(247, 250, 248, 0.9);
+  background: rgba(242, 248, 249, 0.92);
   backdrop-filter: blur(14px);
   -webkit-backdrop-filter: blur(14px);
-  border-bottom: 1px solid rgba(78, 179, 196, 0.14);
+  border-bottom: 1px solid rgba(46, 184, 209, 0.14);
   gap: 16px;
 }
 
@@ -1131,7 +1131,8 @@ a:hover { color: var(--terracotta); }
 .event-date {
   text-align: center;
   padding: 12px;
-  background: linear-gradient(145deg, rgba(201, 232, 239, 0.85), rgba(255, 213, 106, 0.35) 70%, var(--sand));
+  background: linear-gradient(160deg, rgba(46, 184, 209, 0.22), rgba(212, 241, 247, 0.95) 55%, rgba(255, 255, 255, 0.9));
+  border: 1px solid rgba(46, 184, 209, 0.2);
   border-radius: var(--r-sm);
   position: relative;
 }
@@ -1335,7 +1336,7 @@ a:hover { color: var(--terracotta); }
   margin-top: 12px;
   padding: 12px 14px;
   border-radius: var(--r-md);
-  background: linear-gradient(160deg, rgba(255, 252, 247, 0.75), rgba(201, 232, 239, 0.28));
+  background: linear-gradient(160deg, rgba(255, 255, 255, 0.85), rgba(212, 241, 247, 0.45));
   border: 1px solid var(--card-border);
 }
 .event-signup > summary {
@@ -5949,14 +5950,68 @@ body.wg-guest a[href="#intern"] {
   line-height: 1.45;
 }
 
+/* Wetter auf Event-Karte */
+.event-weather {
+  margin-top: 8px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 1px;
+  padding: 6px 4px 2px;
+  border-top: 1px dashed rgba(46, 184, 209, 0.28);
+}
+.event-weather-emoji {
+  font-size: 1.15rem;
+  line-height: 1;
+}
+.event-weather-temp {
+  font-family: 'Fraunces', Georgia, serif;
+  font-weight: 700;
+  font-size: 0.95rem;
+  color: var(--lake-deep);
+  line-height: 1.1;
+}
+.event-weather-label {
+  font-size: 0.62rem;
+  font-weight: 600;
+  color: var(--text-muted);
+  text-align: center;
+  line-height: 1.2;
+  max-width: 6.5rem;
+}
+.event-weather--pending .event-weather-temp,
+.event-weather--pending .event-weather-label {
+  opacity: 0.55;
+}
+.event-weather--far .event-weather-emoji { filter: grayscale(0.2); }
+.event-info .event-weather-inline {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 6px;
+  padding: 5px 10px;
+  border-radius: 999px;
+  background: rgba(46, 184, 209, 0.1);
+  border: 1px solid rgba(46, 184, 209, 0.22);
+  font-size: 0.8rem;
+  color: var(--lake-deep);
+  font-weight: 600;
+}
+.event-weather-inline .ew-emoji { font-size: 1rem; }
+.event-weather-inline .ew-meta {
+  font-weight: 500;
+  color: var(--text-muted);
+  font-size: 0.74rem;
+}
+
 /* Event Mitbringen – sommerfrische Platzkarten */
 .event-bring {
   margin-top: 12px;
   padding: 12px 14px;
   border-radius: var(--r-md);
   font-size: 0.9rem;
-  background: linear-gradient(155deg, rgba(255, 252, 247, 0.8), rgba(95, 168, 110, 0.12) 55%, rgba(255, 213, 106, 0.14));
-  border: 1px solid rgba(95, 168, 110, 0.22);
+  background: linear-gradient(155deg, rgba(255, 255, 255, 0.88), rgba(61, 184, 122, 0.1) 60%, rgba(46, 184, 209, 0.12));
+  border: 1px solid rgba(61, 184, 122, 0.22);
 }
 .event-bring > summary {
   font-weight: 700;
