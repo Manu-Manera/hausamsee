@@ -18,7 +18,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,400;0,9..144,600;0,9..144,700;1,9..144,400&family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet" />
-  <link rel="stylesheet" href="styles.css?v=20260802p" />
+  <link rel="stylesheet" href="styles.css?v=20260802q" />
   <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Ctext y='.9em' font-size='90'%3E🏡%3C/text%3E%3C/svg%3E" />
 </head>
 <body>
@@ -722,6 +722,19 @@
               <input id="festorgaEditRemind" placeholder="7, 3, 1" />
             </div>
           </div>
+          <div class="row">
+            <div class="field">
+              <label for="festorgaEditBudget">Gesamtbudget (CHF)</label>
+              <input id="festorgaEditBudget" type="number" min="0" step="0.05" placeholder="z. B. 500" />
+            </div>
+            <div class="field">
+              <label for="festorgaEditCurrency">Währung</label>
+              <select id="festorgaEditCurrency">
+                <option value="CHF" selected>CHF</option>
+                <option value="EUR">EUR</option>
+              </select>
+            </div>
+          </div>
           <div class="field">
             <label for="festorgaEditNotes">Notizen / Spielregeln</label>
             <textarea id="festorgaEditNotes" rows="3" placeholder="Kontingent, Mitbring-Idee, Specials…"></textarea>
@@ -738,6 +751,16 @@
         </form>
 
         <div class="festorga-meta" id="festorgaMeta"></div>
+        <div class="festorga-overview" id="festorgaOverview" hidden></div>
+        <div class="festorga-filters" id="festorgaFilters" hidden>
+          <button type="button" class="festorga-filter-btn is-on" data-filter="all">Alle</button>
+          <button type="button" class="festorga-filter-btn" data-filter="open">Offen</button>
+          <button type="button" class="festorga-filter-btn" data-filter="mine">Meine</button>
+          <button type="button" class="festorga-filter-btn" data-filter="blocked">Blockiert</button>
+          <button type="button" class="festorga-filter-btn" data-filter="overdue">Überfällig</button>
+          <button type="button" class="festorga-filter-btn" data-filter="unassigned">Ohne Person</button>
+          <button type="button" class="festorga-filter-btn" data-filter="cost">Mit Kosten</button>
+        </div>
         <div class="festorga-list" id="festorgaList"></div>
 
         <details class="admin-toggle" open>
@@ -783,6 +806,18 @@
               <div class="field">
                 <label for="festorgaNewDepends">Hängt ab von (optional)</label>
                 <select id="festorgaNewDepends" multiple size="4"></select>
+              </div>
+            </div>
+            <div class="row">
+              <div class="field">
+                <label for="festorgaNewCost">Kosten / Budget-Anteil</label>
+                <input id="festorgaNewCost" type="number" min="0" step="0.05" placeholder="z. B. 80" />
+              </div>
+              <div class="field">
+                <label for="festorgaNewPaidBy">Bezahlt von (optional)</label>
+                <select id="festorgaNewPaidBy">
+                  <option value="">— noch offen —</option>
+                </select>
               </div>
             </div>
             <div class="field">
@@ -1598,6 +1633,6 @@
   <!-- Toast -->
   <div id="toast" class="toast hidden"></div>
 
-  <script type="module" src="app.js?v=20260802p"></script>
+  <script type="module" src="app.js?v=20260802q"></script>
 </body>
 </html>

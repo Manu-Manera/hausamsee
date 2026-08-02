@@ -444,6 +444,14 @@ function formatFestorgaList(fest, tasks) {
     fest.maxGuestsPerPerson || fest.maxGuestsTotal
       ? `👥 ${fest.maxGuestsPerPerson ? `max. ${fest.maxGuestsPerPerson}/Person` : ""}${fest.maxGuestsPerPerson && fest.maxGuestsTotal ? " · " : ""}${fest.maxGuestsTotal ? `${fest.maxGuestsTotal} total` : ""}`
       : null,
+    (() => {
+      const budget = Number(fest.budget);
+      if (!Number.isFinite(budget)) return null;
+      const spent = tasks.reduce((s, t) => s + (Number(t.cost) > 0 ? Number(t.cost) : 0), 0);
+      const cur = fest.currency || "CHF";
+      const rest = Math.round((budget - spent) * 100) / 100;
+      return `💰 Budget: ${spent.toFixed(2)} / ${budget.toFixed(2)} ${cur} (Rest ${rest.toFixed(2)})`;
+    })(),
     "",
   ].filter((x) => x !== null);
 
@@ -458,10 +466,12 @@ function formatFestorgaList(fest, tasks) {
       const blocked = t.status !== "done" && deps.some((id) => byId[id] && byId[id].status !== "done");
       const mark = t.status === "done" ? "✅" : blocked ? "⏳" : "⬜";
       const cat = t.category && TASK_CATEGORIES[t.category] ? ` [${TASK_CATEGORIES[t.category]}]` : "";
+      const costN = Number(t.cost);
+      const costBit = Number.isFinite(costN) && costN > 0 ? ` · ${costN.toFixed(2)} ${fest.currency || "CHF"}` : "";
       const subs = Array.isArray(t.subtasks) ? t.subtasks : [];
       const subDone = subs.filter((s) => s && s.done).length;
       const subBit = subs.length ? ` · Checklist ${subDone}/${subs.length}` : "";
-      lines.push(`${mark} *${t.title}*${cat} — ${who}${due}${subBit}`);
+      lines.push(`${mark} *${t.title}*${cat} — ${who}${due}${costBit}${subBit}`);
       if (blocked) {
         const wait = deps
           .map((id) => byId[id])

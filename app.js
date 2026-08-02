@@ -9567,6 +9567,7 @@ $("kandidatForm")?.addEventListener("submit", async (e) => {
 let festorgaCache = [];
 let festorgaTasksCache = [];
 let selectedFestorgaId = localStorage.getItem("festorgaSelectedId") || null;
+let festorgaTaskFilter = localStorage.getItem("festorgaTaskFilter") || "all";
 
 const FESTORGA_FOOD_LABEL = {
   potluck: "Mitbring-Buffet",
@@ -9754,6 +9755,209 @@ function festorgaSubProgress(task) {
   return { done, total: subs.length };
 }
 
+function parseFestorgaMoney(raw) {
+  if (raw == null || String(raw).trim() === "") return null;
+  const n = Number(String(raw).replace(",", ".").replace(/[^\d.-]/g, ""));
+  if (!Number.isFinite(n) || n < 0) return null;
+  return Math.round(n * 100) / 100;
+}
+
+function formatFestorgaMoney(amount, currency = "CHF") {
+  if (amount == null || !Number.isFinite(amount)) return "—";
+  try {
+    return new Intl.NumberFormat("de-CH", { style: "currency", currency: currency || "CHF" }).format(amount);
+  } catch {
+    return `${amount.toFixed(2)} ${currency || "CHF"}`;
+  }
+}
+
+function festorgaTaskCost(task) {
+  const n = Number(task?.cost);
+  return Number.isFinite(n) && n >= 0 ? n : 0;
+}
+
+function populateFestorgaPaidBySelect(selectEl, selected = "") {
+  if (!selectEl) return;
+  const adults = getActiveAdults();
+  selectEl.innerHTML =
+    `<option value="">— noch offen —</option>` +
+    adults
+      .map(
+        (b) =>
+          `<option value="${escapeAttr(b.name)}" ${selected === b.name ? "selected" : ""}>${mEmoji(b.name)} ${escapeHtml(mLabel(b.name))}</option>`
+      )
+      .join("");
+}
+
+function computeFestorgaOverview(fest, tasks) {
+  const currency = fest.currency || "CHF";
+  const budget = parseFestorgaMoney(fest.budget);
+  let spent = 0;
+  let open = 0;
+  let done = 0;
+  let blocked = 0;
+  let overdue = 0;
+  let unassigned = 0;
+  let subDone = 0;
+  let subTotal = 0;
+  const paidByMap = {};
+  const upcoming = [];
+  const unassignedList = [];
+
+  for (const t of tasks) {
+    const cost = festorgaTaskCost(t);
+    spent += cost;
+    const isDone = t.status === "done";
+    if (isDone) done += 1;
+    else open += 1;
+    const blockedTitles = festorgaBlockedTitles(t, tasks);
+    if (!isDone && blockedTitles.length) blocked += 1;
+    const days = festorgaDaysUntil(t.dueDate);
+    if (!isDone && days != null && days < 0) overdue += 1;
+    const assignees = Array.isArray(t.assignees) ? t.assignees : [];
+    if (!isDone && !assignees.length) {
+      unassigned += 1;
+      unassignedList.push(t);
+    }
+    if (t.paidBy && cost > 0) {
+      paidByMap[t.paidBy] = (paidByMap[t.paidBy] || 0) + cost;
+    }
+    const prog = festorgaSubProgress(t);
+    if (prog) {
+      subDone += prog.done;
+      subTotal += prog.total;
+    }
+    if (!isDone && t.dueDate) {
+      upcoming.push({ task: t, days: days ?? 9999 });
+    }
+  }
+  upcoming.sort((a, b) => a.days - b.days || String(a.task.title).localeCompare(String(b.task.title)));
+  const remaining = budget != null ? Math.round((budget - spent) * 100) / 100 : null;
+  const pct = budget && budget > 0 ? Math.min(100, Math.round((spent / budget) * 100)) : spent > 0 ? 100 : 0;
+  return {
+    currency,
+    budget,
+    spent,
+    remaining,
+    pct,
+    over: budget != null && spent > budget,
+    open,
+    done,
+    blocked,
+    overdue,
+    unassigned,
+    subDone,
+    subTotal,
+    paidByMap,
+    upcoming: upcoming.slice(0, 6),
+    unassignedList: unassignedList.slice(0, 6),
+    total: tasks.length,
+  };
+}
+
+function renderFestorgaOverview(fest, tasks) {
+  const el = $("festorgaOverview");
+  const filters = $("festorgaFilters");
+  if (!el) return;
+  if (!fest || !tasks.length) {
+    el.hidden = true;
+    el.innerHTML = "";
+    if (filters) filters.hidden = true;
+    return;
+  }
+  el.hidden = false;
+  if (filters) {
+    filters.hidden = false;
+    filters.querySelectorAll(".festorga-filter-btn").forEach((btn) => {
+      btn.classList.toggle("is-on", btn.dataset.filter === festorgaTaskFilter);
+    });
+  }
+  const ov = computeFestorgaOverview(fest, tasks);
+  const paidLines = Object.entries(ov.paidByMap)
+    .sort((a, b) => b[1] - a[1])
+    .map(
+      ([name, amt]) =>
+        `<li>${mEmoji(name)} ${escapeHtml(mLabel(name) || name)}: <strong>${escapeHtml(formatFestorgaMoney(amt, ov.currency))}</strong></li>`
+    )
+    .join("");
+  const upcomingLines = ov.upcoming.length
+    ? ov.upcoming
+        .map(({ task: t, days }) => {
+          const label =
+            days < 0 ? `überfällig ${t.dueDate}` : days === 0 ? `heute · ${t.dueDate}` : `in ${days}d · ${t.dueDate}`;
+          return `<li><button type="button" data-scroll-task="${escapeAttr(t.id)}">${escapeHtml(t.title)}</button> <span class="form-note">(${escapeHtml(label)})</span></li>`;
+        })
+        .join("")
+    : `<li class="form-note">Keine offenen Deadlines</li>`;
+  const unassignedLines = ov.unassignedList.length
+    ? ov.unassignedList
+        .map((t) => `<li><button type="button" data-scroll-task="${escapeAttr(t.id)}">${escapeHtml(t.title)}</button></li>`)
+        .join("")
+    : `<li class="form-note">Alles zugewiesen 👍</li>`;
+
+  const budgetClass = ov.over ? "danger" : ov.remaining != null && ov.remaining < (ov.budget || 0) * 0.15 ? "warn" : "ok";
+  el.innerHTML = `
+    <div class="festorga-ov-grid">
+      <div class="festorga-ov-stat"><span class="n">${ov.open}</span><span class="l">offen</span></div>
+      <div class="festorga-ov-stat ok"><span class="n">${ov.done}</span><span class="l">erledigt</span></div>
+      <div class="festorga-ov-stat ${ov.blocked ? "warn" : ""}"><span class="n">${ov.blocked}</span><span class="l">blockiert</span></div>
+      <div class="festorga-ov-stat ${ov.overdue ? "danger" : ""}"><span class="n">${ov.overdue}</span><span class="l">überfällig</span></div>
+      <div class="festorga-ov-stat"><span class="n">${ov.unassigned}</span><span class="l">ohne Person</span></div>
+      <div class="festorga-ov-stat"><span class="n">${ov.subTotal ? `${ov.subDone}/${ov.subTotal}` : "—"}</span><span class="l">Checklist</span></div>
+    </div>
+    <div class="festorga-budget-block">
+      <h4>💰 Budget</h4>
+      ${
+        ov.budget == null
+          ? `<p class="form-note" style="margin:0;">Noch kein Gesamtbudget – oben in den Fest-Einstellungen setzen. Pro Aufgabe kannst du trotzdem Kosten eintragen.</p>`
+          : `<p style="margin:0 0 4px;">
+              Geplant/gebucht: <strong>${escapeHtml(formatFestorgaMoney(ov.spent, ov.currency))}</strong>
+              von <strong>${escapeHtml(formatFestorgaMoney(ov.budget, ov.currency))}</strong>
+              · Rest: <strong class="${budgetClass === "danger" ? "festorga-due overdue" : ""}">${escapeHtml(formatFestorgaMoney(ov.remaining, ov.currency))}</strong>
+              ${ov.over ? " · ⚠️ über Budget" : ""}
+            </p>
+            <div class="festorga-budget-bar ${ov.over ? "is-over" : ""}" title="${ov.pct}%"><span style="width:${ov.pct}%"></span></div>`
+      }
+      ${paidLines ? `<ul style="margin:8px 0 0;padding:0;list-style:none;display:grid;gap:2px;font-size:0.88rem;"><li class="form-note">Auslagen nach Person:</li>${paidLines}</ul>` : ""}
+    </div>
+    <div class="festorga-ov-lists">
+      <div>
+        <h4>📅 Nächste Deadlines</h4>
+        <ul>${upcomingLines}</ul>
+      </div>
+      <div>
+        <h4>👤 Noch ohne Zuständige</h4>
+        <ul>${unassignedLines}</ul>
+      </div>
+    </div>
+  `;
+  el.querySelectorAll("[data-scroll-task]").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      const card = document.querySelector(`.festorga-card[data-id="${String(btn.dataset.scrollTask).replace(/"/g, "")}"]`);
+      card?.scrollIntoView({ behavior: "smooth", block: "center" });
+      card?.classList.add("festorga-card-flash");
+      setTimeout(() => card?.classList.remove("festorga-card-flash"), 1200);
+    });
+  });
+}
+
+function festorgaTaskMatchesFilter(t, tasks) {
+  const f = festorgaTaskFilter || "all";
+  if (f === "all") return true;
+  const done = t.status === "done";
+  const assignees = Array.isArray(t.assignees) ? t.assignees : [];
+  if (f === "open") return !done;
+  if (f === "mine") return !!auth.member && assignees.includes(auth.member);
+  if (f === "blocked") return !done && festorgaBlockedTitles(t, tasks).length > 0;
+  if (f === "overdue") {
+    const days = festorgaDaysUntil(t.dueDate);
+    return !done && days != null && days < 0;
+  }
+  if (f === "unassigned") return !done && !assignees.length;
+  if (f === "cost") return festorgaTaskCost(t) > 0;
+  return true;
+}
+
 function populateFestorgaAssigneeSelect(selected = []) {
   const sel = $("festorgaAssignees");
   const chips = $("festorgaAssigneeChips");
@@ -9850,6 +10054,8 @@ function fillFestorgaFestForm(fest) {
   $("festorgaEditRemind").value = Array.isArray(fest.remindDaysBefore)
     ? fest.remindDaysBefore.join(", ")
     : "7, 3, 1";
+  if ($("festorgaEditBudget")) $("festorgaEditBudget").value = fest.budget ?? "";
+  if ($("festorgaEditCurrency")) $("festorgaEditCurrency").value = fest.currency || "CHF";
   $("festorgaEditNotes").value = fest.notes || "";
   $("festorgaEditShare").value = fest.shareMessage || "";
 }
@@ -9875,6 +10081,8 @@ async function createFestorgaTasksFromTemplate(festId, templateId, festDate, rem
       dueDate: due,
       dependsOn: [],
       subtasks: [],
+      cost: null,
+      paidBy: null,
       status: "open",
       sort: t.sort || 100,
       remindDaysBefore: remindDays,
@@ -9896,7 +10104,7 @@ function renderFestorga() {
 
   const panel = $("ternTabFestorga");
   const gated = panel?.querySelectorAll(
-    ".festorga-toolbar, #festorgaNewDetails, #festorgaFestForm, #festorgaTaskForm, details.admin-toggle"
+    ".festorga-toolbar, #festorgaNewDetails, #festorgaFestForm, #festorgaTaskForm, details.admin-toggle, #festorgaOverview, #festorgaFilters"
   );
   if (!auth.isMember) {
     gated?.forEach((el) => {
@@ -9909,10 +10117,11 @@ function renderFestorga() {
     return;
   }
   gated?.forEach((el) => {
-    el.hidden = false;
+    if (el.id !== "festorgaOverview" && el.id !== "festorgaFilters") el.hidden = false;
   });
 
   populateFestorgaAssigneeSelect();
+  populateFestorgaPaidBySelect($("festorgaNewPaidBy"));
   populateFestorgaFestSelect();
   const fest = getSelectedFestorga();
   fillFestorgaFestForm(fest);
@@ -9921,8 +10130,9 @@ function renderFestorga() {
     if (!fest) {
       meta.innerHTML = `<strong>Noch kein Fest.</strong> Legt oben ein neues Fest aus einer Vorlage an – wiederverwendbar für jede Party.`;
     } else {
-      const tasks = festorgaTasksCache.filter((t) => t.festId === fest.id);
-      const openCount = tasks.filter((t) => t.status !== "done").length;
+      const tasksMeta = festorgaTasksCache.filter((t) => t.festId === fest.id);
+      const openCount = tasksMeta.filter((t) => t.status !== "done").length;
+      const ov = computeFestorgaOverview(fest, tasksMeta);
       const remind = Array.isArray(fest.remindDaysBefore) ? fest.remindDaysBefore.join("/") : "7/3/1";
       meta.innerHTML = `
         <strong>🎉 ${escapeHtml(fest.title)}</strong>
@@ -9931,13 +10141,14 @@ function renderFestorga() {
         ${fest.location ? ` · 📍 ${escapeHtml(fest.location)}` : ""}
         ${fest.foodMode ? ` · 🥗 ${escapeHtml(FESTORGA_FOOD_LABEL[fest.foodMode] || fest.foodMode)}` : ""}
         ${(fest.maxGuestsPerPerson || fest.maxGuestsTotal) ? ` · 👥 ${fest.maxGuestsPerPerson ? `max. ${fest.maxGuestsPerPerson}/Pers.` : ""}${fest.maxGuestsTotal ? ` · ${fest.maxGuestsTotal} total` : ""}` : ""}
-        <br><span class="form-note" style="margin:6px 0 0;display:inline-block;">${openCount}/${tasks.length} offen · Erinnerungen ${escapeHtml(remind)} Tage vorher (nur Status «active»)</span>
+        <br><span class="form-note" style="margin:6px 0 0;display:inline-block;">${openCount}/${tasksMeta.length} offen · Erinnerungen ${escapeHtml(remind)} Tage vorher (nur Status «active»)${ov.budget != null ? ` · Budget ${escapeHtml(formatFestorgaMoney(ov.spent, ov.currency))} / ${escapeHtml(formatFestorgaMoney(ov.budget, ov.currency))}` : ""}</span>
         ${fest.notes ? `<br><span class="form-note" style="margin:4px 0 0;display:inline-block;">${escapeHtml(fest.notes)}</span>` : ""}
       `;
     }
   }
 
   if (!fest) {
+    renderFestorgaOverview(null, []);
     list.innerHTML = `<div class="empty-state">Kein Fest ausgewählt – «Neues Fest» starten.</div>`;
     return;
   }
@@ -9945,15 +10156,22 @@ function renderFestorga() {
   const tasks = festorgaTasksCache
     .filter((t) => t.festId === fest.id)
     .sort((a, b) => (a.sort || 100) - (b.sort || 100) || String(a.title || "").localeCompare(String(b.title || "")));
+  renderFestorgaOverview(fest, tasks);
   if (!tasks.length) {
     list.innerHTML = `<div class="empty-state">Noch keine Aufgaben – Vorlage ergänzen oder unten hinzufügen.</div>`;
     return;
   }
 
+  const visibleTasks = tasks.filter((t) => festorgaTaskMatchesFilter(t, tasks));
   populateFestorgaNewDependsSelect(fest.id);
   const adults = getActiveAdults();
   const festRemind = Array.isArray(fest.remindDaysBefore) ? fest.remindDaysBefore : [7, 3, 1];
-  list.innerHTML = tasks
+  const currency = fest.currency || "CHF";
+  if (!visibleTasks.length) {
+    list.innerHTML = `<div class="empty-state">Keine Aufgaben für diesen Filter.</div>`;
+    return;
+  }
+  list.innerHTML = visibleTasks
     .map((t) => {
       const done = t.status === "done";
       const blockedTitles = festorgaBlockedTitles(t, tasks);
@@ -9982,6 +10200,15 @@ function renderFestorga() {
             `<button type="button" class="festorga-pick-chip ${assignees.includes(b.name) ? "is-on" : ""}" data-action="festorga-assignee-toggle" data-id="${escapeAttr(t.id)}" data-name="${escapeAttr(b.name)}" ${done ? "disabled" : ""}>${mEmoji(b.name)} ${escapeHtml(mLabel(b.name))}</button>`
         )
         .join("");
+      const paidByOpts =
+        `<option value="">— bezahlt von —</option>` +
+        adults
+          .map(
+            (b) =>
+              `<option value="${escapeAttr(b.name)}" ${t.paidBy === b.name ? "selected" : ""}>${mEmoji(b.name)} ${escapeHtml(mLabel(b.name))}</option>`
+          )
+          .join("");
+      const costVal = t.cost != null && t.cost !== "" ? t.cost : "";
       const cat = FESTORGA_CAT_LABEL[t.category] || FESTORGA_CAT_LABEL.other;
       const remindStr = Array.isArray(t.remindDaysBefore) && t.remindDaysBefore.length
         ? t.remindDaysBefore.join(", ")
@@ -10013,7 +10240,7 @@ function renderFestorga() {
       return `
       <article class="festorga-card ${done ? "is-done" : ""} ${blocked ? "is-blocked" : ""}" data-id="${escapeAttr(t.id)}">
         <div class="festorga-card-head">
-          <h3 class="festorga-title">${done ? "✅" : blocked ? "⏳" : "⬜"} ${escapeHtml(t.title)} <span class="festorga-cat">${escapeHtml(cat)}</span></h3>
+          <h3 class="festorga-title">${done ? "✅" : blocked ? "⏳" : "⬜"} ${escapeHtml(t.title)} <span class="festorga-cat">${escapeHtml(cat)}</span>${festorgaTaskCost(t) > 0 ? ` <span class="festorga-cat">${escapeHtml(formatFestorgaMoney(festorgaTaskCost(t), currency))}</span>` : ""}</h3>
           <span class="festorga-due ${dueClass}">${escapeHtml(dueLabel)}</span>
         </div>
         ${t.description ? `<p class="festorga-desc">${escapeHtml(t.description)}</p>` : ""}
@@ -10021,6 +10248,17 @@ function renderFestorga() {
         <div class="festorga-assignees">
           <span class="form-note" style="margin-right:4px;">Zuständig:</span>
           ${assigneePick || `<span class="form-note">keine Bewohner</span>`}
+        </div>
+        <div class="festorga-cost-row">
+          <label class="form-note" style="display:flex;align-items:center;gap:6px;margin:0;">
+            Kosten
+            <input type="number" min="0" step="0.05" class="festorga-cost-input" data-id="${escapeAttr(t.id)}" value="${escapeAttr(String(costVal))}" placeholder="0" style="width:6.5rem;" />
+            <span>${escapeHtml(currency)}</span>
+          </label>
+          <label class="form-note" style="display:flex;align-items:center;gap:6px;margin:0;">
+            Bezahlt
+            <select class="festorga-paidby-select" data-id="${escapeAttr(t.id)}">${paidByOpts}</select>
+          </label>
         </div>
         <div class="festorga-deps">
           <span class="form-note">Abhängig von:</span>
@@ -10069,6 +10307,16 @@ function renderFestorga() {
   list.querySelectorAll(".festorga-remind-input").forEach((inp) => {
     inp.addEventListener("change", () => {
       updateFestorgaTask(inp.dataset.id, { remindDaysBefore: parseRemindDays(inp.value, festRemind) });
+    });
+  });
+  list.querySelectorAll(".festorga-cost-input").forEach((inp) => {
+    inp.addEventListener("change", () => {
+      updateFestorgaTask(inp.dataset.id, { cost: parseFestorgaMoney(inp.value) });
+    });
+  });
+  list.querySelectorAll(".festorga-paidby-select").forEach((sel) => {
+    sel.addEventListener("change", () => {
+      updateFestorgaTask(sel.dataset.id, { paidBy: sel.value || null });
     });
   });
   list.querySelectorAll("[data-action='festorga-assignee-toggle']").forEach((btn) => {
@@ -10300,6 +10548,8 @@ $("festorgaFestForm")?.addEventListener("submit", async (e) => {
       foodMode: $("festorgaEditFood")?.value || "none",
       maxGuestsPerPerson: maxPerson === "" ? null : Number(maxPerson),
       maxGuestsTotal: maxTotal === "" ? null : Number(maxTotal),
+      budget: parseFestorgaMoney($("festorgaEditBudget")?.value),
+      currency: $("festorgaEditCurrency")?.value || "CHF",
       remindDaysBefore,
       notes: $("festorgaEditNotes")?.value?.trim() || "",
       shareMessage: $("festorgaEditShare")?.value?.trim() || "",
@@ -10441,6 +10691,8 @@ $("festorgaTaskForm")?.addEventListener("submit", async (e) => {
   const depSel = $("festorgaNewDepends");
   const dependsOn = depSel ? [...depSel.selectedOptions].map((o) => o.value) : [];
   const subtasks = parseFestorgaSubtaskLines($("festorgaNewSubtasks")?.value);
+  const cost = parseFestorgaMoney($("festorgaNewCost")?.value);
+  const paidBy = $("festorgaNewPaidBy")?.value || null;
   const festRemind = Array.isArray(fest.remindDaysBefore) ? fest.remindDaysBefore : [7, 3, 1];
   const remindRaw = $("festorgaTaskRemind")?.value;
   const remindDaysBefore = remindRaw && String(remindRaw).trim()
@@ -10459,6 +10711,8 @@ $("festorgaTaskForm")?.addEventListener("submit", async (e) => {
       dueDate,
       dependsOn,
       subtasks,
+      cost,
+      paidBy,
       status: "open",
       sort: maxSort + 10,
       remindDaysBefore,
@@ -10469,11 +10723,20 @@ $("festorgaTaskForm")?.addEventListener("submit", async (e) => {
     });
     e.target.reset();
     populateFestorgaAssigneeSelect();
+    populateFestorgaPaidBySelect($("festorgaNewPaidBy"));
     populateFestorgaNewDependsSelect(fest.id);
     showToast("Aufgabe gespeichert.", "success");
   } catch (err) {
     showToast("Speichern fehlgeschlagen: " + err.message, "error");
   }
+});
+
+$("festorgaFilters")?.addEventListener("click", (e) => {
+  const btn = e.target.closest(".festorga-filter-btn");
+  if (!btn) return;
+  festorgaTaskFilter = btn.dataset.filter || "all";
+  localStorage.setItem("festorgaTaskFilter", festorgaTaskFilter);
+  renderFestorga();
 });
 
 let schaedenCache = [];

@@ -6618,6 +6618,126 @@ body:not(.wg-member) #ternTabFestorga #festorgaTaskForm {
   min-width: 10rem;
   min-height: 5.5rem;
 }
+.festorga-overview {
+  margin: 0 0 14px;
+  padding: 14px 16px;
+  border-radius: var(--r-md);
+  border: 1px solid var(--card-border);
+  background: var(--card);
+  box-shadow: var(--card-shadow);
+  display: grid;
+  gap: 14px;
+}
+.festorga-overview[hidden] { display: none !important; }
+.festorga-ov-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(7.5rem, 1fr));
+  gap: 8px;
+}
+.festorga-ov-stat {
+  padding: 10px 12px;
+  border-radius: var(--r-sm);
+  background: rgba(78, 179, 196, 0.08);
+  border: 1px solid rgba(78, 179, 196, 0.18);
+}
+.festorga-ov-stat .n {
+  display: block;
+  font-size: 1.35rem;
+  font-weight: 700;
+  line-height: 1.1;
+}
+.festorga-ov-stat .l {
+  font-size: 0.78rem;
+  color: var(--text-muted);
+}
+.festorga-ov-stat.warn {
+  background: rgba(232, 168, 74, 0.14);
+  border-color: rgba(232, 168, 74, 0.35);
+}
+.festorga-ov-stat.danger {
+  background: rgba(180, 60, 80, 0.1);
+  border-color: rgba(180, 60, 80, 0.28);
+}
+.festorga-ov-stat.ok {
+  background: rgba(70, 150, 110, 0.12);
+  border-color: rgba(70, 150, 110, 0.28);
+}
+.festorga-budget-block h4,
+.festorga-ov-lists h4 {
+  margin: 0 0 8px;
+  font-size: 0.95rem;
+}
+.festorga-budget-bar {
+  height: 10px;
+  border-radius: 999px;
+  background: rgba(0, 0, 0, 0.06);
+  overflow: hidden;
+  margin: 6px 0 8px;
+}
+.festorga-budget-bar > span {
+  display: block;
+  height: 100%;
+  background: linear-gradient(90deg, #4eb3c4, #e8a84a);
+  border-radius: inherit;
+  min-width: 0;
+  transition: width 0.25s ease;
+}
+.festorga-budget-bar.is-over > span {
+  background: linear-gradient(90deg, #c45a6a, #a03848);
+}
+.festorga-ov-lists {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 12px;
+}
+.festorga-ov-lists ul {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: grid;
+  gap: 4px;
+  font-size: 0.88rem;
+}
+.festorga-ov-lists li button {
+  all: unset;
+  cursor: pointer;
+  color: inherit;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+.festorga-ov-lists li button:hover {
+  color: var(--lake);
+}
+.festorga-filters {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin: 0 0 12px;
+}
+.festorga-filters[hidden] { display: none !important; }
+.festorga-filter-btn {
+  appearance: none;
+  border: 1px solid var(--card-border);
+  background: #fff;
+  border-radius: 999px;
+  padding: 5px 12px;
+  font: inherit;
+  font-size: 0.82rem;
+  cursor: pointer;
+  color: var(--text-muted);
+}
+.festorga-filter-btn.is-on {
+  background: rgba(78, 179, 196, 0.18);
+  border-color: rgba(78, 179, 196, 0.45);
+  color: var(--text);
+  font-weight: 600;
+}
+.festorga-cost-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 12px;
+  align-items: center;
+}
 .festorga-chip-pick {
   display: flex;
   flex-wrap: wrap;
@@ -6646,6 +6766,10 @@ body:not(.wg-member) #ternTabFestorga #festorgaTaskForm {
 }
 .festorga-card.is-blocked {
   border-left-color: var(--amber);
+}
+.festorga-card.festorga-card-flash {
+  outline: 2px solid rgba(78, 179, 196, 0.7);
+  outline-offset: 2px;
 }
 .festorga-blocked-note {
   margin: 0;
