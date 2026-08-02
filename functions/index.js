@@ -4320,13 +4320,19 @@ async function dispatch(ctx) {
     }
     const who = (await resolveResidentFromWhatsApp(from, senderName)) || senderName || "Gast";
     if (bring.action === "add") {
-      await gustavExtras.addBringItem(db, {
+      const result = await gustavExtras.addBringItem(db, {
         eventId: ev.id,
         eventTitle: ev.title,
         who,
         item: bring.item,
       });
-      await reply(`🥗 Notiert: *${who}* bringt *${bring.item}* zu *${ev.title}*.`);
+      if (result?.changed) {
+        await reply(
+          `✏️ Planänderung: *${who}* bringt nicht mehr ~${result.previous}~, sondern *${bring.item}* zu *${ev.title}*.`
+        );
+      } else {
+        await reply(`🥗 Notiert: *${who}* bringt *${bring.item}* zu *${ev.title}*.`);
+      }
       return true;
     }
     const items = await gustavExtras.listBringItems(db, ev.id);

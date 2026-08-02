@@ -20,14 +20,45 @@ function parseBringCommand(raw) {
   return null;
 }
 
+function formatBringItemText(entry) {
+  const struck = Array.isArray(entry.struckItems) ? entry.struckItems : [];
+  const struckPart = struck.map((s) => `~${s}~`).join(" ");
+  const cur = entry.item || "";
+  return struckPart ? `${struckPart} ${cur}` : cur;
+}
+
 async function addBringItem(db, { eventId, eventTitle, who, item }) {
+  const next = String(item || "").slice(0, 120);
+  const whoNorm = String(who || "").trim().toLowerCase();
+  const snap = await db.collection("eventBring").where("eventId", "==", eventId).get();
+  let existing = null;
+  snap.forEach((docSnap) => {
+    const data = docSnap.data() || {};
+    if (String(data.who || "").trim().toLowerCase() === whoNorm) {
+      existing = { id: docSnap.id, ...data };
+    }
+  });
+  if (existing) {
+    const struck = Array.isArray(existing.struckItems) ? [...existing.struckItems] : [];
+    if (existing.item && String(existing.item).trim().toLowerCase() !== next.trim().toLowerCase()) {
+      struck.push(String(existing.item).slice(0, 120));
+    }
+    await db.collection("eventBring").doc(existing.id).update({
+      item: next,
+      struckItems: struck.slice(-6),
+      updatedAt: FieldValue.serverTimestamp(),
+    });
+    return { changed: true, previous: existing.item || "" };
+  }
   await db.collection("eventBring").add({
     eventId: eventId || "",
     eventTitle: eventTitle || "",
     who: who || "",
-    item: String(item || "").slice(0, 120),
+    item: next,
+    struckItems: [],
     createdAt: FieldValue.serverTimestamp(),
   });
+  return { changed: false };
 }
 
 async function listBringItems(db, eventId) {
@@ -41,7 +72,7 @@ function formatBringList(eventTitle, items) {
   if (!items.length) {
     return `🥗 *Wer bringt was – ${eventTitle}*\n\nNoch niemand eingetragen.\n\n_Mitbringen Spieleabend: Salat_`;
   }
-  const lines = items.map((x) => `• *${x.who}*: ${x.item}`);
+  const lines = items.map((x) => `• *${x.who}*: ${formatBringItemText(x)}`);
   return `🥗 *Wer bringt was – ${eventTitle}*\n\n${lines.join("\n")}`;
 }
 

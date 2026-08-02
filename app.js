@@ -2201,6 +2201,21 @@ function renderEvents() {
       void submitEventBring(form.dataset.eventid, form);
     });
   });
+  list.querySelectorAll(".bring-change-btn").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      const li = btn.closest("li");
+      const panel = li?.querySelector(".bring-change-panel");
+      if (!panel) return;
+      panel.hidden = !panel.hidden;
+      if (!panel.hidden) panel.querySelector("input")?.focus();
+    });
+  });
+  list.querySelectorAll(".bring-change-form").forEach((form) => {
+    form.addEventListener("submit", (e) => {
+      e.preventDefault();
+      void changeEventBring(form.dataset.id, form);
+    });
+  });
 
   $("statEvents").textContent = upcoming.length;
 }
@@ -2211,18 +2226,45 @@ function eventBringForEvent(eventId) {
   return eventBringCache.filter((x) => x.eventId === eventId);
 }
 
+function normalizeBringWho(who) {
+  return String(who || "").trim().toLowerCase();
+}
+
+function formatBringItemHtml(entry) {
+  const struck = Array.isArray(entry.struckItems) ? entry.struckItems : [];
+  const struckHtml = struck
+    .map(
+      (s) =>
+        `<span class="bring-struck"><span class="bring-struck-text">${escapeHtml(s)}</span></span>`
+    )
+    .join("");
+  return `${struckHtml}<span class="bring-current">${escapeHtml(entry.item || "")}</span>`;
+}
+
 function renderEventBringBlock(ev) {
   const items = eventBringForEvent(ev.id);
   const listHtml = items.length
     ? `<ul class="event-bring-ul">${items.map((x) =>
-        `<li><strong>${escapeHtml(x.who || "?")}</strong>: ${escapeHtml(x.item)}</li>`
+        `<li class="bring-item" data-id="${escapeHtml(x.id)}">
+          <div class="bring-item-main">
+            <span class="bring-line"><strong>${escapeHtml(x.who || "?")}</strong>: ${formatBringItemHtml(x)}</span>
+            <button type="button" class="bring-change-btn" title="Planänderung – altes durchstreichen">↻</button>
+          </div>
+          <div class="bring-change-panel" hidden>
+            <form class="bring-change-form" data-id="${escapeHtml(x.id)}">
+              <input name="item" placeholder="Neues Mitbringsel…" maxlength="120" required />
+              <button type="submit" class="btn btn-ghost small">So ändern</button>
+            </form>
+            <p class="form-note small">Altes wird handschriftlich durchgestrichen.</p>
+          </div>
+        </li>`
       ).join("")}</ul>`
     : `<p class="form-note small">Noch niemand eingetragen.</p>`;
   const whoField = auth.isAuthed
     ? `<input type="hidden" name="who" value="${escapeHtml(auth.member || "")}" />`
     : `<input type="text" name="who" placeholder="Dein Name" maxlength="60" autocomplete="name" required />`;
   return `
-    <details class="event-bring">
+    <details class="event-bring" open>
       <summary>🥗 Wer bringt was · ${items.length}</summary>
       ${listHtml}
       <form class="event-bring-form inline" data-eventid="${escapeHtml(ev.id)}">
@@ -2230,8 +2272,26 @@ function renderEventBringBlock(ev) {
         <input name="item" placeholder="z. B. Salat" maxlength="120" required />
         <button type="submit" class="btn btn-ghost small">Eintragen</button>
       </form>
-      <p class="form-note small">Oder per WhatsApp: <em>Mitbringen ${escapeHtml(ev.title)}: Salat</em></p>
+      <p class="form-note small">Planänderung? Nochmal mit gleichem Namen eintragen oder ↻ tippen. WhatsApp: <em>Mitbringen ${escapeHtml(ev.title)}: Salat</em></p>
     </details>`;
+}
+
+async function applyBringPlanChange(entryId, newItem) {
+  const entry = eventBringCache.find((x) => x.id === entryId);
+  if (!entry) throw new Error("Eintrag nicht gefunden");
+  const next = String(newItem || "").trim().slice(0, 120);
+  if (!next) throw new Error("Bitte neues Mitbringsel angeben");
+  if (normalizeBringWho(next) === normalizeBringWho(entry.item)) {
+    throw new Error("Das steht schon so da.");
+  }
+  const struck = Array.isArray(entry.struckItems) ? [...entry.struckItems] : [];
+  if (entry.item) struck.push(String(entry.item).slice(0, 120));
+  const struckItems = struck.slice(-6);
+  await updateDoc(doc(db, "eventBring", entryId), {
+    item: next,
+    struckItems,
+    updatedAt: serverTimestamp(),
+  });
 }
 
 async function submitEventBring(eventId, form) {
@@ -2246,24 +2306,50 @@ async function submitEventBring(eventId, form) {
   }
   const ev = eventsCache.find((x) => x.id === eventId);
   if (!ev) return;
-  if (firebaseReady) {
-    try {
-      await addDoc(collection(db, "eventBring"), {
-        eventId,
-        eventTitle: ev.title || "",
-        who,
-        item,
-        createdAt: serverTimestamp(),
-      });
-      if (itemInput) itemInput.value = "";
-      if (whoInput && whoInput.type !== "hidden") whoInput.value = "";
-      showToast("Eingetragen.", "success");
-    } catch (err) {
-      console.error(err);
-      showToast("Speichern fehlgeschlagen.", "error");
-    }
-  } else {
+  if (!firebaseReady) {
     showToast("Nur mit Firebase-Verbindung möglich.", "error");
+    return;
+  }
+  try {
+    const existing = eventBringForEvent(eventId).find(
+      (x) => normalizeBringWho(x.who) === normalizeBringWho(who)
+    );
+    if (existing) {
+      await applyBringPlanChange(existing.id, item);
+      if (itemInput) itemInput.value = "";
+      showToast("Planänderung notiert ✏️", "success");
+      return;
+    }
+    await addDoc(collection(db, "eventBring"), {
+      eventId,
+      eventTitle: ev.title || "",
+      who,
+      item,
+      struckItems: [],
+      createdAt: serverTimestamp(),
+    });
+    if (itemInput) itemInput.value = "";
+    if (whoInput && whoInput.type !== "hidden") whoInput.value = "";
+    showToast("Eingetragen.", "success");
+  } catch (err) {
+    console.error(err);
+    showToast(err.message || "Speichern fehlgeschlagen.", "error");
+  }
+}
+
+async function changeEventBring(entryId, form) {
+  const itemInput = form.querySelector('input[name="item"]');
+  const item = String(itemInput?.value || "").trim().slice(0, 120);
+  if (!firebaseReady) {
+    showToast("Nur mit Firebase-Verbindung möglich.", "error");
+    return;
+  }
+  try {
+    await applyBringPlanChange(entryId, item);
+    showToast("Planänderung notiert ✏️", "success");
+  } catch (err) {
+    console.error(err);
+    showToast(err.message || "Ändern fehlgeschlagen.", "error");
   }
 }
 
