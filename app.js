@@ -15,7 +15,8 @@ import {
   serverTimestamp,
   setDoc,
   deleteField,
-  increment
+  increment,
+  writeBatch
 } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
 import { firebaseConfig } from "./firebase-config.js";
 
@@ -760,12 +761,14 @@ const auth = {
     renderPlaylist();
     renderKandidaten();
     renderSchaeden();
+    renderFestorga();
     renderBewohner();
     renderHausFeatures();
     renderGuestsList();
     renderNachrichten();
     renderRoomOffer();
     populateSchadenZustaendigSelect();
+    populateFestorgaAssigneeSelect();
     syncKalenderTabs();
     fillMemberProfileForm();
     renderSettingsBewohnerRoster();
@@ -776,6 +779,7 @@ const auth = {
     renderWellnessBelegung();
     renderJacuzziPanel();
     renderWhatsappSettings();
+    if (this.isMember) setTimeout(maybeOpenFestorgaFromHash, 60);
   }
 };
 
@@ -8384,8 +8388,34 @@ document.querySelectorAll("[data-intern-tab]").forEach(tab => {
     const name = key.charAt(0).toUpperCase() + key.slice(1);
     $("ternTab" + name)?.classList.remove("hidden");
     if (key === "garten") renderGartenWeek();
+    if (key === "festorga") renderFestorga();
   });
 });
+
+function openInternTab(key) {
+  const tab = document.querySelector(`[data-intern-tab="${key}"]`);
+  if (tab) tab.click();
+}
+
+function maybeOpenFestorgaFromHash() {
+  const hash = (location.hash || "").replace(/^#/, "");
+  if (hash !== "festorga") return;
+  // Festorga nur für angemeldete WG-Mitglieder (Intern-Bereich)
+  if (!auth.isMember) {
+    showToast("Festorga ist nur im WG-Intern nach Anmeldung sichtbar.", "info");
+    openLoginDialog();
+    return;
+  }
+  openInternTab("festorga");
+  const intern = document.getElementById("intern");
+  if (!intern) return;
+  const navH = document.querySelector(".nav")?.offsetHeight || 64;
+  const y = intern.getBoundingClientRect().top + window.pageYOffset - navH - 10;
+  window.scrollTo({ top: Math.max(0, y), left: 0, behavior: "smooth" });
+}
+
+window.addEventListener("hashchange", () => maybeOpenFestorgaFromHash());
+window.addEventListener("load", () => setTimeout(maybeOpenFestorgaFromHash, 80));
 
 /* ==========================================================================
    Gartenbewässerung · Wochenplan (config/gartenPlan)
@@ -9533,6 +9563,655 @@ $("kandidatForm")?.addEventListener("submit", async (e) => {
 /* ==========================================================================
    Schäden (nur für WG)
    ========================================================================== */
+
+let festorgaCache = [];
+let festorgaTasksCache = [];
+let selectedFestorgaId = localStorage.getItem("festorgaSelectedId") || null;
+
+const FESTORGA_FOOD_LABEL = {
+  potluck: "Mitbring-Buffet",
+  catered: "Organisiertes Essen",
+  mixed: "Gemischt",
+  none: "Kein Fokus Essen",
+};
+
+const FESTORGA_CAT_LABEL = {
+  musik: "Musik",
+  gaeste: "Gäste / Promo",
+  deko: "Dekoration",
+  bar: "Bar / Getränke",
+  essen: "Essen / Grill",
+  location: "Ort / Setup",
+  cleanup: "Aufräumen",
+  other: "Sonstiges",
+};
+
+const FESTORGA_TEMPLATES = {
+  blank: { id: "blank", label: "Leer", foodMode: "none", notes: "", tasks: [] },
+  grillfest: {
+    id: "grillfest",
+    label: "Grillfest / Sommerparty",
+    foodMode: "potluck",
+    notes: "Jeder Gast bringt etwas mit. Kontingent & Gästeliste absprechen. Eine Person übernimmt den Grill.",
+    tasks: [
+      { title: "Musik / Sound", category: "musik", description: "Playlist, Band oder DJ", sort: 10, daysBeforeFest: 1 },
+      { title: "Gästeliste / Promo / Einladung", category: "gaeste", description: "Einladen, Kontingent im Blick", sort: 20, daysBeforeFest: 5 },
+      { title: "Dekoration / Gestaltung", category: "deko", description: "Ambiente & Deko", sort: 30, daysBeforeFest: 1 },
+      { title: "Bar / Getränke", category: "bar", description: "Getränke & Bar vorbereiten", sort: 40, daysBeforeFest: 1 },
+      { title: "Grill", category: "essen", description: "Grill, Würste, Gemüse, Fleisch", sort: 50, daysBeforeFest: 1 },
+      { title: "Mitbring-Liste pushen", category: "essen", description: "Website → Wer bringt was", sort: 60, daysBeforeFest: 3 },
+    ],
+  },
+  indoor: {
+    id: "indoor",
+    label: "Indoor-Party",
+    foodMode: "mixed",
+    notes: "Snacks/Getränke organisieren, Lautstärke & Nachbarn im Blick.",
+    tasks: [
+      { title: "Musik / Playlist", category: "musik", sort: 10, daysBeforeFest: 1 },
+      { title: "Einladungen / Gästeliste", category: "gaeste", sort: 20, daysBeforeFest: 5 },
+      { title: "Raum / Setup", category: "location", sort: 30, daysBeforeFest: 1 },
+      { title: "Deko", category: "deko", sort: 40, daysBeforeFest: 1 },
+      { title: "Getränke", category: "bar", sort: 50, daysBeforeFest: 1 },
+      { title: "Snacks / Essen", category: "essen", sort: 60, daysBeforeFest: 1 },
+      { title: "Aufräumen am nächsten Tag", category: "cleanup", sort: 70, daysBeforeFest: 0 },
+    ],
+  },
+  brunch: {
+    id: "brunch",
+    label: "Brunch / Tagesfest",
+    foodMode: "potluck",
+    notes: "Mitbring-Brunch: Salate, Gebäck, Obst.",
+    tasks: [
+      { title: "Einladungen", category: "gaeste", sort: 10, daysBeforeFest: 5 },
+      { title: "Tisch / Deko", category: "deko", sort: 20, daysBeforeFest: 1 },
+      { title: "Getränke (Kaffee, Saft, …)", category: "bar", sort: 30, daysBeforeFest: 1 },
+      { title: "Warmhaltendes / Hauptstück", category: "essen", sort: 40, daysBeforeFest: 1 },
+      { title: "Mitbring-Liste koordinieren", category: "essen", sort: 50, daysBeforeFest: 3 },
+      { title: "Aufräumen", category: "cleanup", sort: 60, daysBeforeFest: 0 },
+    ],
+  },
+  winter: {
+    id: "winter",
+    label: "Winterfest / Fondue",
+    foodMode: "mixed",
+    notes: "Fondue/Raclette oder warmes Buffet.",
+    tasks: [
+      { title: "Einladungen", category: "gaeste", sort: 10, daysBeforeFest: 7 },
+      { title: "Deko / Lichter", category: "deko", sort: 20, daysBeforeFest: 1 },
+      { title: "Getränke", category: "bar", sort: 30, daysBeforeFest: 1 },
+      { title: "Fondue / Hauptessen", category: "essen", sort: 40, daysBeforeFest: 1 },
+      { title: "Musik", category: "musik", sort: 50, daysBeforeFest: 1 },
+      { title: "Aufräumen", category: "cleanup", sort: 60, daysBeforeFest: 0 },
+    ],
+  },
+};
+
+function festorgaAddDaysYmd(ymd, delta) {
+  if (!ymd) return null;
+  const d = new Date(`${ymd}T12:00:00Z`);
+  d.setUTCDate(d.getUTCDate() + delta);
+  return d.toISOString().slice(0, 10);
+}
+
+function parseRemindDays(raw, fallback = [7, 3, 1]) {
+  if (raw == null || String(raw).trim() === "") return fallback;
+  const nums = String(raw)
+    .split(/[,;\s]+/)
+    .map((x) => Number(x))
+    .filter((n) => Number.isFinite(n) && n >= 0);
+  return nums.length ? [...new Set(nums)].sort((a, b) => b - a) : fallback;
+}
+
+function sortedFestorgaFests() {
+  const rank = { active: 0, draft: 1, archived: 2 };
+  return [...festorgaCache].sort((a, b) => {
+    const r = (rank[a.status] ?? 9) - (rank[b.status] ?? 9);
+    if (r !== 0) return r;
+    return String(b.date || "").localeCompare(String(a.date || "")) || String(a.title || "").localeCompare(String(b.title || ""));
+  });
+}
+
+function getSelectedFestorga() {
+  if (selectedFestorgaId) {
+    const hit = festorgaCache.find((f) => f.id === selectedFestorgaId);
+    if (hit) return hit;
+  }
+  const sorted = sortedFestorgaFests();
+  const preferred = sorted.find((f) => f.status === "active") || sorted[0] || null;
+  if (preferred) {
+    selectedFestorgaId = preferred.id;
+    localStorage.setItem("festorgaSelectedId", preferred.id);
+  }
+  return preferred;
+}
+
+function setSelectedFestorga(id) {
+  selectedFestorgaId = id || null;
+  if (id) localStorage.setItem("festorgaSelectedId", id);
+  else localStorage.removeItem("festorgaSelectedId");
+  renderFestorga();
+}
+
+function festorgaDaysUntil(ymd) {
+  if (!ymd) return null;
+  const today = zurichTodayYmd();
+  const a = new Date(`${today}T12:00:00Z`);
+  const b = new Date(`${ymd}T12:00:00Z`);
+  return Math.round((b - a) / 86400000);
+}
+
+function populateFestorgaAssigneeSelect() {
+  const sel = $("festorgaAssignees");
+  if (!sel) return;
+  const adults = getActiveAdults();
+  sel.innerHTML = adults
+    .map((b) => `<option value="${escapeAttr(b.name)}">${mEmoji(b.name)} ${escapeHtml(mLabel(b.name))}</option>`)
+    .join("");
+}
+
+function populateFestorgaFestSelect() {
+  const sel = $("festorgaFestSelect");
+  if (!sel) return;
+  const fests = sortedFestorgaFests();
+  const fest = getSelectedFestorga();
+  if (!fests.length) {
+    sel.innerHTML = `<option value="">— noch kein Fest —</option>`;
+    return;
+  }
+  sel.innerHTML = fests
+    .map((f) => {
+      const mark = f.status === "active" ? "🟢" : f.status === "draft" ? "🟡" : "⚪";
+      const label = `${mark} ${f.title || "Ohne Titel"}${f.date ? ` · ${f.date}` : ""}`;
+      return `<option value="${escapeAttr(f.id)}" ${fest && fest.id === f.id ? "selected" : ""}>${escapeHtml(label)}</option>`;
+    })
+    .join("");
+}
+
+function fillFestorgaFestForm(fest) {
+  const form = $("festorgaFestForm");
+  if (!form) return;
+  if (!fest) {
+    form.classList.add("is-disabled");
+    form.querySelectorAll("input, textarea, select, button").forEach((el) => {
+      if (el.id === "festorgaNewBtn") return;
+      el.disabled = true;
+    });
+    return;
+  }
+  form.classList.remove("is-disabled");
+  form.querySelectorAll("input, textarea, select, button").forEach((el) => {
+    el.disabled = false;
+  });
+  $("festorgaEditId").value = fest.id;
+  $("festorgaEditTitle").value = fest.title || "";
+  $("festorgaEditDate").value = fest.date || "";
+  $("festorgaEditStatus").value = fest.status || "draft";
+  $("festorgaEditLocation").value = fest.location || "";
+  $("festorgaEditFood").value = fest.foodMode || "none";
+  $("festorgaEditMaxPerson").value = fest.maxGuestsPerPerson ?? "";
+  $("festorgaEditMaxTotal").value = fest.maxGuestsTotal ?? "";
+  $("festorgaEditRemind").value = Array.isArray(fest.remindDaysBefore)
+    ? fest.remindDaysBefore.join(", ")
+    : "7, 3, 1";
+  $("festorgaEditNotes").value = fest.notes || "";
+  $("festorgaEditShare").value = fest.shareMessage || "";
+}
+
+async function createFestorgaTasksFromTemplate(festId, templateId, festDate, remindDays) {
+  const tpl = FESTORGA_TEMPLATES[templateId] || FESTORGA_TEMPLATES.blank;
+  if (!tpl.tasks?.length) return 0;
+  const existingTitles = new Set(
+    festorgaTasksCache.filter((t) => t.festId === festId).map((t) => String(t.title || "").toLowerCase())
+  );
+  let added = 0;
+  const batch = writeBatch(db);
+  for (const t of tpl.tasks) {
+    if (existingTitles.has(String(t.title).toLowerCase())) continue;
+    const tr = doc(collection(db, "festorgaTasks"));
+    const due = festDate && t.daysBeforeFest != null ? festorgaAddDaysYmd(festDate, -Number(t.daysBeforeFest)) : null;
+    batch.set(tr, {
+      festId,
+      title: t.title,
+      description: t.description || "",
+      category: t.category || "other",
+      assignees: [],
+      dueDate: due,
+      status: "open",
+      sort: t.sort || 100,
+      remindDaysBefore: remindDays,
+      lastReminderAt: null,
+      lastReminderDayKey: null,
+      createdAt: serverTimestamp(),
+      createdBy: auth.member || null,
+    });
+    added += 1;
+  }
+  if (added) await batch.commit();
+  return added;
+}
+
+function renderFestorga() {
+  const meta = $("festorgaMeta");
+  const list = $("festorgaList");
+  if (!list) return;
+
+  const panel = $("ternTabFestorga");
+  const gated = panel?.querySelectorAll(
+    ".festorga-toolbar, #festorgaNewDetails, #festorgaFestForm, #festorgaTaskForm, details.admin-toggle"
+  );
+  if (!auth.isMember) {
+    gated?.forEach((el) => {
+      el.hidden = true;
+    });
+    if (meta) {
+      meta.innerHTML = `<strong>🔒 Nur für angemeldete WG-Mitglieder.</strong> Bitte einloggen, dann erscheint Festorga unter WG-Intern.`;
+    }
+    list.innerHTML = `<div class="empty-state">Nach der Anmeldung kannst du Feste anlegen und Aufgaben verteilen.</div>`;
+    return;
+  }
+  gated?.forEach((el) => {
+    el.hidden = false;
+  });
+
+  populateFestorgaAssigneeSelect();
+  populateFestorgaFestSelect();
+  const fest = getSelectedFestorga();
+  fillFestorgaFestForm(fest);
+
+  if (meta) {
+    if (!fest) {
+      meta.innerHTML = `<strong>Noch kein Fest.</strong> Legt oben ein neues Fest aus einer Vorlage an – wiederverwendbar für jede Party.`;
+    } else {
+      const tasks = festorgaTasksCache.filter((t) => t.festId === fest.id);
+      const openCount = tasks.filter((t) => t.status !== "done").length;
+      const remind = Array.isArray(fest.remindDaysBefore) ? fest.remindDaysBefore.join("/") : "7/3/1";
+      meta.innerHTML = `
+        <strong>🎉 ${escapeHtml(fest.title)}</strong>
+        <span class="festorga-status-pill status-${escapeAttr(fest.status || "draft")}">${escapeHtml(fest.status || "draft")}</span>
+        ${fest.date ? ` · 📅 ${escapeHtml(fest.date)}` : ""}
+        ${fest.location ? ` · 📍 ${escapeHtml(fest.location)}` : ""}
+        ${fest.foodMode ? ` · 🥗 ${escapeHtml(FESTORGA_FOOD_LABEL[fest.foodMode] || fest.foodMode)}` : ""}
+        ${(fest.maxGuestsPerPerson || fest.maxGuestsTotal) ? ` · 👥 ${fest.maxGuestsPerPerson ? `max. ${fest.maxGuestsPerPerson}/Pers.` : ""}${fest.maxGuestsTotal ? ` · ${fest.maxGuestsTotal} total` : ""}` : ""}
+        <br><span class="form-note" style="margin:6px 0 0;display:inline-block;">${openCount}/${tasks.length} offen · Erinnerungen ${escapeHtml(remind)} Tage vorher (nur Status «active»)</span>
+        ${fest.notes ? `<br><span class="form-note" style="margin:4px 0 0;display:inline-block;">${escapeHtml(fest.notes)}</span>` : ""}
+      `;
+    }
+  }
+
+  if (!fest) {
+    list.innerHTML = `<div class="empty-state">Kein Fest ausgewählt – «Neues Fest» starten.</div>`;
+    return;
+  }
+
+  const tasks = festorgaTasksCache
+    .filter((t) => t.festId === fest.id)
+    .sort((a, b) => (a.sort || 100) - (b.sort || 100) || String(a.title || "").localeCompare(String(b.title || "")));
+  if (!tasks.length) {
+    list.innerHTML = `<div class="empty-state">Noch keine Aufgaben – Vorlage ergänzen oder unten hinzufügen.</div>`;
+    return;
+  }
+
+  const adults = getActiveAdults();
+  const festRemind = Array.isArray(fest.remindDaysBefore) ? fest.remindDaysBefore : [7, 3, 1];
+  list.innerHTML = tasks
+    .map((t) => {
+      const done = t.status === "done";
+      const days = festorgaDaysUntil(t.dueDate);
+      let dueClass = "";
+      let dueLabel = t.dueDate ? `bis ${t.dueDate}` : "ohne Deadline";
+      if (t.dueDate && days !== null) {
+        if (days < 0) {
+          dueClass = "overdue";
+          dueLabel = `überfällig (${t.dueDate})`;
+        } else if (days === 0) {
+          dueClass = "soon";
+          dueLabel = "heute fällig";
+        } else if (days <= 3) {
+          dueClass = "soon";
+          dueLabel = `in ${days} Tag(en) · ${t.dueDate}`;
+        } else {
+          dueLabel = `in ${days} Tagen · ${t.dueDate}`;
+        }
+      }
+      const assignees = Array.isArray(t.assignees) ? t.assignees : [];
+      const chips = assignees.length
+        ? assignees.map((n) => `<span class="festorga-chip">${mEmoji(n)} ${escapeHtml(mLabel(n) || n)}</span>`).join("")
+        : `<span class="form-note">noch niemand</span>`;
+      const assigneeOpts = adults
+        .map(
+          (b) =>
+            `<option value="${escapeAttr(b.name)}" ${assignees.includes(b.name) ? "selected" : ""}>${mEmoji(b.name)} ${escapeHtml(mLabel(b.name))}</option>`
+        )
+        .join("");
+      const cat = FESTORGA_CAT_LABEL[t.category] || FESTORGA_CAT_LABEL.other;
+      const remindStr = Array.isArray(t.remindDaysBefore) && t.remindDaysBefore.length
+        ? t.remindDaysBefore.join(", ")
+        : festRemind.join(", ");
+      const catOpts = Object.entries(FESTORGA_CAT_LABEL)
+        .map(([k, v]) => `<option value="${k}" ${(t.category || "other") === k ? "selected" : ""}>${escapeHtml(v)}</option>`)
+        .join("");
+      return `
+      <article class="festorga-card ${done ? "is-done" : ""}" data-id="${escapeAttr(t.id)}">
+        <div class="festorga-card-head">
+          <h3 class="festorga-title">${done ? "✅" : "⬜"} ${escapeHtml(t.title)} <span class="festorga-cat">${escapeHtml(cat)}</span></h3>
+          <span class="festorga-due ${dueClass}">${escapeHtml(dueLabel)}</span>
+        </div>
+        ${t.description ? `<p class="festorga-desc">${escapeHtml(t.description)}</p>` : ""}
+        <div class="festorga-assignees">${chips}</div>
+        <div class="festorga-actions">
+          <label class="form-note" style="display:flex;align-items:center;gap:6px;margin:0;">
+            Bis
+            <input type="date" class="festorga-due-input" data-id="${escapeAttr(t.id)}" value="${escapeAttr(t.dueDate || "")}" ${done ? "disabled" : ""} />
+          </label>
+          <select class="festorga-cat-select" data-id="${escapeAttr(t.id)}" ${done ? "disabled" : ""}>${catOpts}</select>
+          <select class="festorga-assignee-select" data-id="${escapeAttr(t.id)}" multiple size="3" ${done ? "disabled" : ""} title="Zuständige (Cmd/Ctrl für mehrere)">${assigneeOpts}</select>
+          <label class="form-note" style="display:flex;align-items:center;gap:6px;margin:0;">
+            Reminder
+            <input type="text" class="festorga-remind-input" data-id="${escapeAttr(t.id)}" value="${escapeAttr(remindStr)}" placeholder="7, 3, 1" ${done ? "disabled" : ""} style="width:7rem;" />
+          </label>
+          <button type="button" class="mini-btn" data-action="festorga-claim" data-id="${escapeAttr(t.id)}" ${done ? "disabled" : ""}>Ich übernehme</button>
+          <button type="button" class="mini-btn" data-action="festorga-toggle" data-id="${escapeAttr(t.id)}">${done ? "Wieder öffnen" : "Erledigt"}</button>
+          <button type="button" class="mini-btn danger" data-action="festorga-delete" data-id="${escapeAttr(t.id)}">Löschen</button>
+        </div>
+      </article>`;
+    })
+    .join("");
+
+  list.querySelectorAll(".festorga-due-input").forEach((inp) => {
+    inp.addEventListener("change", () => updateFestorgaTask(inp.dataset.id, { dueDate: inp.value || null }));
+  });
+  list.querySelectorAll(".festorga-cat-select").forEach((sel) => {
+    sel.addEventListener("change", () => updateFestorgaTask(sel.dataset.id, { category: sel.value }));
+  });
+  list.querySelectorAll(".festorga-assignee-select").forEach((sel) => {
+    sel.addEventListener("change", () => {
+      const assignees = [...sel.selectedOptions].map((o) => o.value);
+      updateFestorgaTask(sel.dataset.id, { assignees });
+    });
+  });
+  list.querySelectorAll(".festorga-remind-input").forEach((inp) => {
+    inp.addEventListener("change", () => {
+      updateFestorgaTask(inp.dataset.id, { remindDaysBefore: parseRemindDays(inp.value, festRemind) });
+    });
+  });
+  list.querySelectorAll("[data-action='festorga-claim']").forEach((btn) => {
+    btn.addEventListener("click", () => claimFestorgaTask(btn.dataset.id));
+  });
+  list.querySelectorAll("[data-action='festorga-toggle']").forEach((btn) => {
+    btn.addEventListener("click", () => toggleFestorgaTask(btn.dataset.id));
+  });
+  list.querySelectorAll("[data-action='festorga-delete']").forEach((btn) => {
+    btn.addEventListener("click", () => deleteFestorgaTask(btn.dataset.id));
+  });
+}
+
+async function updateFestorgaTask(id, patch) {
+  if (!requireMember("Festorga aktualisieren")) return;
+  try {
+    await updateDoc(doc(db, "festorgaTasks", id), { ...patch, updatedAt: serverTimestamp() });
+  } catch (err) {
+    showToast("Festorga speichern fehlgeschlagen: " + err.message, "error");
+  }
+}
+
+async function claimFestorgaTask(id) {
+  if (!requireMember("Aufgabe übernehmen")) return;
+  const t = festorgaTasksCache.find((x) => x.id === id);
+  if (!t) return;
+  const me = auth.member;
+  const assignees = Array.isArray(t.assignees) ? [...t.assignees] : [];
+  if (!assignees.includes(me)) assignees.push(me);
+  await updateFestorgaTask(id, { assignees });
+  showToast(`Du übernimmst «${t.title}».`, "success");
+}
+
+async function toggleFestorgaTask(id) {
+  if (!requireMember("Status ändern")) return;
+  const t = festorgaTasksCache.find((x) => x.id === id);
+  if (!t) return;
+  await updateFestorgaTask(id, { status: t.status === "done" ? "open" : "done" });
+}
+
+async function deleteFestorgaTask(id) {
+  if (!requireMember("Aufgabe löschen")) return;
+  const t = festorgaTasksCache.find((x) => x.id === id);
+  if (!t) return;
+  if (!confirm(`Aufgabe «${t.title}» löschen?`)) return;
+  try {
+    await deleteDoc(doc(db, "festorgaTasks", id));
+  } catch (err) {
+    showToast("Löschen fehlgeschlagen: " + err.message, "error");
+  }
+}
+
+$("festorgaFestSelect")?.addEventListener("change", (e) => {
+  setSelectedFestorga(e.target.value || null);
+});
+
+$("festorgaNewBtn")?.addEventListener("click", () => {
+  const d = $("festorgaNewDetails");
+  if (d) d.open = true;
+  $("festorgaNewTitle")?.focus();
+});
+
+$("festorgaNewForm")?.addEventListener("submit", async (e) => {
+  e.preventDefault();
+  if (!requireMember("Fest anlegen")) return;
+  const title = $("festorgaNewTitle")?.value?.trim();
+  if (!title) return;
+  const date = $("festorgaNewDate")?.value || null;
+  const templateId = $("festorgaNewTemplate")?.value || "blank";
+  const status = $("festorgaNewStatus")?.value || "draft";
+  const tpl = FESTORGA_TEMPLATES[templateId] || FESTORGA_TEMPLATES.blank;
+  const remindDays = [7, 3, 1];
+  try {
+    const festRef = await addDoc(collection(db, "festorga"), {
+      title,
+      date,
+      status,
+      foodMode: tpl.foodMode || "none",
+      maxGuestsTotal: null,
+      maxGuestsPerPerson: null,
+      location: "",
+      notes: tpl.notes || "",
+      shareMessage: "",
+      templateId: tpl.id,
+      remindDaysBefore: remindDays,
+      eventTitleHint: "",
+      createdAt: serverTimestamp(),
+      updatedAt: serverTimestamp(),
+      createdBy: auth.member || null,
+    });
+    await createFestorgaTasksFromTemplate(festRef.id, templateId, date, remindDays);
+    setSelectedFestorga(festRef.id);
+    e.target.reset();
+    if ($("festorgaNewTemplate")) $("festorgaNewTemplate").value = "grillfest";
+    if ($("festorgaNewStatus")) $("festorgaNewStatus").value = "active";
+    if ($("festorgaNewDetails")) $("festorgaNewDetails").open = false;
+    showToast(`Fest «${title}» angelegt.`, "success");
+  } catch (err) {
+    showToast("Anlegen fehlgeschlagen: " + err.message, "error");
+  }
+});
+
+$("festorgaFestForm")?.addEventListener("submit", async (e) => {
+  e.preventDefault();
+  if (!requireMember("Fest speichern")) return;
+  const id = $("festorgaEditId")?.value;
+  if (!id) return;
+  const remindDaysBefore = parseRemindDays($("festorgaEditRemind")?.value, [7, 3, 1]);
+  const maxPerson = $("festorgaEditMaxPerson")?.value;
+  const maxTotal = $("festorgaEditMaxTotal")?.value;
+  try {
+    await updateDoc(doc(db, "festorga", id), {
+      title: $("festorgaEditTitle")?.value?.trim() || "Fest",
+      date: $("festorgaEditDate")?.value || null,
+      status: $("festorgaEditStatus")?.value || "draft",
+      location: $("festorgaEditLocation")?.value?.trim() || "",
+      foodMode: $("festorgaEditFood")?.value || "none",
+      maxGuestsPerPerson: maxPerson === "" ? null : Number(maxPerson),
+      maxGuestsTotal: maxTotal === "" ? null : Number(maxTotal),
+      remindDaysBefore,
+      notes: $("festorgaEditNotes")?.value?.trim() || "",
+      shareMessage: $("festorgaEditShare")?.value?.trim() || "",
+      updatedAt: serverTimestamp(),
+      updatedBy: auth.member || null,
+    });
+    showToast("Fest-Einstellungen gespeichert.", "success");
+  } catch (err) {
+    showToast("Speichern fehlgeschlagen: " + err.message, "error");
+  }
+});
+
+$("festorgaArchiveBtn")?.addEventListener("click", async () => {
+  if (!requireMember("Archivieren")) return;
+  const fest = getSelectedFestorga();
+  if (!fest) return;
+  try {
+    await updateDoc(doc(db, "festorga", fest.id), {
+      status: "archived",
+      updatedAt: serverTimestamp(),
+    });
+    showToast(`«${fest.title}» archiviert.`, "success");
+  } catch (err) {
+    showToast(err.message, "error");
+  }
+});
+
+$("festorgaDuplicateBtn")?.addEventListener("click", async () => {
+  if (!requireMember("Duplizieren")) return;
+  const fest = getSelectedFestorga();
+  if (!fest) return;
+  const title = prompt("Titel für die Kopie:", `${fest.title} (Kopie)`);
+  if (!title) return;
+  try {
+    const { id: _old, createdAt: _c, updatedAt: _u, ...rest } = fest;
+    const ref = await addDoc(collection(db, "festorga"), {
+      ...rest,
+      title: title.trim(),
+      status: "draft",
+      createdAt: serverTimestamp(),
+      updatedAt: serverTimestamp(),
+      createdBy: auth.member || null,
+    });
+    const tasks = festorgaTasksCache.filter((t) => t.festId === fest.id);
+    if (tasks.length) {
+      const batch = writeBatch(db);
+      for (const t of tasks) {
+        const tr = doc(collection(db, "festorgaTasks"));
+        batch.set(tr, {
+          festId: ref.id,
+          title: t.title,
+          description: t.description || "",
+          category: t.category || "other",
+          assignees: [],
+          dueDate: null,
+          status: "open",
+          sort: t.sort || 100,
+          remindDaysBefore: Array.isArray(t.remindDaysBefore) ? t.remindDaysBefore : [7, 3, 1],
+          lastReminderAt: null,
+          lastReminderDayKey: null,
+          createdAt: serverTimestamp(),
+          createdBy: auth.member || null,
+        });
+      }
+      await batch.commit();
+    }
+    setSelectedFestorga(ref.id);
+    showToast("Fest dupliziert (Aufgaben ohne Zuständige/Deadlines).", "success");
+  } catch (err) {
+    showToast("Duplizieren fehlgeschlagen: " + err.message, "error");
+  }
+});
+
+$("festorgaApplyTemplateBtn")?.addEventListener("click", async () => {
+  if (!requireMember("Vorlage anwenden")) return;
+  const fest = getSelectedFestorga();
+  if (!fest) return;
+  const keys = Object.keys(FESTORGA_TEMPLATES).filter((k) => k !== "blank");
+  const choice = prompt(
+    `Welche Vorlage ergänzen?\n${keys.map((k) => `- ${k}: ${FESTORGA_TEMPLATES[k].label}`).join("\n")}`,
+    fest.templateId && fest.templateId !== "blank" ? fest.templateId : "grillfest"
+  );
+  if (!choice || !FESTORGA_TEMPLATES[choice]) return;
+  try {
+    const remind = Array.isArray(fest.remindDaysBefore) ? fest.remindDaysBefore : [7, 3, 1];
+    const n = await createFestorgaTasksFromTemplate(fest.id, choice, fest.date, remind);
+    await updateDoc(doc(db, "festorga", fest.id), {
+      templateId: choice,
+      updatedAt: serverTimestamp(),
+    });
+    showToast(n ? `${n} Aufgabe(n) ergänzt.` : "Alle Vorlagen-Aufgaben waren schon vorhanden.", "success");
+  } catch (err) {
+    showToast(err.message, "error");
+  }
+});
+
+$("festorgaDeleteFestBtn")?.addEventListener("click", async () => {
+  if (!requireMember("Fest löschen")) return;
+  const fest = getSelectedFestorga();
+  if (!fest) return;
+  if (!confirm(`Fest «${fest.title}» und alle zugehörigen Aufgaben wirklich löschen?`)) return;
+  try {
+    const tasks = festorgaTasksCache.filter((t) => t.festId === fest.id);
+    const batch = writeBatch(db);
+    for (const t of tasks) batch.delete(doc(db, "festorgaTasks", t.id));
+    batch.delete(doc(db, "festorga", fest.id));
+    await batch.commit();
+    setSelectedFestorga(null);
+    showToast("Fest gelöscht.", "success");
+  } catch (err) {
+    showToast(err.message, "error");
+  }
+});
+
+$("festorgaTaskForm")?.addEventListener("submit", async (e) => {
+  e.preventDefault();
+  if (!requireMember("Aufgabe anlegen")) return;
+  const fest = getSelectedFestorga();
+  if (!fest) {
+    showToast("Zuerst ein Fest anlegen oder auswählen.", "info");
+    return;
+  }
+  const title = $("festorgaTitle")?.value?.trim();
+  if (!title) return;
+  const dueDate = $("festorgaDue")?.value || null;
+  const description = $("festorgaDesc")?.value?.trim() || "";
+  const category = $("festorgaCategory")?.value || "other";
+  const sel = $("festorgaAssignees");
+  const assignees = sel ? [...sel.selectedOptions].map((o) => o.value) : [];
+  const festRemind = Array.isArray(fest.remindDaysBefore) ? fest.remindDaysBefore : [7, 3, 1];
+  const remindRaw = $("festorgaTaskRemind")?.value;
+  const remindDaysBefore = remindRaw && String(remindRaw).trim()
+    ? parseRemindDays(remindRaw, festRemind)
+    : festRemind;
+  const maxSort = festorgaTasksCache
+    .filter((t) => t.festId === fest.id)
+    .reduce((m, t) => Math.max(m, t.sort || 0), 0);
+  try {
+    await addDoc(collection(db, "festorgaTasks"), {
+      festId: fest.id,
+      title,
+      description,
+      category,
+      assignees,
+      dueDate,
+      status: "open",
+      sort: maxSort + 10,
+      remindDaysBefore,
+      lastReminderAt: null,
+      lastReminderDayKey: null,
+      createdAt: serverTimestamp(),
+      createdBy: auth.member || null,
+    });
+    e.target.reset();
+    populateFestorgaAssigneeSelect();
+    showToast("Aufgabe gespeichert.", "success");
+  } catch (err) {
+    showToast("Speichern fehlgeschlagen: " + err.message, "error");
+  }
+});
 
 let schaedenCache = [];
 const PRIO_LABEL = { low: "Niedrig", medium: "Mittel", high: "Hoch" };
@@ -11185,6 +11864,7 @@ function renderDeferredFromCaches() {
   renderPlaylist();
   renderKandidaten();
   renderSchaeden();
+  renderFestorga();
   renderGuestsList();
   renderNachrichten();
   renderRoomOffer();
@@ -11359,6 +12039,16 @@ function setupListeners() {
     persistFirestoreCache("schaeden", schaedenCache);
     renderSchaeden();
   }, (err) => console.warn("schaeden listener:", err.message));
+
+  onSnapshot(collection(db, "festorga"), (snap) => {
+    festorgaCache = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
+    renderFestorga();
+  }, (err) => console.warn("festorga listener:", err.message));
+
+  onSnapshot(collection(db, "festorgaTasks"), (snap) => {
+    festorgaTasksCache = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
+    renderFestorga();
+  }, (err) => console.warn("festorgaTasks listener:", err.message));
 
   onSnapshot(query(collection(db, "musik"), orderBy("createdAt", "asc")), (snap) => {
     const prevId = musikCache[currentSongIdx]?.id;

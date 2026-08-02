@@ -101,6 +101,12 @@ service cloud.firestore {
     match /zimmerfotos/{document=**} {
       allow read, write: if true;
     }
+    match /festorga/{document=**} {
+      allow read, write: if true;
+    }
+    match /festorgaTasks/{document=**} {
+      allow read, write: if true;
+    }
     match /gustavRemindPending/{document=**} {
       allow read, write: if false;
     }

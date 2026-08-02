@@ -5492,9 +5492,17 @@ body.is-spotify-track .vinyl {
   align-self: flex-start;
 }
 
-/* WG-Intern nur für echte Mitglieder (nicht Gäste) */
+/* WG-Intern + Festorga nur für echte Mitglieder (nicht Gäste, nicht öffentlich) */
 body.wg-guest #intern,
-body.wg-guest a[href="#intern"] {
+body.wg-guest a[href="#intern"],
+body.wg-guest [data-intern-tab="festorga"],
+body.wg-guest #ternTabFestorga {
+  display: none !important;
+}
+body:not(.wg-member) #ternTabFestorga .festorga-toolbar,
+body:not(.wg-member) #ternTabFestorga #festorgaFestForm,
+body:not(.wg-member) #ternTabFestorga #festorgaNewDetails,
+body:not(.wg-member) #ternTabFestorga #festorgaTaskForm {
   display: none !important;
 }
 
@@ -6477,4 +6485,140 @@ body.wg-guest a[href="#intern"] {
 }
 .event-bring .form-note {
   color: var(--text-muted);
+}
+
+/* Festorga */
+.festorga-toolbar {
+  margin-bottom: 12px;
+}
+.festorga-toolbar-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+}
+.festorga-fest-form {
+  margin-bottom: 14px;
+}
+.festorga-fest-form.is-disabled {
+  opacity: 0.55;
+}
+.festorga-form-heading {
+  margin: 0 0 10px;
+  font-size: 1.05rem;
+}
+.festorga-meta {
+  margin: 0 0 14px;
+  padding: 12px 14px;
+  border-radius: var(--r-md);
+  background: linear-gradient(135deg, rgba(78, 179, 196, 0.12), rgba(232, 168, 74, 0.1));
+  border: 1px solid rgba(78, 179, 196, 0.22);
+  font-size: 0.95rem;
+  line-height: 1.45;
+}
+.festorga-meta:empty { display: none; }
+.festorga-status-pill {
+  display: inline-block;
+  margin-left: 6px;
+  padding: 1px 8px;
+  border-radius: 999px;
+  font-size: 0.75rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  vertical-align: middle;
+}
+.festorga-status-pill.status-active {
+  background: rgba(78, 179, 196, 0.2);
+  color: #1a6b78;
+}
+.festorga-status-pill.status-draft {
+  background: rgba(232, 168, 74, 0.22);
+  color: #8a5a12;
+}
+.festorga-status-pill.status-archived {
+  background: rgba(120, 120, 120, 0.15);
+  color: #555;
+}
+.festorga-list {
+  display: grid;
+  gap: 12px;
+  margin-bottom: 16px;
+}
+.festorga-card {
+  background: var(--card);
+  border: 1px solid var(--card-border);
+  border-left: 4px solid var(--lake);
+  border-radius: var(--r-md);
+  padding: 14px 16px;
+  box-shadow: var(--card-shadow);
+  display: grid;
+  gap: 8px;
+}
+.festorga-card.is-done {
+  opacity: 0.62;
+  border-left-color: var(--text-muted);
+}
+.festorga-card.is-done .festorga-title {
+  text-decoration: line-through;
+}
+.festorga-card-head {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 12px;
+  align-items: baseline;
+  justify-content: space-between;
+}
+.festorga-title {
+  margin: 0;
+  font-size: 1.05rem;
+}
+.festorga-cat {
+  display: inline-block;
+  margin-left: 6px;
+  font-size: 0.72rem;
+  font-weight: 600;
+  color: var(--text-muted);
+  text-decoration: none;
+  vertical-align: middle;
+}
+.festorga-due {
+  font-size: 0.85rem;
+  color: var(--text-muted);
+  white-space: nowrap;
+}
+.festorga-due.soon { color: var(--amber); font-weight: 600; }
+.festorga-due.overdue { color: var(--berry); font-weight: 600; }
+.festorga-desc {
+  margin: 0;
+  color: var(--text-muted);
+  font-size: 0.92rem;
+}
+.festorga-assignees {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.festorga-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: rgba(78, 179, 196, 0.12);
+  font-size: 0.85rem;
+}
+.festorga-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+}
+.festorga-actions select[multiple] {
+  min-width: 10rem;
+  min-height: 5.5rem;
+}
+.btn.danger,
+.mini-btn.danger {
+  color: var(--berry);
 }

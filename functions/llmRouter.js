@@ -105,6 +105,7 @@ Beispiele:
 - Dein Tag / Morgen-Übersicht -> *Dein Tag an* (Opt-in) oder *Dein Tag* (Vorschau)
 - Einkaufsliste: Pfeffer auf die Liste / Was fehlt? / Pfeffer erledigt
 - Mitbringen Event: Salat -> *Mitbringen Spieleabend: Salat* / *Wer bringt was Spieleabend?*
+- Festorga / Fest Organisation / Party-Orga / meine Fest-Aufgabe -> *Festorga* / *Festorga Feste* / *Festorga Sommerfest* / *Festorga Aufgabe: Dekoration* / *Festorga erledigt: Musik* / *Meine Festorga*
 - Kino heute Film -> *Kino heute Avatar*
 - Bewerber Lisa -> Status anzeigen; Bewerber Status Lisa: eingeladen -> aktualisieren
 - Umfrage mit Deadline -> *Umfrage: Titel | wann | bis Donnerstag*

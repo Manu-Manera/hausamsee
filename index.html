@@ -18,7 +18,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,400;0,9..144,600;0,9..144,700;1,9..144,400&family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet" />
-  <link rel="stylesheet" href="styles.css?v=20260802j" />
+  <link rel="stylesheet" href="styles.css?v=20260802n" />
   <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Ctext y='.9em' font-size='90'%3E🏡%3C/text%3E%3C/svg%3E" />
 </head>
 <body>
@@ -560,6 +560,7 @@
     <div class="kalender-wrap">
       <div class="kalender-tabs" role="tablist">
         <button class="tab active" data-intern-tab="kandidaten">🏠 Kandidat:innen</button>
+        <button class="tab" data-intern-tab="festorga" data-wg-only>🎉 Festorga</button>
         <button class="tab" data-intern-tab="garten">💧 Gartenbewässerung</button>
         <button class="tab" data-intern-tab="schaeden">🔧 Schäden</button>
         <button class="tab" data-intern-tab="zimmer">🚪 Zimmer frei</button>
@@ -607,6 +608,180 @@
             </div>
             <button type="submit" class="btn btn-primary">Kandidat:in speichern</button>
             <p class="form-note">Jede:r WG-Mitglied kann 👍 / 🤔 / 👎 abstimmen.</p>
+          </form>
+        </details>
+      </div>
+
+      <!-- Festorga: nur WG-Intern (Eltern-Section data-wg-only), nach Login -->
+      <div class="kalender-panel hidden" id="ternTabFestorga" data-wg-only>
+        <p class="section-lead" style="text-align:left;margin-top:0;">
+          Nur für angemeldete WG-Mitglieder. Flexibles Orga-Framework für jedes Fest oder jede Party:
+          Rahmen festlegen, Aufgaben verteilen, Deadlines setzen. Gustav erinnert zuständige Personen
+          per WhatsApp (Standard <strong>7 / 3 / 1 Tage</strong> vorher, pro Fest &amp; Aufgabe anpassbar).
+          Mitbring-Buffet optional über <a href="#events">Events → Wer bringt was</a>.
+        </p>
+
+        <div class="festorga-toolbar form-card">
+          <div class="row" style="align-items:flex-end;gap:12px;flex-wrap:wrap;">
+            <div class="field" style="flex:1;min-width:200px;">
+              <label for="festorgaFestSelect">Fest / Party</label>
+              <select id="festorgaFestSelect"></select>
+            </div>
+            <div class="festorga-toolbar-actions">
+              <button type="button" class="btn btn-ghost" id="festorgaDuplicateBtn" title="Aktuelles Fest inkl. Aufgaben kopieren">Duplizieren</button>
+              <button type="button" class="btn btn-ghost" id="festorgaArchiveBtn">Archivieren</button>
+              <button type="button" class="btn btn-primary" id="festorgaNewBtn">Neues Fest</button>
+            </div>
+          </div>
+        </div>
+
+        <details class="admin-toggle" id="festorgaNewDetails">
+          <summary>🆕 Neues Fest aus Vorlage anlegen</summary>
+          <form id="festorgaNewForm" class="form-card">
+            <div class="row">
+              <div class="field">
+                <label for="festorgaNewTitle">Titel</label>
+                <input id="festorgaNewTitle" required placeholder="z. B. Winterfest, Spieleabend, Geburtstag…" />
+              </div>
+              <div class="field">
+                <label for="festorgaNewDate">Datum</label>
+                <input id="festorgaNewDate" type="date" />
+              </div>
+            </div>
+            <div class="row">
+              <div class="field">
+                <label for="festorgaNewTemplate">Vorlage</label>
+                <select id="festorgaNewTemplate">
+                  <option value="blank">Leer (nur Rahmen)</option>
+                  <option value="grillfest" selected>Grillfest / Sommerparty</option>
+                  <option value="indoor">Indoor-Party</option>
+                  <option value="brunch">Brunch / Tagesfest</option>
+                  <option value="winter">Winterfest / Fondue</option>
+                </select>
+              </div>
+              <div class="field">
+                <label for="festorgaNewStatus">Status</label>
+                <select id="festorgaNewStatus">
+                  <option value="active" selected>Aktiv (Gustav + Erinnerungen)</option>
+                  <option value="draft">Entwurf</option>
+                </select>
+              </div>
+            </div>
+            <button type="submit" class="btn btn-primary">Fest anlegen</button>
+            <p class="form-note">Vorlagen legen typische Aufgaben an (ohne Zuständige) – ihr verteilt sie danach neu.</p>
+          </form>
+        </details>
+
+        <form id="festorgaFestForm" class="form-card festorga-fest-form">
+          <h3 class="festorga-form-heading">Fest-Einstellungen</h3>
+          <input type="hidden" id="festorgaEditId" />
+          <div class="row">
+            <div class="field">
+              <label for="festorgaEditTitle">Titel</label>
+              <input id="festorgaEditTitle" required placeholder="Titel des Fests" />
+            </div>
+            <div class="field">
+              <label for="festorgaEditDate">Datum</label>
+              <input id="festorgaEditDate" type="date" />
+            </div>
+            <div class="field">
+              <label for="festorgaEditStatus">Status</label>
+              <select id="festorgaEditStatus">
+                <option value="active">Aktiv</option>
+                <option value="draft">Entwurf</option>
+                <option value="archived">Archiviert</option>
+              </select>
+            </div>
+          </div>
+          <div class="row">
+            <div class="field">
+              <label for="festorgaEditLocation">Ort</label>
+              <input id="festorgaEditLocation" placeholder="Haus am See, Garten…" />
+            </div>
+            <div class="field">
+              <label for="festorgaEditFood">Essen-Modus</label>
+              <select id="festorgaEditFood">
+                <option value="potluck">Mitbring-Buffet</option>
+                <option value="catered">Organisiertes Essen</option>
+                <option value="mixed">Gemischt</option>
+                <option value="none">Kein Fokus Essen</option>
+              </select>
+            </div>
+          </div>
+          <div class="row">
+            <div class="field">
+              <label for="festorgaEditMaxPerson">Max. Gäste / Person</label>
+              <input id="festorgaEditMaxPerson" type="number" min="0" max="50" placeholder="z. B. 10" />
+            </div>
+            <div class="field">
+              <label for="festorgaEditMaxTotal">Max. Gäste total</label>
+              <input id="festorgaEditMaxTotal" type="number" min="0" max="500" placeholder="z. B. 70" />
+            </div>
+            <div class="field">
+              <label for="festorgaEditRemind">Erinnerungen (Tage vorher, kommagetrennt)</label>
+              <input id="festorgaEditRemind" placeholder="7, 3, 1" />
+            </div>
+          </div>
+          <div class="field">
+            <label for="festorgaEditNotes">Notizen / Spielregeln</label>
+            <textarea id="festorgaEditNotes" rows="3" placeholder="Kontingent, Mitbring-Idee, Specials…"></textarea>
+          </div>
+          <div class="field">
+            <label for="festorgaEditShare">Share-Text (optional, Platzhalter: {name} {title} {date} {eventsUrl} {festorgaUrl})</label>
+            <textarea id="festorgaEditShare" rows="3" placeholder="Leer = Gustav-Standardtext in CH/DE/FR"></textarea>
+          </div>
+          <div class="form-actions" style="display:flex;flex-wrap:wrap;gap:8px;">
+            <button type="submit" class="btn btn-primary">Einstellungen speichern</button>
+            <button type="button" class="btn btn-ghost" id="festorgaApplyTemplateBtn">Vorlagen-Aufgaben ergänzen</button>
+            <button type="button" class="btn btn-ghost danger" id="festorgaDeleteFestBtn">Fest löschen</button>
+          </div>
+        </form>
+
+        <div class="festorga-meta" id="festorgaMeta"></div>
+        <div class="festorga-list" id="festorgaList"></div>
+
+        <details class="admin-toggle" open>
+          <summary>➕ Aufgabe hinzufügen</summary>
+          <form id="festorgaTaskForm" class="form-card">
+            <div class="row">
+              <div class="field">
+                <label for="festorgaTitle">Aufgabe</label>
+                <input id="festorgaTitle" required placeholder="z. B. Geschirr / Abwasch" />
+              </div>
+              <div class="field">
+                <label for="festorgaCategory">Kategorie</label>
+                <select id="festorgaCategory">
+                  <option value="other">Sonstiges</option>
+                  <option value="musik">Musik</option>
+                  <option value="gaeste">Gäste / Promo</option>
+                  <option value="deko">Dekoration</option>
+                  <option value="bar">Bar / Getränke</option>
+                  <option value="essen">Essen / Grill</option>
+                  <option value="location">Ort / Setup</option>
+                  <option value="cleanup">Aufräumen</option>
+                </select>
+              </div>
+              <div class="field">
+                <label for="festorgaDue">Bis wann</label>
+                <input id="festorgaDue" type="date" />
+              </div>
+            </div>
+            <div class="field">
+              <label for="festorgaDesc">Notiz (optional)</label>
+              <textarea id="festorgaDesc" rows="2" placeholder="Kurz was zu beachten ist…"></textarea>
+            </div>
+            <div class="row">
+              <div class="field">
+                <label for="festorgaAssignees">Zuständig (mehrere mit Cmd/Ctrl)</label>
+                <select id="festorgaAssignees" multiple size="5"></select>
+              </div>
+              <div class="field">
+                <label for="festorgaTaskRemind">Erinnerungen (Tage, optional)</label>
+                <input id="festorgaTaskRemind" placeholder="leer = Fest-Standard (z. B. 7,3,1)" />
+              </div>
+            </div>
+            <button type="submit" class="btn btn-primary">Aufgabe speichern</button>
+            <p class="form-note">WhatsApp: <em>Festorga</em> · <em>Festorga Feste</em> · <em>Festorga [Name]</em> · <em>Festorga Aufgabe: …</em> · <em>Festorga erledigt: …</em></p>
           </form>
         </details>
       </div>
@@ -1414,6 +1589,6 @@
   <!-- Toast -->
   <div id="toast" class="toast hidden"></div>
 
-  <script type="module" src="app.js?v=20260802j"></script>
+  <script type="module" src="app.js?v=20260802n"></script>
 </body>
 </html>

@@ -45,6 +45,7 @@ const gustavExtras = require("./gustavExtras");
 const { saturday10Iso } = require("./calendarIcs");
 const blueriiot = require("./blueriiot");
 const { sendBewaesserungAnnounce } = require("./bewaesserungAnnounce");
+const festorga = require("./festorga");
 
 initializeApp();
 const db = getFirestore();
@@ -3728,6 +3729,7 @@ const HELP_TEXT =
   `☀️ "Dein Tag an" / "Dein Tag werktags" / "Dein Tag aus" (Morgen-Zusammenfassung)\n` +
   `🛒 "Pfeffer auf die Liste" · "Was fehlt?" · "Pfeffer erledigt"\n` +
   `🥗 "Mitbringen Spieleabend: Salat" · "Wer bringt was Spieleabend?"\n` +
+  `🎉 "Festorga" · "Festorga Feste" · "Festorga Sommerfest" · "Festorga Aufgabe: Deko" · "Festorga erledigt: Musik" · "Meine Festorga"\n` +
   `🎬 "Kino heute Avatar"\n` +
   `🚪 "Bewerber Lisa" · "Bewerber Status Lisa: eingeladen"\n` +
   `📊 "Umfrage: Titel | morgen | bis Donnerstag"\n` +
@@ -4307,6 +4309,71 @@ async function dispatch(ctx) {
       `📊 Umfrage läuft! Ich hab der WG Buttons geschickt.\n\n` +
         `📋 Status: *Umfrage Status ${pollQ.title}* oder *Wie sieht's aus ${pollQ.title}?*`
     );
+    return true;
+  }
+
+  // 11d2) Festorga (beliebige Feste/Partys)
+  const festCmd = festorga.parseFestorgaCommand(rawInput);
+  if (festCmd) {
+    await festorga.ensureSommerfestSeed(db);
+    const who = (await resolveResidentFromWhatsApp(from, senderName)) || senderName || "";
+    if (festCmd.action === "fests") {
+      const all = await festorga.listFests(db);
+      await reply(festorga.formatFestList(all));
+      return true;
+    }
+    const fest = await festorga.loadActiveFest(db, festCmd.festHint || null);
+    if (!fest) {
+      await reply("🤷 Kein Fest gefunden. Auf der Website unter WG-Intern → Festorga anlegen, oder *Festorga Feste* tippen.");
+      return true;
+    }
+    const tasks = await festorga.loadFestTasks(db, fest.id);
+    if (festCmd.action === "list") {
+      await reply(festorga.formatFestorgaList(fest, tasks));
+      return true;
+    }
+    if (festCmd.action === "mine") {
+      const mine = tasks.filter((t) => (t.assignees || []).some((a) => String(a).toLowerCase() === String(who).toLowerCase()));
+      if (!mine.length) {
+        await reply(`🎉 ${who || "Du"} hast noch keine Aufgabe bei *${fest.title}*. «Festorga» zeigt alle.`);
+        return true;
+      }
+      await reply(festorga.formatFestorgaList(fest, mine));
+      return true;
+    }
+    const task = festorga.findTaskByHint(tasks, festCmd.titleHint);
+    if (!task) {
+      await reply(`🤷 Keine Aufgabe zu «${festCmd.titleHint}» bei *${fest.title}*. Tippe *Festorga ${fest.title}*.`);
+      return true;
+    }
+    if (festCmd.action === "claim") {
+      const assignees = Array.isArray(task.assignees) ? [...task.assignees] : [];
+      if (who && !assignees.some((a) => String(a).toLowerCase() === String(who).toLowerCase())) {
+        assignees.push(who);
+      }
+      await db.collection("festorgaTasks").doc(task.id).update({
+        assignees,
+        updatedAt: FieldValue.serverTimestamp(),
+      });
+      await reply(`✅ *${who}* übernimmt *${task.title}* (${fest.title}).\n\n${festorga.FESTORGA_URL}`);
+      return true;
+    }
+    if (festCmd.action === "done") {
+      await db.collection("festorgaTasks").doc(task.id).update({
+        status: "done",
+        updatedAt: FieldValue.serverTimestamp(),
+      });
+      await reply(`✅ *${task.title}* erledigt (${fest.title}). Merci!`);
+      return true;
+    }
+    if (festCmd.action === "reopen") {
+      await db.collection("festorgaTasks").doc(task.id).update({
+        status: "open",
+        updatedAt: FieldValue.serverTimestamp(),
+      });
+      await reply(`⬜ *${task.title}* wieder offen (${fest.title}).`);
+      return true;
+    }
     return true;
   }
 
@@ -7428,6 +7495,55 @@ exports.sendBewaesserungAnnounce = onRequest(async (req, res) => {
     return res.status(500).json({ error: err.message });
   }
 });
+
+/** Fest teilen: Adults bitten, Website zu teilen (?festId= / ?fest=Titel / ?to=Name) */
+async function handleFestShareAnnounce(req, res) {
+  res.set("Access-Control-Allow-Origin", "*");
+  if (req.method === "OPTIONS") {
+    res.set("Access-Control-Allow-Methods", "GET, POST");
+    res.set("Access-Control-Allow-Headers", "Content-Type");
+    return res.status(204).send("");
+  }
+  const secret = req.query.secret || req.body?.secret;
+  if (secret !== process.env.SIRI_SECRET) {
+    return res.status(401).json({ error: "Unauthorized" });
+  }
+  try {
+    const seed = await festorga.ensureSommerfestSeed(db);
+    const only = req.query.to || req.body?.to || null;
+    const festId = req.query.festId || req.body?.festId || null;
+    const festHint = req.query.fest || req.body?.fest || null;
+    const out = await festorga.sendFestShareAnnounce({
+      db,
+      getBewohnerPhone,
+      sendWhatsApp,
+      logger,
+      onlyName: only,
+      festId,
+      festHint,
+    });
+    return res.json({ ok: out.sent > 0, seed, ...out });
+  } catch (err) {
+    logger.error("sendFestShareAnnounce", err);
+    return res.status(500).json({ error: err.message });
+  }
+}
+
+exports.sendFestShareAnnounce = onRequest(handleFestShareAnnounce);
+/** Alias (rückwärtskompatibel) */
+exports.sendSommerfestShareAnnounce = onRequest(handleFestShareAnnounce);
+
+/** Festorga-Erinnerungen: täglich 09:15 – alle aktiven Feste */
+exports.checkFestorgaReminders = onSchedule(
+  { schedule: "15 9 * * *", timeZone: "Europe/Zurich" },
+  async () => {
+    try {
+      await festorga.processFestorgaReminders(db, { getBewohnerPhone, sendWhatsApp, logger });
+    } catch (err) {
+      logger.error("checkFestorgaReminders", err);
+    }
+  }
+);
 
 exports.testPolsterAlert = onRequest(async (req, res) => {
   res.set("Access-Control-Allow-Origin", "*");
