@@ -5956,7 +5956,13 @@ body.wg-guest a[href="#intern"] {
 }
 .event-bring-form {
   display: flex;
+  flex-wrap: wrap;
   gap: 8px;
   margin-top: 8px;
+  align-items: center;
 }
-.event-bring-form input { flex: 1; min-width: 0; }
+.event-bring-form input[type="text"],
+.event-bring-form input:not([type]) {
+  flex: 1;
+  min-width: 7rem;
+}

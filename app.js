@@ -2218,11 +2218,15 @@ function renderEventBringBlock(ev) {
         `<li><strong>${escapeHtml(x.who || "?")}</strong>: ${escapeHtml(x.item)}</li>`
       ).join("")}</ul>`
     : `<p class="form-note small">Noch niemand eingetragen.</p>`;
+  const whoField = auth.isAuthed
+    ? `<input type="hidden" name="who" value="${escapeHtml(auth.member || "")}" />`
+    : `<input type="text" name="who" placeholder="Dein Name" maxlength="60" autocomplete="name" required />`;
   return `
     <details class="event-bring">
       <summary>🥗 Wer bringt was · ${items.length}</summary>
       ${listHtml}
       <form class="event-bring-form inline" data-eventid="${escapeHtml(ev.id)}">
+        ${whoField}
         <input name="item" placeholder="z. B. Salat" maxlength="120" required />
         <button type="submit" class="btn btn-ghost small">Eintragen</button>
       </form>
@@ -2231,10 +2235,15 @@ function renderEventBringBlock(ev) {
 }
 
 async function submitEventBring(eventId, form) {
-  if (!requireAuth("Mitbringen eintragen")) return;
-  const input = form.querySelector('input[name="item"]');
-  const item = String(input?.value || "").trim().slice(0, 120);
+  const itemInput = form.querySelector('input[name="item"]');
+  const whoInput = form.querySelector('input[name="who"]');
+  const item = String(itemInput?.value || "").trim().slice(0, 120);
+  const who = String(whoInput?.value || auth.member || "").trim().slice(0, 60);
   if (!item) return;
+  if (!who) {
+    showToast("Bitte Namen eintragen.", "error");
+    return;
+  }
   const ev = eventsCache.find((x) => x.id === eventId);
   if (!ev) return;
   if (firebaseReady) {
@@ -2242,11 +2251,12 @@ async function submitEventBring(eventId, form) {
       await addDoc(collection(db, "eventBring"), {
         eventId,
         eventTitle: ev.title || "",
-        who: auth.member || "",
+        who,
         item,
         createdAt: serverTimestamp(),
       });
-      input.value = "";
+      if (itemInput) itemInput.value = "";
+      if (whoInput && whoInput.type !== "hidden") whoInput.value = "";
       showToast("Eingetragen.", "success");
     } catch (err) {
       console.error(err);
@@ -2280,7 +2290,7 @@ function renderEventCard(ev, isPast) {
   ` : "";
 
   const signupBlock = !isPast ? renderSignupBlock(ev) : "";
-  const bringBlock = !isPast && auth.isMember ? renderEventBringBlock(ev) : "";
+  const bringBlock = !isPast ? renderEventBringBlock(ev) : "";
 
   const hasFlyer = !!ev.flyerSrc;
   const dateClickable = hasFlyer ? `data-flyer="${ev.id}" role="button" tabindex="0" title="Flyer ansehen"` : "";
