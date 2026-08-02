@@ -6618,6 +6618,120 @@ body:not(.wg-member) #ternTabFestorga #festorgaTaskForm {
   min-width: 10rem;
   min-height: 5.5rem;
 }
+.festorga-chip-pick {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 6px;
+}
+.festorga-pick-chip {
+  appearance: none;
+  border: 1px solid rgba(78, 179, 196, 0.35);
+  background: rgba(255, 255, 255, 0.85);
+  border-radius: 999px;
+  padding: 4px 10px;
+  font: inherit;
+  font-size: 0.85rem;
+  cursor: pointer;
+  color: var(--text);
+}
+.festorga-pick-chip.is-on {
+  background: rgba(78, 179, 196, 0.22);
+  border-color: rgba(78, 179, 196, 0.55);
+  font-weight: 600;
+}
+.festorga-pick-chip:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+.festorga-card.is-blocked {
+  border-left-color: var(--amber);
+}
+.festorga-blocked-note {
+  margin: 0;
+  font-size: 0.86rem;
+  color: #8a5a12;
+}
+.festorga-subtasks {
+  display: grid;
+  gap: 6px;
+  padding: 8px 10px;
+  border-radius: var(--r-sm);
+  background: rgba(0, 0, 0, 0.03);
+  border: 1px solid var(--card-border);
+}
+.festorga-subtasks-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 8px;
+  font-size: 0.85rem;
+  color: var(--text-muted);
+}
+.festorga-sub-row {
+  display: grid;
+  grid-template-columns: auto 1fr auto auto;
+  gap: 6px;
+  align-items: center;
+}
+@media (max-width: 640px) {
+  .festorga-sub-row {
+    grid-template-columns: auto 1fr;
+  }
+  .festorga-sub-row .festorga-sub-due,
+  .festorga-sub-row .festorga-sub-del {
+    grid-column: 2;
+  }
+}
+.festorga-sub-row.is-done .festorga-sub-title {
+  text-decoration: line-through;
+  opacity: 0.65;
+}
+.festorga-sub-title {
+  width: 100%;
+  font: inherit;
+  font-size: 0.9rem;
+  border: 1px solid transparent;
+  background: transparent;
+  padding: 4px 6px;
+  border-radius: 6px;
+}
+.festorga-sub-title:focus {
+  border-color: rgba(78, 179, 196, 0.45);
+  background: #fff;
+  outline: none;
+}
+.festorga-sub-due {
+  font: inherit;
+  font-size: 0.8rem;
+  padding: 3px 4px;
+  border-radius: 6px;
+  border: 1px solid var(--card-border);
+  background: #fff;
+}
+.festorga-sub-add {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 4px;
+}
+.festorga-sub-add input[type="text"] {
+  flex: 1;
+  min-width: 10rem;
+}
+.festorga-deps {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  align-items: center;
+}
+.festorga-deps label {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 0.82rem;
+  color: var(--text-muted);
+}
 .btn.danger,
 .mini-btn.danger {
   color: var(--berry);

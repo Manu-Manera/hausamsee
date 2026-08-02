@@ -18,7 +18,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,400;0,9..144,600;0,9..144,700;1,9..144,400&family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet" />
-  <link rel="stylesheet" href="styles.css?v=20260802n" />
+  <link rel="stylesheet" href="styles.css?v=20260802p" />
   <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Ctext y='.9em' font-size='90'%3E🏡%3C/text%3E%3C/svg%3E" />
 </head>
 <body>
@@ -770,18 +770,27 @@
               <label for="festorgaDesc">Notiz (optional)</label>
               <textarea id="festorgaDesc" rows="2" placeholder="Kurz was zu beachten ist…"></textarea>
             </div>
+            <div class="field">
+              <span class="field-label-inline">Zuständig ( antippen zum Ergänzen, z. B. Dino + Manu )</span>
+              <div class="festorga-chip-pick" id="festorgaAssigneeChips"></div>
+              <select id="festorgaAssignees" multiple hidden aria-hidden="true"></select>
+            </div>
             <div class="row">
               <div class="field">
-                <label for="festorgaAssignees">Zuständig (mehrere mit Cmd/Ctrl)</label>
-                <select id="festorgaAssignees" multiple size="5"></select>
-              </div>
-              <div class="field">
-                <label for="festorgaTaskRemind">Erinnerungen (Tage, optional)</label>
+                <label for="festorgaTaskRemind">Erinnerungen (Tage vor Deadline)</label>
                 <input id="festorgaTaskRemind" placeholder="leer = Fest-Standard (z. B. 7,3,1)" />
               </div>
+              <div class="field">
+                <label for="festorgaNewDepends">Hängt ab von (optional)</label>
+                <select id="festorgaNewDepends" multiple size="4"></select>
+              </div>
+            </div>
+            <div class="field">
+              <label for="festorgaNewSubtasks">Unteraufgaben (eine pro Zeile, abhakbar)</label>
+              <textarea id="festorgaNewSubtasks" rows="3" placeholder="z. B.&#10;Bier &amp; Wein einkaufen&#10;Gläser &amp; Becher besorgen&#10;Eis würfeln"></textarea>
             </div>
             <button type="submit" class="btn btn-primary">Aufgabe speichern</button>
-            <p class="form-note">WhatsApp: <em>Festorga</em> · <em>Festorga Feste</em> · <em>Festorga [Name]</em> · <em>Festorga Aufgabe: …</em> · <em>Festorga erledigt: …</em></p>
+            <p class="form-note">WhatsApp: <em>Festorga</em> · <em>Festorga Aufgabe: …</em> · <em>Festorga erledigt: …</em> — Unteraufgaben &amp; Abhängigkeiten auf der Website.</p>
           </form>
         </details>
       </div>
@@ -1589,6 +1598,6 @@
   <!-- Toast -->
   <div id="toast" class="toast hidden"></div>
 
-  <script type="module" src="app.js?v=20260802n"></script>
+  <script type="module" src="app.js?v=20260802p"></script>
 </body>
 </html>

@@ -9701,12 +9701,108 @@ function festorgaDaysUntil(ymd) {
   return Math.round((b - a) / 86400000);
 }
 
-function populateFestorgaAssigneeSelect() {
+function festorgaNewId(prefix = "st") {
+  if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") {
+    return crypto.randomUUID();
+  }
+  return `${prefix}_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
+}
+
+function normalizeFestorgaSubtasks(raw) {
+  if (!Array.isArray(raw)) return [];
+  return raw
+    .map((s) => ({
+      id: s.id || festorgaNewId(),
+      title: String(s.title || "").trim(),
+      done: !!s.done,
+      dueDate: s.dueDate || null,
+      remindDaysBefore: Array.isArray(s.remindDaysBefore) ? s.remindDaysBefore.map(Number) : null,
+      lastReminderDayKey: s.lastReminderDayKey || null,
+    }))
+    .filter((s) => s.title);
+}
+
+function parseFestorgaSubtaskLines(text) {
+  return String(text || "")
+    .split(/\r?\n/)
+    .map((l) => l.trim())
+    .filter(Boolean)
+    .map((title) => ({
+      id: festorgaNewId(),
+      title,
+      done: false,
+      dueDate: null,
+      remindDaysBefore: null,
+      lastReminderDayKey: null,
+    }));
+}
+
+function festorgaBlockedTitles(task, tasks) {
+  const deps = Array.isArray(task.dependsOn) ? task.dependsOn : [];
+  if (!deps.length) return [];
+  const byId = Object.fromEntries(tasks.map((t) => [t.id, t]));
+  return deps
+    .map((id) => byId[id])
+    .filter((t) => t && t.status !== "done")
+    .map((t) => t.title);
+}
+
+function festorgaSubProgress(task) {
+  const subs = normalizeFestorgaSubtasks(task.subtasks);
+  if (!subs.length) return null;
+  const done = subs.filter((s) => s.done).length;
+  return { done, total: subs.length };
+}
+
+function populateFestorgaAssigneeSelect(selected = []) {
   const sel = $("festorgaAssignees");
-  if (!sel) return;
+  const chips = $("festorgaAssigneeChips");
   const adults = getActiveAdults();
-  sel.innerHTML = adults
-    .map((b) => `<option value="${escapeAttr(b.name)}">${mEmoji(b.name)} ${escapeHtml(mLabel(b.name))}</option>`)
+  const selectedSet = new Set(selected);
+  if (sel) {
+    sel.innerHTML = adults
+      .map(
+        (b) =>
+          `<option value="${escapeAttr(b.name)}" ${selectedSet.has(b.name) ? "selected" : ""}>${mEmoji(b.name)} ${escapeHtml(mLabel(b.name))}</option>`
+      )
+      .join("");
+  }
+  if (chips) {
+    chips.innerHTML = adults
+      .map(
+        (b) =>
+          `<button type="button" class="festorga-pick-chip ${selectedSet.has(b.name) ? "is-on" : ""}" data-name="${escapeAttr(b.name)}">${mEmoji(b.name)} ${escapeHtml(mLabel(b.name))}</button>`
+      )
+      .join("");
+    chips.querySelectorAll(".festorga-pick-chip").forEach((btn) => {
+      btn.addEventListener("click", () => {
+        btn.classList.toggle("is-on");
+        syncFestorgaAssigneeSelectFromChips();
+      });
+    });
+  }
+}
+
+function syncFestorgaAssigneeSelectFromChips() {
+  const sel = $("festorgaAssignees");
+  const chips = $("festorgaAssigneeChips");
+  if (!sel || !chips) return;
+  const on = new Set(
+    [...chips.querySelectorAll(".festorga-pick-chip.is-on")].map((b) => b.dataset.name)
+  );
+  [...sel.options].forEach((o) => {
+    o.selected = on.has(o.value);
+  });
+}
+
+function populateFestorgaNewDependsSelect(festId, excludeId = null) {
+  const sel = $("festorgaNewDepends");
+  if (!sel) return;
+  const tasks = festorgaTasksCache
+    .filter((t) => t.festId === festId && t.id !== excludeId)
+    .sort((a, b) => (a.sort || 100) - (b.sort || 100));
+  sel.innerHTML = tasks
+    .map((t) => `<option value="${escapeAttr(t.id)}">${escapeHtml(t.title)}</option>`)
     .join("");
 }
 
@@ -9777,6 +9873,8 @@ async function createFestorgaTasksFromTemplate(festId, templateId, festDate, rem
       category: t.category || "other",
       assignees: [],
       dueDate: due,
+      dependsOn: [],
+      subtasks: [],
       status: "open",
       sort: t.sort || 100,
       remindDaysBefore: remindDays,
@@ -9852,11 +9950,14 @@ function renderFestorga() {
     return;
   }
 
+  populateFestorgaNewDependsSelect(fest.id);
   const adults = getActiveAdults();
   const festRemind = Array.isArray(fest.remindDaysBefore) ? fest.remindDaysBefore : [7, 3, 1];
   list.innerHTML = tasks
     .map((t) => {
       const done = t.status === "done";
+      const blockedTitles = festorgaBlockedTitles(t, tasks);
+      const blocked = !done && blockedTitles.length > 0;
       const days = festorgaDaysUntil(t.dueDate);
       let dueClass = "";
       let dueLabel = t.dueDate ? `bis ${t.dueDate}` : "ohne Deadline";
@@ -9875,13 +9976,10 @@ function renderFestorga() {
         }
       }
       const assignees = Array.isArray(t.assignees) ? t.assignees : [];
-      const chips = assignees.length
-        ? assignees.map((n) => `<span class="festorga-chip">${mEmoji(n)} ${escapeHtml(mLabel(n) || n)}</span>`).join("")
-        : `<span class="form-note">noch niemand</span>`;
-      const assigneeOpts = adults
+      const assigneePick = adults
         .map(
           (b) =>
-            `<option value="${escapeAttr(b.name)}" ${assignees.includes(b.name) ? "selected" : ""}>${mEmoji(b.name)} ${escapeHtml(mLabel(b.name))}</option>`
+            `<button type="button" class="festorga-pick-chip ${assignees.includes(b.name) ? "is-on" : ""}" data-action="festorga-assignee-toggle" data-id="${escapeAttr(t.id)}" data-name="${escapeAttr(b.name)}" ${done ? "disabled" : ""}>${mEmoji(b.name)} ${escapeHtml(mLabel(b.name))}</button>`
         )
         .join("");
       const cat = FESTORGA_CAT_LABEL[t.category] || FESTORGA_CAT_LABEL.other;
@@ -9891,27 +9989,71 @@ function renderFestorga() {
       const catOpts = Object.entries(FESTORGA_CAT_LABEL)
         .map(([k, v]) => `<option value="${k}" ${(t.category || "other") === k ? "selected" : ""}>${escapeHtml(v)}</option>`)
         .join("");
+      const depIds = Array.isArray(t.dependsOn) ? t.dependsOn : [];
+      const depPick = tasks
+        .filter((o) => o.id !== t.id)
+        .map(
+          (o) =>
+            `<label><input type="checkbox" class="festorga-dep-cb" data-id="${escapeAttr(t.id)}" value="${escapeAttr(o.id)}" ${depIds.includes(o.id) ? "checked" : ""} ${done ? "disabled" : ""} /> ${escapeHtml(o.title)}</label>`
+        )
+        .join("");
+      const subs = normalizeFestorgaSubtasks(t.subtasks);
+      const prog = festorgaSubProgress(t);
+      const subRows = subs
+        .map(
+          (s) => `
+          <div class="festorga-sub-row ${s.done ? "is-done" : ""}" data-sub-id="${escapeAttr(s.id)}">
+            <input type="checkbox" class="festorga-sub-done" data-id="${escapeAttr(t.id)}" data-sub-id="${escapeAttr(s.id)}" ${s.done ? "checked" : ""} ${done ? "disabled" : ""} />
+            <input type="text" class="festorga-sub-title" data-id="${escapeAttr(t.id)}" data-sub-id="${escapeAttr(s.id)}" value="${escapeAttr(s.title)}" ${done ? "disabled" : ""} />
+            <input type="date" class="festorga-sub-due" data-id="${escapeAttr(t.id)}" data-sub-id="${escapeAttr(s.id)}" value="${escapeAttr(s.dueDate || "")}" title="Fällig" ${done ? "disabled" : ""} />
+            <button type="button" class="mini-btn danger festorga-sub-del" data-id="${escapeAttr(t.id)}" data-sub-id="${escapeAttr(s.id)}" ${done ? "disabled" : ""} aria-label="Unteraufgabe löschen">×</button>
+          </div>`
+        )
+        .join("");
       return `
-      <article class="festorga-card ${done ? "is-done" : ""}" data-id="${escapeAttr(t.id)}">
+      <article class="festorga-card ${done ? "is-done" : ""} ${blocked ? "is-blocked" : ""}" data-id="${escapeAttr(t.id)}">
         <div class="festorga-card-head">
-          <h3 class="festorga-title">${done ? "✅" : "⬜"} ${escapeHtml(t.title)} <span class="festorga-cat">${escapeHtml(cat)}</span></h3>
+          <h3 class="festorga-title">${done ? "✅" : blocked ? "⏳" : "⬜"} ${escapeHtml(t.title)} <span class="festorga-cat">${escapeHtml(cat)}</span></h3>
           <span class="festorga-due ${dueClass}">${escapeHtml(dueLabel)}</span>
         </div>
         ${t.description ? `<p class="festorga-desc">${escapeHtml(t.description)}</p>` : ""}
-        <div class="festorga-assignees">${chips}</div>
+        ${blocked ? `<p class="festorga-blocked-note">Wartet auf: ${escapeHtml(blockedTitles.join(", "))}</p>` : ""}
+        <div class="festorga-assignees">
+          <span class="form-note" style="margin-right:4px;">Zuständig:</span>
+          ${assigneePick || `<span class="form-note">keine Bewohner</span>`}
+        </div>
+        <div class="festorga-deps">
+          <span class="form-note">Abhängig von:</span>
+          ${depPick || `<span class="form-note">—</span>`}
+        </div>
+        <div class="festorga-subtasks">
+          <div class="festorga-subtasks-head">
+            <strong>Unteraufgaben</strong>
+            <span>${prog ? `${prog.done}/${prog.total} erledigt` : "noch keine"}</span>
+          </div>
+          ${subRows || `<span class="form-note">Checkliste leer – unten ergänzen.</span>`}
+          ${
+            done
+              ? ""
+              : `<div class="festorga-sub-add">
+            <input type="text" class="festorga-sub-new-title" data-id="${escapeAttr(t.id)}" placeholder="Unteraufgabe hinzufügen…" />
+            <input type="date" class="festorga-sub-new-due" data-id="${escapeAttr(t.id)}" title="Optional fällig" />
+            <button type="button" class="mini-btn" data-action="festorga-sub-add" data-id="${escapeAttr(t.id)}">+</button>
+          </div>`
+          }
+        </div>
         <div class="festorga-actions">
           <label class="form-note" style="display:flex;align-items:center;gap:6px;margin:0;">
             Bis
             <input type="date" class="festorga-due-input" data-id="${escapeAttr(t.id)}" value="${escapeAttr(t.dueDate || "")}" ${done ? "disabled" : ""} />
           </label>
           <select class="festorga-cat-select" data-id="${escapeAttr(t.id)}" ${done ? "disabled" : ""}>${catOpts}</select>
-          <select class="festorga-assignee-select" data-id="${escapeAttr(t.id)}" multiple size="3" ${done ? "disabled" : ""} title="Zuständige (Cmd/Ctrl für mehrere)">${assigneeOpts}</select>
           <label class="form-note" style="display:flex;align-items:center;gap:6px;margin:0;">
             Reminder
             <input type="text" class="festorga-remind-input" data-id="${escapeAttr(t.id)}" value="${escapeAttr(remindStr)}" placeholder="7, 3, 1" ${done ? "disabled" : ""} style="width:7rem;" />
           </label>
-          <button type="button" class="mini-btn" data-action="festorga-claim" data-id="${escapeAttr(t.id)}" ${done ? "disabled" : ""}>Ich übernehme</button>
-          <button type="button" class="mini-btn" data-action="festorga-toggle" data-id="${escapeAttr(t.id)}">${done ? "Wieder öffnen" : "Erledigt"}</button>
+          <button type="button" class="mini-btn" data-action="festorga-claim" data-id="${escapeAttr(t.id)}" ${done ? "disabled" : ""}>Ich dazu</button>
+          <button type="button" class="mini-btn" data-action="festorga-toggle" data-id="${escapeAttr(t.id)}" ${blocked && !done ? "disabled" : ""} title="${blocked && !done ? "Zuerst Abhängigkeiten erledigen" : ""}">${done ? "Wieder öffnen" : "Erledigt"}</button>
           <button type="button" class="mini-btn danger" data-action="festorga-delete" data-id="${escapeAttr(t.id)}">Löschen</button>
         </div>
       </article>`;
@@ -9924,15 +10066,42 @@ function renderFestorga() {
   list.querySelectorAll(".festorga-cat-select").forEach((sel) => {
     sel.addEventListener("change", () => updateFestorgaTask(sel.dataset.id, { category: sel.value }));
   });
-  list.querySelectorAll(".festorga-assignee-select").forEach((sel) => {
-    sel.addEventListener("change", () => {
-      const assignees = [...sel.selectedOptions].map((o) => o.value);
-      updateFestorgaTask(sel.dataset.id, { assignees });
-    });
-  });
   list.querySelectorAll(".festorga-remind-input").forEach((inp) => {
     inp.addEventListener("change", () => {
       updateFestorgaTask(inp.dataset.id, { remindDaysBefore: parseRemindDays(inp.value, festRemind) });
+    });
+  });
+  list.querySelectorAll("[data-action='festorga-assignee-toggle']").forEach((btn) => {
+    btn.addEventListener("click", () => toggleFestorgaAssignee(btn.dataset.id, btn.dataset.name));
+  });
+  list.querySelectorAll(".festorga-dep-cb").forEach((cb) => {
+    cb.addEventListener("change", () => {
+      const card = cb.closest(".festorga-card");
+      const ids = [...(card?.querySelectorAll(".festorga-dep-cb:checked") || [])].map((el) => el.value);
+      updateFestorgaTask(cb.dataset.id, { dependsOn: ids });
+    });
+  });
+  list.querySelectorAll(".festorga-sub-done").forEach((cb) => {
+    cb.addEventListener("change", () => setFestorgaSubtaskField(cb.dataset.id, cb.dataset.subId, { done: cb.checked }));
+  });
+  list.querySelectorAll(".festorga-sub-title").forEach((inp) => {
+    inp.addEventListener("change", () => setFestorgaSubtaskField(inp.dataset.id, inp.dataset.subId, { title: inp.value.trim() }));
+  });
+  list.querySelectorAll(".festorga-sub-due").forEach((inp) => {
+    inp.addEventListener("change", () => setFestorgaSubtaskField(inp.dataset.id, inp.dataset.subId, { dueDate: inp.value || null }));
+  });
+  list.querySelectorAll(".festorga-sub-del").forEach((btn) => {
+    btn.addEventListener("click", () => removeFestorgaSubtask(btn.dataset.id, btn.dataset.subId));
+  });
+  list.querySelectorAll("[data-action='festorga-sub-add']").forEach((btn) => {
+    btn.addEventListener("click", () => addFestorgaSubtask(btn.dataset.id));
+  });
+  list.querySelectorAll(".festorga-sub-new-title").forEach((inp) => {
+    inp.addEventListener("keydown", (e) => {
+      if (e.key === "Enter") {
+        e.preventDefault();
+        addFestorgaSubtask(inp.dataset.id);
+      }
     });
   });
   list.querySelectorAll("[data-action='festorga-claim']").forEach((btn) => {
@@ -9955,6 +10124,17 @@ async function updateFestorgaTask(id, patch) {
   }
 }
 
+async function toggleFestorgaAssignee(taskId, name) {
+  if (!requireMember("Zuständige ändern")) return;
+  const t = festorgaTasksCache.find((x) => x.id === taskId);
+  if (!t || !name) return;
+  const assignees = Array.isArray(t.assignees) ? [...t.assignees] : [];
+  const idx = assignees.indexOf(name);
+  if (idx >= 0) assignees.splice(idx, 1);
+  else assignees.push(name);
+  await updateFestorgaTask(taskId, { assignees });
+}
+
 async function claimFestorgaTask(id) {
   if (!requireMember("Aufgabe übernehmen")) return;
   const t = festorgaTasksCache.find((x) => x.id === id);
@@ -9963,13 +10143,70 @@ async function claimFestorgaTask(id) {
   const assignees = Array.isArray(t.assignees) ? [...t.assignees] : [];
   if (!assignees.includes(me)) assignees.push(me);
   await updateFestorgaTask(id, { assignees });
-  showToast(`Du übernimmst «${t.title}».`, "success");
+  showToast(`Du bist bei «${t.title}» dabei.`, "success");
+}
+
+async function setFestorgaSubtaskField(taskId, subId, patch) {
+  if (!requireMember("Unteraufgabe ändern")) return;
+  const t = festorgaTasksCache.find((x) => x.id === taskId);
+  if (!t) return;
+  const subs = normalizeFestorgaSubtasks(t.subtasks);
+  const idx = subs.findIndex((s) => s.id === subId);
+  if (idx < 0) return;
+  if (patch.title !== undefined && !String(patch.title || "").trim()) {
+    showToast("Titel darf nicht leer sein.", "error");
+    return;
+  }
+  subs[idx] = { ...subs[idx], ...patch };
+  if (patch.title !== undefined) subs[idx].title = String(patch.title).trim();
+  await updateFestorgaTask(taskId, { subtasks: subs });
+}
+
+async function removeFestorgaSubtask(taskId, subId) {
+  if (!requireMember("Unteraufgabe löschen")) return;
+  const t = festorgaTasksCache.find((x) => x.id === taskId);
+  if (!t) return;
+  const subs = normalizeFestorgaSubtasks(t.subtasks).filter((s) => s.id !== subId);
+  await updateFestorgaTask(taskId, { subtasks: subs });
+}
+
+async function addFestorgaSubtask(taskId) {
+  if (!requireMember("Unteraufgabe hinzufügen")) return;
+  const t = festorgaTasksCache.find((x) => x.id === taskId);
+  if (!t) return;
+  const card = document.querySelector(`.festorga-card[data-id="${String(taskId).replace(/"/g, "")}"]`);
+  const titleInp = card?.querySelector(".festorga-sub-new-title");
+  const dueInp = card?.querySelector(".festorga-sub-new-due");
+  const title = titleInp?.value?.trim();
+  if (!title) {
+    titleInp?.focus();
+    return;
+  }
+  const subs = normalizeFestorgaSubtasks(t.subtasks);
+  subs.push({
+    id: festorgaNewId(),
+    title,
+    done: false,
+    dueDate: dueInp?.value || null,
+    remindDaysBefore: null,
+    lastReminderDayKey: null,
+  });
+  await updateFestorgaTask(taskId, { subtasks: subs });
 }
 
 async function toggleFestorgaTask(id) {
   if (!requireMember("Status ändern")) return;
+  const fest = getSelectedFestorga();
   const t = festorgaTasksCache.find((x) => x.id === id);
   if (!t) return;
+  if (t.status !== "done") {
+    const siblings = festorgaTasksCache.filter((x) => x.festId === (fest?.id || t.festId));
+    const blocked = festorgaBlockedTitles(t, siblings);
+    if (blocked.length) {
+      showToast(`Zuerst erledigen: ${blocked.join(", ")}`, "error");
+      return;
+    }
+  }
   await updateFestorgaTask(id, { status: t.status === "done" ? "open" : "done" });
 }
 
@@ -9979,7 +10216,18 @@ async function deleteFestorgaTask(id) {
   if (!t) return;
   if (!confirm(`Aufgabe «${t.title}» löschen?`)) return;
   try {
-    await deleteDoc(doc(db, "festorgaTasks", id));
+    const batch = writeBatch(db);
+    batch.delete(doc(db, "festorgaTasks", id));
+    for (const other of festorgaTasksCache) {
+      if (other.id === id || other.festId !== t.festId) continue;
+      const deps = Array.isArray(other.dependsOn) ? other.dependsOn : [];
+      if (!deps.includes(id)) continue;
+      batch.update(doc(db, "festorgaTasks", other.id), {
+        dependsOn: deps.filter((d) => d !== id),
+        updatedAt: serverTimestamp(),
+      });
+    }
+    await batch.commit();
   } catch (err) {
     showToast("Löschen fehlgeschlagen: " + err.message, "error");
   }
@@ -10100,6 +10348,12 @@ $("festorgaDuplicateBtn")?.addEventListener("click", async () => {
       const batch = writeBatch(db);
       for (const t of tasks) {
         const tr = doc(collection(db, "festorgaTasks"));
+        const subs = normalizeFestorgaSubtasks(t.subtasks).map((s) => ({
+          ...s,
+          id: festorgaNewId(),
+          done: false,
+          lastReminderDayKey: null,
+        }));
         batch.set(tr, {
           festId: ref.id,
           title: t.title,
@@ -10107,6 +10361,8 @@ $("festorgaDuplicateBtn")?.addEventListener("click", async () => {
           category: t.category || "other",
           assignees: [],
           dueDate: null,
+          dependsOn: [],
+          subtasks: subs,
           status: "open",
           sort: t.sort || 100,
           remindDaysBefore: Array.isArray(t.remindDaysBefore) ? t.remindDaysBefore : [7, 3, 1],
@@ -10119,7 +10375,7 @@ $("festorgaDuplicateBtn")?.addEventListener("click", async () => {
       await batch.commit();
     }
     setSelectedFestorga(ref.id);
-    showToast("Fest dupliziert (Aufgaben ohne Zuständige/Deadlines).", "success");
+    showToast("Fest dupliziert (Checklist übernommen, Zuständige/Deadlines/Abhängigkeiten neu setzen).", "success");
   } catch (err) {
     showToast("Duplizieren fehlgeschlagen: " + err.message, "error");
   }
@@ -10176,11 +10432,15 @@ $("festorgaTaskForm")?.addEventListener("submit", async (e) => {
   }
   const title = $("festorgaTitle")?.value?.trim();
   if (!title) return;
+  syncFestorgaAssigneeSelectFromChips();
   const dueDate = $("festorgaDue")?.value || null;
   const description = $("festorgaDesc")?.value?.trim() || "";
   const category = $("festorgaCategory")?.value || "other";
   const sel = $("festorgaAssignees");
   const assignees = sel ? [...sel.selectedOptions].map((o) => o.value) : [];
+  const depSel = $("festorgaNewDepends");
+  const dependsOn = depSel ? [...depSel.selectedOptions].map((o) => o.value) : [];
+  const subtasks = parseFestorgaSubtaskLines($("festorgaNewSubtasks")?.value);
   const festRemind = Array.isArray(fest.remindDaysBefore) ? fest.remindDaysBefore : [7, 3, 1];
   const remindRaw = $("festorgaTaskRemind")?.value;
   const remindDaysBefore = remindRaw && String(remindRaw).trim()
@@ -10197,6 +10457,8 @@ $("festorgaTaskForm")?.addEventListener("submit", async (e) => {
       category,
       assignees,
       dueDate,
+      dependsOn,
+      subtasks,
       status: "open",
       sort: maxSort + 10,
       remindDaysBefore,
@@ -10207,6 +10469,7 @@ $("festorgaTaskForm")?.addEventListener("submit", async (e) => {
     });
     e.target.reset();
     populateFestorgaAssigneeSelect();
+    populateFestorgaNewDependsSelect(fest.id);
     showToast("Aufgabe gespeichert.", "success");
   } catch (err) {
     showToast("Speichern fehlgeschlagen: " + err.message, "error");

@@ -4359,6 +4359,17 @@ async function dispatch(ctx) {
       return true;
     }
     if (festCmd.action === "done") {
+      const deps = Array.isArray(task.dependsOn) ? task.dependsOn : [];
+      if (deps.length) {
+        const waiting = deps
+          .map((id) => tasks.find((x) => x.id === id))
+          .filter((d) => d && d.status !== "done")
+          .map((d) => d.title);
+        if (waiting.length) {
+          await reply(`⏳ *${task.title}* wartet noch auf: ${waiting.join(", ")}`);
+          return true;
+        }
+      }
       await db.collection("festorgaTasks").doc(task.id).update({
         status: "done",
         updatedAt: FieldValue.serverTimestamp(),

@@ -218,6 +218,8 @@ function taskPayloadFromTemplate(festId, t, festDate, remindDays) {
     category: t.category || "other",
     assignees: Array.isArray(t.assignees) ? t.assignees : [],
     dueDate: t.dueDate || dueFromFestDate(festDate, t.daysBeforeFest) || null,
+    dependsOn: Array.isArray(t.dependsOn) ? t.dependsOn : [],
+    subtasks: Array.isArray(t.subtasks) ? t.subtasks : [],
     status: "open",
     sort: t.sort || 100,
     remindDaysBefore: Array.isArray(t.remindDaysBefore) ? t.remindDaysBefore : remindDays,
@@ -289,6 +291,8 @@ async function ensureSommerfestSeed(db) {
       category: t.category || "other",
       assignees: t.assignees || [],
       dueDate: t.dueDate || null,
+      dependsOn: [],
+      subtasks: [],
       status: "open",
       sort: t.sort || 100,
       remindDaysBefore: DEFAULT_REMIND_DAYS,
@@ -446,12 +450,30 @@ function formatFestorgaList(fest, tasks) {
   if (!tasks.length) {
     lines.push("_Noch keine Aufgaben._");
   } else {
+    const byId = Object.fromEntries(tasks.map((t) => [t.id, t]));
     for (const t of tasks) {
       const who = (t.assignees || []).length ? t.assignees.join(", ") : "offen";
       const due = t.dueDate ? ` · bis ${t.dueDate}` : "";
-      const mark = t.status === "done" ? "✅" : "⬜";
+      const deps = Array.isArray(t.dependsOn) ? t.dependsOn : [];
+      const blocked = t.status !== "done" && deps.some((id) => byId[id] && byId[id].status !== "done");
+      const mark = t.status === "done" ? "✅" : blocked ? "⏳" : "⬜";
       const cat = t.category && TASK_CATEGORIES[t.category] ? ` [${TASK_CATEGORIES[t.category]}]` : "";
-      lines.push(`${mark} *${t.title}*${cat} — ${who}${due}`);
+      const subs = Array.isArray(t.subtasks) ? t.subtasks : [];
+      const subDone = subs.filter((s) => s && s.done).length;
+      const subBit = subs.length ? ` · Checklist ${subDone}/${subs.length}` : "";
+      lines.push(`${mark} *${t.title}*${cat} — ${who}${due}${subBit}`);
+      if (blocked) {
+        const wait = deps
+          .map((id) => byId[id])
+          .filter((d) => d && d.status !== "done")
+          .map((d) => d.title);
+        if (wait.length) lines.push(`   ↳ wartet auf: ${wait.join(", ")}`);
+      }
+      for (const s of subs.slice(0, 8)) {
+        if (!s || !s.title) continue;
+        lines.push(`   ${s.done ? "✅" : "▫️"} ${s.title}${s.dueDate ? ` (${s.dueDate})` : ""}`);
+      }
+      if (subs.length > 8) lines.push(`   _… +${subs.length - 8} weitere_`);
     }
   }
   lines.push(
@@ -532,6 +554,21 @@ async function processFestorgaReminders(db, { getBewohnerPhone, sendWhatsApp, lo
     day: "2-digit",
   }).format(new Date());
 
+  async function pingAssignees(names, text) {
+    let n = 0;
+    for (const name of names) {
+      const phone = await getBewohnerPhone(name);
+      if (!phone) {
+        logger.warn("Festorga-Reminder: keine Nummer", { name });
+        continue;
+      }
+      const ok = await sendWhatsApp(phone, text);
+      if (ok) n += 1;
+      await new Promise((r) => setTimeout(r, 800));
+    }
+    return n;
+  }
+
   for (const festDoc of festSnap.docs) {
     const fest = { id: festDoc.id, ...festDoc.data() };
     const festDefaults = Array.isArray(fest.remindDaysBefore) && fest.remindDaysBefore.length
@@ -539,39 +576,67 @@ async function processFestorgaReminders(db, { getBewohnerPhone, sendWhatsApp, lo
       : DEFAULT_REMIND_DAYS;
     const tasks = await loadFestTasks(db, fest.id);
     for (const t of tasks) {
-      if (t.status === "done" || !t.dueDate) continue;
-      const days = daysUntilDate(t.dueDate);
-      if (days === null || days < 0) continue;
-      const remindDays = Array.isArray(t.remindDaysBefore) && t.remindDaysBefore.length
+      if (t.status === "done") continue;
+      const assignees = t.assignees || [];
+      const remindDaysTask = Array.isArray(t.remindDaysBefore) && t.remindDaysBefore.length
         ? t.remindDaysBefore.map(Number)
         : festDefaults;
-      if (!remindDays.includes(days)) continue;
-      const dayKey = `${todayKey}:${days}`;
-      if (t.lastReminderDayKey === dayKey) continue;
-      const assignees = t.assignees || [];
-      if (!assignees.length) continue;
 
-      for (const name of assignees) {
-        const phone = await getBewohnerPhone(name);
-        if (!phone) {
-          logger.warn("Festorga-Reminder: keine Nummer", { name, task: t.title });
-          continue;
+      if (t.dueDate && assignees.length) {
+        const days = daysUntilDate(t.dueDate);
+        if (days !== null && days >= 0 && remindDaysTask.includes(days)) {
+          const dayKey = `${todayKey}:${days}`;
+          if (t.lastReminderDayKey !== dayKey) {
+            const when = days === 0 ? "heute" : days === 1 ? "morgen" : `in ${days} Tagen`;
+            const openSubs = (Array.isArray(t.subtasks) ? t.subtasks : []).filter((s) => s && !s.done);
+            const checklist = openSubs.length
+              ? `\nChecklist offen:\n${openSubs.slice(0, 6).map((s) => `▫️ ${s.title}`).join("\n")}\n`
+              : "";
+            const text =
+              `🎉 *Festorga-Erinnerung · ${fest.title}*\n\n` +
+              `⬜ *${t.title}* ist ${when} fällig (${t.dueDate}).\n` +
+              (t.description ? `${t.description}\n` : "") +
+              checklist +
+              `\n👉 ${FESTORGA_URL}\n` +
+              `_Erledigt?_ «Festorga erledigt: ${t.title}»`;
+            sent += await pingAssignees(assignees, text);
+            await db.collection("festorgaTasks").doc(t.id).update({
+              lastReminderAt: FieldValue.serverTimestamp(),
+              lastReminderDayKey: dayKey,
+            });
+          }
         }
+      }
+
+      // Unteraufgaben mit eigener Fälligkeit
+      const subs = Array.isArray(t.subtasks) ? [...t.subtasks] : [];
+      let subsChanged = false;
+      for (let i = 0; i < subs.length; i++) {
+        const s = subs[i];
+        if (!s || s.done || !s.dueDate || !assignees.length) continue;
+        const days = daysUntilDate(s.dueDate);
+        if (days === null || days < 0) continue;
+        const remindDays = Array.isArray(s.remindDaysBefore) && s.remindDaysBefore.length
+          ? s.remindDaysBefore.map(Number)
+          : remindDaysTask;
+        if (!remindDays.includes(days)) continue;
+        const dayKey = `${todayKey}:sub:${s.id || i}:${days}`;
+        if (s.lastReminderDayKey === dayKey) continue;
         const when = days === 0 ? "heute" : days === 1 ? "morgen" : `in ${days} Tagen`;
         const text =
-          `🎉 *Festorga-Erinnerung · ${fest.title}*\n\n` +
-          `⬜ *${t.title}* ist ${when} fällig (${t.dueDate}).\n` +
-          (t.description ? `${t.description}\n` : "") +
-          `\n👉 ${FESTORGA_URL}\n` +
-          `_Erledigt?_ «Festorga erledigt: ${t.title}»`;
-        const ok = await sendWhatsApp(phone, text);
-        if (ok) sent += 1;
-        await new Promise((r) => setTimeout(r, 800));
+          `🎉 *Festorga-Checklist · ${fest.title}*\n\n` +
+          `▫️ *${s.title}* (${t.title}) ist ${when} fällig (${s.dueDate}).\n` +
+          `\n👉 ${FESTORGA_URL}`;
+        sent += await pingAssignees(assignees, text);
+        subs[i] = { ...s, lastReminderDayKey: dayKey };
+        subsChanged = true;
       }
-      await db.collection("festorgaTasks").doc(t.id).update({
-        lastReminderAt: FieldValue.serverTimestamp(),
-        lastReminderDayKey: dayKey,
-      });
+      if (subsChanged) {
+        await db.collection("festorgaTasks").doc(t.id).update({
+          subtasks: subs,
+          updatedAt: FieldValue.serverTimestamp(),
+        });
+      }
     }
   }
   if (sent) logger.info(`Festorga-Reminders gesendet: ${sent}`);
