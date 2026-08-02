@@ -371,6 +371,7 @@ async function hydrateEventWeather() {
     const next = tmp.firstElementChild;
     if (next) el.replaceWith(next);
   });
+  scheduleHashScrollRestore();
 }
 
 async function initWeather() {
@@ -1853,6 +1854,44 @@ function normalizeUrl(u) {
   } catch { return ""; }
 }
 
+/* Hash-Ziele (#events etc.) nach späten Layout-Shifts (z. B. Bewohner-Liste) wieder ansteuern */
+let hashScrollLockUntil = 0;
+let hashScrollTimer = 0;
+
+function armHashScrollLock(ms = 5000) {
+  const hash = (location.hash || "").replace(/^#/, "");
+  if (!hash) return;
+  hashScrollLockUntil = Date.now() + ms;
+  scheduleHashScrollRestore();
+}
+
+function scheduleHashScrollRestore() {
+  const hash = (location.hash || "").replace(/^#/, "");
+  if (!hash || Date.now() > hashScrollLockUntil) return;
+  clearTimeout(hashScrollTimer);
+  hashScrollTimer = setTimeout(() => {
+    if (Date.now() > hashScrollLockUntil) return;
+    const el = document.getElementById(hash);
+    if (!el) return;
+    const navH = document.querySelector(".nav")?.offsetHeight || 64;
+    const y = el.getBoundingClientRect().top + window.pageYOffset - navH - 10;
+    window.scrollTo({ top: Math.max(0, y), left: 0, behavior: "auto" });
+  }, 50);
+}
+
+window.addEventListener("hashchange", () => armHashScrollLock());
+window.addEventListener("load", () => armHashScrollLock());
+// Erste User-Scroll-Geste: Lock beenden, damit wir nicht „übersteuern“
+["wheel", "touchmove", "pointerdown"].forEach((evt) => {
+  window.addEventListener(
+    evt,
+    () => {
+      if (Date.now() < hashScrollLockUntil) hashScrollLockUntil = 0;
+    },
+    { passive: true, once: true }
+  );
+});
+
 function renderBewohner() {
   const grid = $("bewohnerGrid");
   if (!grid) return;
@@ -1935,6 +1974,7 @@ function renderBewohner() {
   grid.querySelectorAll(".bewohner-row").forEach(row => {
     row.addEventListener("click", () => openFrom(row));
   });
+  scheduleHashScrollRestore();
 }
 
 function openBewohnerProfile(name) {
@@ -2202,6 +2242,7 @@ function renderGallery() {
       });
     });
   });
+  scheduleHashScrollRestore();
 }
 
 /* Galerie-Upload */
@@ -2421,6 +2462,7 @@ function renderEvents() {
 
   $("statEvents").textContent = upcoming.length;
   void hydrateEventWeather();
+  scheduleHashScrollRestore();
 }
 
 let eventBringCache = [];
@@ -2495,28 +2537,58 @@ function renderIconPicker(selected) {
     </div>`;
 }
 
+function closeAllIconPickers() {
+  document.querySelectorAll(".icon-picker-grid").forEach((g) => {
+    g.hidden = true;
+    g.classList.remove("icon-picker-sheet");
+    const homeId = g.dataset.home;
+    const home = homeId ? document.querySelector(`[data-icon-picker="${homeId}"]`) : null;
+    if (home && g.parentElement !== home) home.appendChild(g);
+  });
+  document.querySelectorAll(".icon-picker-toggle").forEach((t) => t.setAttribute("aria-expanded", "false"));
+  document.getElementById("iconPickerBackdrop")?.remove();
+}
+
 function bindIconPickers(root) {
   if (!root) return;
-  root.querySelectorAll("[data-icon-picker]").forEach((picker) => {
+  root.querySelectorAll("[data-icon-picker]").forEach((picker, idx) => {
     if (picker.dataset.bound === "1") return;
     picker.dataset.bound = "1";
+    if (!picker.dataset.iconPicker) {
+      picker.dataset.iconPicker = `ip-${Date.now()}-${idx}`;
+    }
     const hidden = picker.querySelector('input[name="icon"]');
     const toggle = picker.querySelector(".icon-picker-toggle");
     const grid = picker.querySelector(".icon-picker-grid");
     const current = picker.querySelector(".icon-picker-current");
     if (!hidden || !toggle || !grid) return;
-    toggle.addEventListener("click", () => {
-      const willOpen = grid.hidden;
-      // andere Pickers schliessen
-      root.querySelectorAll(".icon-picker-grid").forEach((g) => {
-        if (g !== grid) g.hidden = true;
-      });
-      root.querySelectorAll(".icon-picker-toggle").forEach((t) => {
-        if (t !== toggle) t.setAttribute("aria-expanded", "false");
-      });
-      grid.hidden = !willOpen;
-      toggle.setAttribute("aria-expanded", willOpen ? "true" : "false");
+    grid.dataset.home = picker.dataset.iconPicker;
+
+    toggle.addEventListener("click", (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      const wasOpen = !grid.hidden && grid.parentElement === document.body;
+      closeAllIconPickers();
+      if (wasOpen) return;
+
+      // Sheet an body hängen – sonst clippt backdrop-filter der Event-Karte
+      document.body.appendChild(grid);
+      grid.classList.add("icon-picker-sheet");
+      grid.hidden = false;
+      toggle.setAttribute("aria-expanded", "true");
+
+      let backdrop = document.getElementById("iconPickerBackdrop");
+      if (!backdrop) {
+        backdrop = document.createElement("button");
+        backdrop.type = "button";
+        backdrop.id = "iconPickerBackdrop";
+        backdrop.className = "icon-picker-backdrop";
+        backdrop.setAttribute("aria-label", "Icon-Auswahl schliessen");
+        backdrop.addEventListener("click", () => closeAllIconPickers());
+        document.body.appendChild(backdrop);
+      }
     });
+
     grid.addEventListener("click", (e) => {
       const btn = e.target.closest(".icon-opt");
       if (!btn) return;
@@ -2525,8 +2597,7 @@ function bindIconPickers(root) {
       if (current) current.textContent = icon;
       grid.querySelectorAll(".icon-opt").forEach((b) => b.classList.toggle("is-selected", b === btn));
       rememberPartyIcon(icon);
-      grid.hidden = true;
-      toggle.setAttribute("aria-expanded", "false");
+      closeAllIconPickers();
     });
   });
 }
@@ -10336,6 +10407,7 @@ function renderRoomOffer() {
   renderRoomAdminPhotos();
   populateRoomForm();
   void migrateLegacyRoomPhotosIfNeeded();
+  scheduleHashScrollRestore();
 }
 
 function populateRoomForm() {
@@ -11436,6 +11508,7 @@ placeWeatherWidget();
   else if (mq.addListener) mq.addListener(onChange);
 }
 initWeather();
+armHashScrollLock();
 
 // Auth-Config parallel (Firestore-Listener starten schon oben via setupListeners)
 wireLoginAutofillSync();
