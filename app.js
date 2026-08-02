@@ -2246,30 +2246,50 @@ function formatBringItemHtml(entry) {
   return `${struckHtml}<span class="bring-current">${escapeHtml(entry.item || "")}</span>`;
 }
 
+function bringInitials(who) {
+  const parts = String(who || "?").trim().split(/\s+/).filter(Boolean);
+  if (!parts.length) return "?";
+  if (parts.length === 1) return parts[0].slice(0, 2).toUpperCase();
+  return (parts[0][0] + parts[parts.length - 1][0]).toUpperCase();
+}
+
+function bringAvatarTone(who) {
+  const s = normalizeBringWho(who);
+  let h = 0;
+  for (let i = 0; i < s.length; i++) h = (h + s.charCodeAt(i) * (i + 1)) % 4;
+  return ["tone-lake", "tone-moss", "tone-sun", "tone-coral"][h];
+}
+
 function renderEventBringBlock(ev) {
   const items = eventBringForEvent(ev.id);
   const listHtml = items.length
     ? `<ul class="event-bring-ul">${items.map((x) =>
         `<li class="bring-item" data-id="${escapeHtml(x.id)}">
           <div class="bring-item-main">
-            <span class="bring-line"><strong>${escapeHtml(x.who || "?")}</strong>: ${formatBringItemHtml(x)}</span>
-            <button type="button" class="bring-change-btn" title="Eintrag bearbeiten">Ändern</button>
-            <button type="button" class="bring-delete-btn" data-id="${escapeHtml(x.id)}" title="Eintrag löschen">×</button>
+            <span class="bring-avatar ${bringAvatarTone(x.who)}" aria-hidden="true">${escapeHtml(bringInitials(x.who))}</span>
+            <span class="bring-line">
+              <span class="bring-who">${escapeHtml(x.who || "?")}</span>
+              <span class="bring-stuff">${formatBringItemHtml(x)}</span>
+            </span>
+            <span class="bring-actions">
+              <button type="button" class="bring-change-btn" title="Eintrag bearbeiten">Ändern</button>
+              <button type="button" class="bring-delete-btn" data-id="${escapeHtml(x.id)}" title="Eintrag löschen">×</button>
+            </span>
           </div>
           <div class="bring-change-panel" hidden>
             <form class="bring-change-form" data-id="${escapeHtml(x.id)}">
-              <input name="who" value="${escapeHtml(x.who || "")}" placeholder="Name" maxlength="60" required />
-              <input name="item" value="${escapeHtml(x.item || "")}" placeholder="Mitbringsel…" maxlength="120" required />
+              <input type="text" name="who" value="${escapeHtml(x.who || "")}" placeholder="Name" maxlength="60" required />
+              <input type="text" name="item" value="${escapeHtml(x.item || "")}" placeholder="Mitbringsel…" maxlength="120" required />
               <label class="bring-strike-opt">
                 <input type="checkbox" name="strike" />
                 <span>Altes durchstreichen</span>
               </label>
-              <button type="submit" class="btn btn-ghost small">Ändern</button>
+              <button type="submit" class="btn btn-primary small">Ändern</button>
             </form>
           </div>
         </li>`
       ).join("")}</ul>`
-    : `<p class="form-note small">Noch niemand eingetragen.</p>`;
+    : `<p class="form-note small">Noch niemand eingetragen – trag dich ein und mach den Sommer bunt.</p>`;
   const whoField = auth.isAuthed
     ? `<input type="hidden" name="who" value="${escapeHtml(auth.member || "")}" />`
     : `<input type="text" name="who" placeholder="Dein Name" maxlength="60" autocomplete="name" required />`;
@@ -2279,10 +2299,10 @@ function renderEventBringBlock(ev) {
       ${listHtml}
       <form class="event-bring-form inline" data-eventid="${escapeHtml(ev.id)}">
         ${whoField}
-        <input name="item" placeholder="z. B. Salat" maxlength="120" required />
-        <button type="submit" class="btn btn-ghost small">Eintragen</button>
+        <input type="text" name="item" placeholder="z. B. Salat oder Vodka Melone" maxlength="120" required />
+        <button type="submit" class="btn btn-primary small">Eintragen</button>
       </form>
-      <p class="form-note small">Planänderung mit Durchstreichen: Häkchen bei „Altes durchstreichen“ oder nochmal mit gleichem Namen eintragen. WhatsApp: <em>Mitbringen ${escapeHtml(ev.title)}: Salat</em></p>
+      <p class="form-note small">Planänderung: Häkchen bei „Altes durchstreichen“ oder nochmal mit gleichem Namen. WhatsApp: <em>Mitbringen ${escapeHtml(ev.title)}: Salat</em></p>
     </details>`;
 }
 
