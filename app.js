@@ -1119,22 +1119,7 @@ Danach: unter «WG-Intern → Einstellungen» dein persönliches Passwort, Anzei
 async function shareWgInviteFromSheet() {
   if (!requireMember("Einladung teilen")) return;
   const { text, shareTitle, url } = buildWgInviteText();
-  const re = new RegExp(`\\n*\\s*${url.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}$`);
-  const textNoUrl = text.replace(re, "").trimEnd();
-  if (navigator.share) {
-    try {
-      await navigator.share({ title: shareTitle, text: textNoUrl, url });
-      return;
-    } catch (err) {
-      if (err?.name === "AbortError") return;
-    }
-  }
-  try {
-    await navigator.clipboard.writeText(text);
-    showToast("Einladung in die Zwischenablage kopiert.", "success");
-  } catch {
-    showToast("Teilen war nicht möglich.", "error");
-  }
+  await shareOrCopy({ title: shareTitle, text, url });
 }
 
 function openWgInviteWhatsApp() {
@@ -3075,53 +3060,102 @@ function buildShareText(ev, hash = "events") {
   return parts.join("\n");
 }
 
-async function shareEvent(ev, hash = "events") {
-  const fullText = buildShareText(ev, hash);
-  const url = eventPermalink(ev, hash);
-  // Für native share: Permalink entfernen, da er ins url-Feld geht (sonst doppelt)
-  const textWithoutLink = fullText.replace(/\n*\s*https?:\/\/\S+$/, "").trimEnd();
+/** Native Share nur auf echtem Mobile – Desktop-Safari hat oft share() ohne brauchbares UI. */
+function prefersNativeShare() {
+  if (typeof navigator.share !== "function") return false;
+  try {
+    if (navigator.userAgentData?.mobile === true) return true;
+  } catch { /* ignore */ }
+  const ua = navigator.userAgent || "";
+  if (/Android|iPhone|iPod/i.test(ua)) return true;
+  // iPadOS meldet sich oft als Macintosh + Touch
+  if (navigator.maxTouchPoints > 1 && /Mac|iPad/i.test(navigator.platform || ua)) return true;
+  return false;
+}
 
-  // 1. Native Web-Share-API (iOS/Android Share-Sheet)
-  if (navigator.share) {
-    const shareData = { title: `${ev.title} · Haus am See`, text: textWithoutLink, url };
+async function copyTextReliable(text) {
+  const value = String(text || "");
+  if (!value) return false;
+  try {
+    await navigator.clipboard.writeText(value);
+    return true;
+  } catch { /* fallback */ }
+  try {
+    const ta = document.createElement("textarea");
+    ta.value = value;
+    ta.setAttribute("readonly", "");
+    ta.style.cssText = "position:fixed;left:-9999px;top:0;opacity:0;";
+    document.body.appendChild(ta);
+    ta.focus();
+    ta.select();
+    const ok = document.execCommand("copy");
+    ta.remove();
+    return !!ok;
+  } catch {
+    return false;
+  }
+}
 
-    // Flyer als Datei anhängen, wenn vorhanden und vom Browser unterstützt
-    if (ev.flyerSrc && typeof ev.flyerSrc === "string" && ev.flyerSrc.startsWith("data:")) {
-      const file = dataUrlToFile(ev.flyerSrc, ev.title);
-      if (file && navigator.canShare && navigator.canShare({ files: [file] })) {
-        shareData.files = [file];
-      }
+/**
+ * Teilen: Mobile → Share-Sheet; Desktop → Zwischenablage (+ klarer Toast).
+ * @returns {"shared"|"copied"|"aborted"|"failed"}
+ */
+async function shareOrCopy({ title, text, url, files } = {}) {
+  const body = String(text || "").trim();
+  const link = String(url || "").trim();
+  const full = link && !body.includes(link) ? `${body}\n\n${link}` : body || link;
+  const textForNative = link
+    ? body.replace(new RegExp(`\\n*\\s*${link.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\s*$`), "").trimEnd()
+    : body;
+
+  if (prefersNativeShare()) {
+    const shareData = { title: title || "Haus am See", text: textForNative || body };
+    if (link) shareData.url = link;
+    if (files?.length && typeof navigator.canShare === "function") {
+      try {
+        if (navigator.canShare({ files })) shareData.files = files;
+      } catch { /* ignore */ }
     }
-
     try {
       await navigator.share(shareData);
-      return;
+      return "shared";
     } catch (err) {
-      if (err?.name === "AbortError") return;
-      // Bei anderen Fehlern (z. B. "permission denied" für files): erneut ohne Datei versuchen
+      if (err?.name === "AbortError") return "aborted";
       if (shareData.files) {
         try {
           delete shareData.files;
           await navigator.share(shareData);
-          return;
+          return "shared";
         } catch (err2) {
-          if (err2?.name === "AbortError") return;
+          if (err2?.name === "AbortError") return "aborted";
         }
       }
     }
   }
-  // 2. Fallback: direkt WhatsApp (volltext mit Link)
-  const waUrl = `https://wa.me/?text=${encodeURIComponent(fullText)}`;
-  const win = window.open(waUrl, "_blank", "noopener");
-  if (!win) {
-    // 3. Letzter Fallback: Zwischenablage
-    try {
-      await navigator.clipboard.writeText(fullText);
-      showToast("In Zwischenablage kopiert.", "success");
-    } catch {
-      showToast("Teilen nicht möglich.", "error");
-    }
+
+  if (await copyTextReliable(full)) {
+    showToast("In Zwischenablage kopiert – zum Teilen einfügen.", "success");
+    return "copied";
   }
+  showToast("Teilen nicht möglich.", "error");
+  return "failed";
+}
+
+async function shareEvent(ev, hash = "events") {
+  const fullText = buildShareText(ev, hash);
+  const url = eventPermalink(ev, hash);
+  const textWithoutLink = fullText.replace(/\n*\s*https?:\/\/\S+$/, "").trimEnd();
+  const files = [];
+  if (ev.flyerSrc && typeof ev.flyerSrc === "string" && ev.flyerSrc.startsWith("data:")) {
+    const file = dataUrlToFile(ev.flyerSrc, ev.title);
+    if (file) files.push(file);
+  }
+  await shareOrCopy({
+    title: `${ev.title} · Haus am See`,
+    text: textWithoutLink,
+    url,
+    files,
+  });
 }
 
 /* -------- Öffentliche Anmeldeliste -------- */
@@ -10245,24 +10279,14 @@ function setupRoomShareUI() {
   shareBtn.dataset.roomShareBound = "1";
   shareBtn.addEventListener("click", async () => {
     const ro = roomOfferCache;
-    if (!ro?.active) return;
+    if (!ro?.active) {
+      showToast("Zimmer-Inserat ist nicht aktiv.", "error");
+      return;
+    }
     const url = getRoomShareUrl();
     const text = buildRoomShareText(ro);
     const title = buildRoomShareTitle(ro);
-    if (navigator.share) {
-      try {
-        await navigator.share({ title, text, url });
-        return;
-      } catch (e) {
-        if (e && e.name === "AbortError") return;
-      }
-    }
-    try {
-      await navigator.clipboard.writeText(text);
-      showToast("Text mit Link kopiert.", "success");
-    } catch {
-      showToast("Teilen nicht möglich.", "error");
-    }
+    await shareOrCopy({ title, text, url });
   });
 }
 
