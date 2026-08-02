@@ -1871,17 +1871,19 @@ function normalizeUrl(u) {
 function renderBewohner() {
   const grid = $("bewohnerGrid");
   if (!grid) return;
-  grid.innerHTML = getActiveBewohner().map(b => {
+  const people = getActiveBewohner();
+  const cardsHtml = people.map(b => {
     const photo = bewohnerfotosCache[b.name]?.src;
     const text = getBewohnerText(b.name);
     const hasMore = !!(text.longBio || text.hobby || text.food || text.motto || text.link);
     const dlabel = mLabel(b.name);
+    const avatarInner = photo
+      ? `<img src="${escapeHtml(photo)}" alt="" loading="lazy" />`
+      : `<span class="avatar-emoji">${mEmoji(b.name)}</span>`;
     return `
       <article class="bewohner-card ${b.kid ? 'is-kid' : ''}" data-name="${escapeHtml(b.name)}" tabindex="0" role="button" aria-label="Profil von ${escapeHtml(dlabel)} öffnen">
         <div class="bewohner-avatar">
-          ${photo
-      ? `<img src="${escapeHtml(photo)}" alt="${escapeHtml(dlabel)}" loading="lazy" />`
-      : `<span class="avatar-emoji">${mEmoji(b.name)}</span>`}
+          ${avatarInner}
           ${auth.isMember ? `
             <button class="avatar-edit" data-name="${escapeHtml(b.name)}" title="Foto ändern" aria-label="Foto ändern">📷</button>
           ` : ""}
@@ -1899,7 +1901,32 @@ function renderBewohner() {
       </article>
     `;
   }).join("");
-  $("statBewohner").textContent = String(getActiveBewohner().length);
+
+  // Handy: kompakte Liste zum Antippen (Profil öffnet sich erst dann)
+  const mobileListHtml = people.map(b => {
+    const photo = bewohnerfotosCache[b.name]?.src;
+    const text = getBewohnerText(b.name);
+    const dlabel = mLabel(b.name);
+    const thumb = photo
+      ? `<img src="${escapeHtml(photo)}" alt="" loading="lazy" />`
+      : `<span class="avatar-emoji">${mEmoji(b.name)}</span>`;
+    return `
+      <button type="button" class="bewohner-row" data-name="${escapeHtml(b.name)}" aria-label="Profil von ${escapeHtml(dlabel)} öffnen">
+        <span class="bewohner-row-avatar">${thumb}</span>
+        <span class="bewohner-row-text">
+          <span class="bewohner-row-name">${escapeHtml(dlabel)}${b.kid ? ' <span class="kid-badge">Kid</span>' : ''}</span>
+          <span class="bewohner-row-role">${escapeHtml(text.role)}</span>
+        </span>
+        <span class="bewohner-row-chevron" aria-hidden="true">›</span>
+      </button>
+    `;
+  }).join("");
+
+  grid.innerHTML = `
+    <div class="bewohner-mobile-list" role="list">${mobileListHtml}</div>
+    <div class="bewohner-desktop-grid">${cardsHtml}</div>
+  `;
+  $("statBewohner").textContent = String(people.length);
 
   grid.querySelectorAll(".avatar-edit").forEach(btn => {
     btn.addEventListener("click", (e) => {
@@ -1907,15 +1934,21 @@ function renderBewohner() {
       uploadBewohnerFoto(btn.dataset.name);
     });
   });
+  const openFrom = (el) => {
+    const name = el?.dataset?.name;
+    if (name) openBewohnerProfile(name);
+  };
   grid.querySelectorAll(".bewohner-card").forEach(card => {
-    const openProfile = () => openBewohnerProfile(card.dataset.name);
     card.addEventListener("click", (e) => {
       if (e.target.closest("button")) return;
-      openProfile();
+      openFrom(card);
     });
     card.addEventListener("keydown", (e) => {
-      if (e.key === "Enter" || e.key === " ") { e.preventDefault(); openProfile(); }
+      if (e.key === "Enter" || e.key === " ") { e.preventDefault(); openFrom(card); }
     });
+  });
+  grid.querySelectorAll(".bewohner-row").forEach(row => {
+    row.addEventListener("click", () => openFrom(row));
   });
 }
 
@@ -2588,7 +2621,7 @@ function renderEventBringBlock(ev) {
     ? `<input type="hidden" name="who" value="${escapeHtml(auth.member || "")}" />`
     : `<input type="text" name="who" placeholder="Dein Name" maxlength="60" autocomplete="name" required />`;
   return `
-    <details class="event-bring" open>
+    <details class="event-bring">
       <summary>🥗 Wer bringt was · ${items.length}</summary>
       ${listHtml}
       <form class="event-bring-form inline" data-eventid="${escapeHtml(ev.id)}">
