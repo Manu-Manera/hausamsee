@@ -2399,12 +2399,119 @@ function renderEvents() {
       void deleteEventBring(btn.dataset.id);
     });
   });
+  bindIconPickers(list);
 
   $("statEvents").textContent = upcoming.length;
   void hydrateEventWeather();
 }
 
 let eventBringCache = [];
+
+/** Lustige Icons für Anmeldung & Mitbringen – bewusst viele */
+const PARTY_ICONS = [
+  "🥳","😎","🤩","🤪","😜","🥸","🤓","😇","😈","👻","💀","👽","🤖","💩","🤡","🥶","🥵","🥴","😵‍💫","🫠",
+  "🙈","🙉","🙊","🐵","🐶","🐱","🐭","🐹","🐰","🦊","🐻","🐼","🐨","🐯","🦁","🐮","🐷","🐸","🐔","🐧",
+  "🐦","🐤","🦆","🦅","🦉","🦇","🐺","🐗","🐴","🦄","🐝","🪱","🐛","🦋","🐌","🐞","🐜","🪰","🪲","🪳",
+  "🦟","🦗","🕷️","🦂","🐢","🐍","🦎","🦖","🦕","🐙","🦑","🦐","🦞","🦀","🐡","🐠","🐟","🐬","🐳","🐋",
+  "🦈","🐊","🐅","🐆","🦓","🦍","🦧","🦣","🐘","🦛","🦏","🐪","🐫","🦒","🦘","🦬","🐃","🐂","🐄","🐎",
+  "🐖","🐏","🐑","🦙","🐐","🦌","🐕","🐩","🦮","🐈","🪶","🐉","🐲","🌵","🎄","🌲","🌳","🌴","🌱","🌿",
+  "☘️","🍀","🎍","🪴","🎋","🍃","🍂","🍁","🍄","🐚","🪸","🪨","🌾","💐","🌷","🌹","🥀","🌺","🌸","🌼",
+  "🌻","🌞","🌝","🌛","🌜","🌚","🌕","🌖","🌗","🌘","🌑","🌒","🌓","🌔","⭐","🌟","✨","⚡","🔥","💥",
+  "☄️","🌈","☀️","🌤️","⛅","🌥️","☁️","🌦️","🌧️","⛈️","🌩️","🌨️","❄️","☃️","⛄","🌬️","💨","🌪️","🌫️","🌊",
+  "💧","💦","☂️","🍔","🍟","🍕","🌭","🥪","🌮","🌯","🥙","🧆","🥚","🍳","🥞","🧇","🥓","🥩","🍗","🍖",
+  "🦴","🌭","🍝","🍜","🍲","🍛","🍣","🍱","🥟","🦪","🍤","🍙","🍚","🍘","🍥","🥠","🥮","🍢","🍡","🍧",
+  "🍨","🍦","🥧","🧁","🍰","🎂","🍮","🍭","🍬","🍫","🍿","🍩","🍪","🌰","🥜","🍯","🥛","🍼","☕","🫖",
+  "🍵","🧃","🥤","🧋","🍶","🍺","🍻","🥂","🍷","🥃","🍸","🍹","🧉","🍾","🧊","🥄","🍴","🍽️","🥣","🥡",
+  "🥢","🧂","⚽","🏀","🏈","⚾","🥎","🎾","🏐","🏉","🥏","🎱","🪀","🏓","🏸","🏒","🏑","🥍","🏏","🪃",
+  "🥅","⛳","🪁","🏹","🎣","🤿","🥊","🥋","🎽","🛹","🛼","🛷","⛸️","🥌","🎿","⛷️","🏂","🪂","🏋️","🤼",
+  "🤸","⛹️","🤺","🤾","🏌️","🏇","🧘","🏄","🏊","🤽","🚣","🧗","🚵","🚴","🏆","🥇","🥈","🥉","🏅","🎖️",
+  "🏵️","🎗️","🎫","🎟️","🎪","🤹","🎭","🩰","🎨","🎬","🎤","🎧","🎼","🎹","🥁","🪘","🎷","🎺","🪗","🎸",
+  "🪕","🎻","🎲","♟️","🎯","🎳","🎮","🎰","🧩","🚗","🚕","🚙","🚌","🚎","🏎️","🚓","🚑","🚒","🚐","🛻",
+  "🚚","🚛","🚜","🛵","🏍️","🛺","🚔","🚍","🚘","🚖","🛞","✈️","🛩️","🛫","🛬","🪂","💺","🚁","🚟","🚠",
+  "🚡","🛰️","🚀","🛸","🛎️","🧳","⏰","🧨","💣","🔮","🪄","🧿","🪬","🪩","🎈","🎉","🎊","🎎","🎏","🎐",
+  "🧧","🎀","🎁","🫙","🪄","👑","👒","🎩","🎓","🧢","🪖","⛑️","💄","💍","💎","🔇","🔔","📣","📯","📻",
+  "🧀","🥑","🌶️","🧄","🧅","🥕","🌽","🥦","🥒","🥬","🍆","🥔","🍠","🥐","🥖","🫓","🥨","🥯","🥞","🫕",
+  "🦦","🦥","🦨","🦡","🦫","🦭","🦩","🦚","🦜","🦢","🦤","🪶","🦔","🐿️","🐀","🐁","🌋","🏝️","🏖️","⛺",
+  "🏕️","🏡","🏠","🛖","🏰","🗼","🗽","🗿","⛲","⛺","🌃","🌆","🌇","🌉","♨️","💈","🎪","🎢","🎡","🎠",
+];
+
+function getPreferredPartyIcon() {
+  try {
+    const saved = localStorage.getItem("partyIcon");
+    if (saved && PARTY_ICONS.includes(saved)) return saved;
+  } catch { /* ignore */ }
+  return PARTY_ICONS[Math.floor(Math.random() * PARTY_ICONS.length)] || "🥳";
+}
+
+function rememberPartyIcon(icon) {
+  if (!icon) return;
+  try { localStorage.setItem("partyIcon", icon); } catch { /* ignore */ }
+}
+
+function normalizePartyIcon(icon) {
+  const s = String(icon || "").trim();
+  if (s && (PARTY_ICONS.includes(s) || [...s].length <= 4)) return s.slice(0, 8);
+  return getPreferredPartyIcon();
+}
+
+function readFormIcon(form) {
+  return normalizePartyIcon(form?.querySelector('input[name="icon"]')?.value);
+}
+
+function renderIconPicker(selected) {
+  const cur = normalizePartyIcon(selected || getPreferredPartyIcon());
+  const opts = PARTY_ICONS.map(
+    (e) =>
+      `<button type="button" class="icon-opt${e === cur ? " is-selected" : ""}" data-icon="${e}" aria-label="Icon ${e}">${e}</button>`
+  ).join("");
+  return `
+    <div class="icon-picker" data-icon-picker>
+      <input type="hidden" name="icon" value="${escapeHtml(cur)}" />
+      <button type="button" class="icon-picker-toggle" aria-expanded="false">
+        <span class="icon-picker-current" aria-hidden="true">${cur}</span>
+        <span class="icon-picker-label">Icon wählen</span>
+      </button>
+      <div class="icon-picker-grid" hidden role="listbox" aria-label="Lustige Icons">
+        ${opts}
+      </div>
+    </div>`;
+}
+
+function bindIconPickers(root) {
+  if (!root) return;
+  root.querySelectorAll("[data-icon-picker]").forEach((picker) => {
+    if (picker.dataset.bound === "1") return;
+    picker.dataset.bound = "1";
+    const hidden = picker.querySelector('input[name="icon"]');
+    const toggle = picker.querySelector(".icon-picker-toggle");
+    const grid = picker.querySelector(".icon-picker-grid");
+    const current = picker.querySelector(".icon-picker-current");
+    if (!hidden || !toggle || !grid) return;
+    toggle.addEventListener("click", () => {
+      const willOpen = grid.hidden;
+      // andere Pickers schliessen
+      root.querySelectorAll(".icon-picker-grid").forEach((g) => {
+        if (g !== grid) g.hidden = true;
+      });
+      root.querySelectorAll(".icon-picker-toggle").forEach((t) => {
+        if (t !== toggle) t.setAttribute("aria-expanded", "false");
+      });
+      grid.hidden = !willOpen;
+      toggle.setAttribute("aria-expanded", willOpen ? "true" : "false");
+    });
+    grid.addEventListener("click", (e) => {
+      const btn = e.target.closest(".icon-opt");
+      if (!btn) return;
+      const icon = btn.dataset.icon;
+      hidden.value = icon;
+      if (current) current.textContent = icon;
+      grid.querySelectorAll(".icon-opt").forEach((b) => b.classList.toggle("is-selected", b === btn));
+      rememberPartyIcon(icon);
+      grid.hidden = true;
+      toggle.setAttribute("aria-expanded", "false");
+    });
+  });
+}
 
 function eventBringForEvent(eventId) {
   return eventBringCache.filter((x) => x.eventId === eventId);
@@ -2439,13 +2546,20 @@ function bringAvatarTone(who) {
   return ["tone-lake", "tone-moss", "tone-sun", "tone-coral"][h];
 }
 
+function renderPersonAvatar(who, icon) {
+  if (icon) {
+    return `<span class="bring-avatar bring-avatar--emoji" aria-hidden="true">${escapeHtml(icon)}</span>`;
+  }
+  return `<span class="bring-avatar ${bringAvatarTone(who)}" aria-hidden="true">${escapeHtml(bringInitials(who))}</span>`;
+}
+
 function renderEventBringBlock(ev) {
   const items = eventBringForEvent(ev.id);
   const listHtml = items.length
     ? `<ul class="event-bring-ul">${items.map((x) =>
         `<li class="bring-item" data-id="${escapeHtml(x.id)}">
           <div class="bring-item-main">
-            <span class="bring-avatar ${bringAvatarTone(x.who)}" aria-hidden="true">${escapeHtml(bringInitials(x.who))}</span>
+            ${renderPersonAvatar(x.who, x.icon)}
             <span class="bring-line">
               <span class="bring-who">${escapeHtml(x.who || "?")}</span>
               <span class="bring-stuff">${formatBringItemHtml(x)}</span>
@@ -2457,6 +2571,7 @@ function renderEventBringBlock(ev) {
           </div>
           <div class="bring-change-panel" hidden>
             <form class="bring-change-form" data-id="${escapeHtml(x.id)}">
+              ${renderIconPicker(x.icon || getPreferredPartyIcon())}
               <input type="text" name="who" value="${escapeHtml(x.who || "")}" placeholder="Name" maxlength="60" required />
               <input type="text" name="item" value="${escapeHtml(x.item || "")}" placeholder="Mitbringsel…" maxlength="120" required />
               <label class="bring-strike-opt">
@@ -2477,6 +2592,7 @@ function renderEventBringBlock(ev) {
       <summary>🥗 Wer bringt was · ${items.length}</summary>
       ${listHtml}
       <form class="event-bring-form inline" data-eventid="${escapeHtml(ev.id)}">
+        ${renderIconPicker(getPreferredPartyIcon())}
         ${whoField}
         <input type="text" name="item" placeholder="z. B. Salat oder Vodka Melone" maxlength="120" required />
         <button type="submit" class="btn btn-primary small">Eintragen</button>
@@ -2523,8 +2639,11 @@ async function submitEventBring(eventId, form) {
     const existing = eventBringForEvent(eventId).find(
       (x) => normalizeBringWho(x.who) === normalizeBringWho(who)
     );
+    const icon = readFormIcon(form);
     if (existing) {
       await applyBringPlanChange(existing.id, item);
+      await updateDoc(doc(db, "eventBring", existing.id), { icon, who });
+      rememberPartyIcon(icon);
       if (itemInput) itemInput.value = "";
       showToast("Planänderung notiert ✏️", "success");
       return;
@@ -2534,9 +2653,11 @@ async function submitEventBring(eventId, form) {
       eventTitle: ev.title || "",
       who,
       item,
+      icon,
       struckItems: [],
       createdAt: serverTimestamp(),
     });
+    rememberPartyIcon(icon);
     if (itemInput) itemInput.value = "";
     if (whoInput && whoInput.type !== "hidden") whoInput.value = "";
     showToast("Eingetragen.", "success");
@@ -2549,6 +2670,7 @@ async function submitEventBring(eventId, form) {
 async function changeEventBring(entryId, form) {
   const who = String(form.querySelector('input[name="who"]')?.value || "").trim().slice(0, 60);
   const item = String(form.querySelector('input[name="item"]')?.value || "").trim().slice(0, 120);
+  const icon = readFormIcon(form);
   const strike = !!form.querySelector('input[name="strike"]')?.checked;
   if (!who) {
     showToast("Bitte Namen eintragen.", "error");
@@ -2568,17 +2690,18 @@ async function changeEventBring(entryId, form) {
     const itemChanged = normalizeBringWho(item) !== normalizeBringWho(entry.item);
     if (strike && itemChanged) {
       await applyBringPlanChange(entryId, item);
-      if (normalizeBringWho(who) !== normalizeBringWho(entry.who)) {
-        await updateDoc(doc(db, "eventBring", entryId), { who });
-      }
+      await updateDoc(doc(db, "eventBring", entryId), { who, icon });
+      rememberPartyIcon(icon);
       showToast("Planänderung notiert ✏️", "success");
       return;
     }
     await updateDoc(doc(db, "eventBring", entryId), {
       who,
       item,
+      icon,
       updatedAt: serverTimestamp(),
     });
+    rememberPartyIcon(icon);
     showToast("Eintrag geändert.", "success");
   } catch (err) {
     console.error(err);
@@ -3004,6 +3127,7 @@ function renderSignupBlock(ev) {
         <ul class="signup-list">
           ${pairs.map(a => `
             <li class="signup-item signup-pair">
+              <span class="signup-icon" aria-hidden="true">${escapeHtml(a.icon || "🥳")}</span>
               <span class="signup-names">${escapeHtml(a.name)} <span class="signup-link">🤝</span> ${escapeHtml(a.partnerName)}</span>
               ${ownIds.has(a.id) || auth.isMember
                 ? `<button type="button" class="signup-remove" data-id="${a.id}" data-eventid="${ev.id}" title="Anmeldung entfernen">×</button>`
@@ -3017,6 +3141,7 @@ function renderSignupBlock(ev) {
         <ul class="signup-list">
           ${solos.map(a => `
             <li class="signup-item signup-solo">
+              <span class="signup-icon" aria-hidden="true">${escapeHtml(a.icon || "🥳")}</span>
               <span class="signup-names">${escapeHtml(a.name)}</span>
               ${ownIds.has(a.id) || auth.isMember
                 ? `<button type="button" class="signup-remove" data-id="${a.id}" data-eventid="${ev.id}" title="Anmeldung entfernen">×</button>`
@@ -3035,6 +3160,7 @@ function renderSignupBlock(ev) {
         <summary>🏁 Anmeldung zum Paar-Lauf · ${entries.length}</summary>
         ${listHtml}
         <form class="signup-form signup-form-pair" data-eventid="${ev.id}">
+          ${renderIconPicker(getPreferredPartyIcon())}
           <div class="signup-row">
             <input type="text" name="name" placeholder="Dein Name" autocomplete="off" required />
             <input type="text" name="partnerName" placeholder="Partner:in (oder leer)" autocomplete="off" />
@@ -3061,6 +3187,7 @@ function renderSignupBlock(ev) {
         <ul class="signup-list">
           ${entries.map(a => `
             <li class="signup-item">
+              <span class="signup-icon" aria-hidden="true">${escapeHtml(a.icon || "🥳")}</span>
               <span class="signup-names">${escapeHtml(a.name)}</span>
               ${ownIds.has(a.id) || auth.isMember
                 ? `<button type="button" class="signup-remove" data-id="${a.id}" data-eventid="${ev.id}" title="Anmeldung entfernen">×</button>`
@@ -3070,6 +3197,7 @@ function renderSignupBlock(ev) {
         </ul>
       ` : `<div class="empty-state small">Noch niemand angemeldet. Mach den Anfang!</div>`}
       <form class="signup-form" data-eventid="${ev.id}">
+        ${renderIconPicker(getPreferredPartyIcon())}
         <div class="signup-row">
           <input type="text" name="name" placeholder="Dein Name" autocomplete="off" required />
           <button type="submit" class="btn btn-primary small">Anmelden</button>
@@ -3085,8 +3213,9 @@ async function handleSignupSubmit(eventId, form) {
   const mode = ev.registrationMode || "single";
   const name = (form.elements["name"].value || "").trim();
   if (!name) { showToast("Bitte Namen eintragen.", "error"); return; }
+  const icon = readFormIcon(form);
 
-  const entry = { eventId, name, createdAt: Date.now() };
+  const entry = { eventId, name, icon, createdAt: Date.now() };
   if (mode === "pair") {
     const partnerName = (form.elements["partnerName"].value || "").trim();
     const needsPartnerChecked = !!form.elements["needsPartner"]?.checked;
@@ -3113,7 +3242,12 @@ async function handleSignupSubmit(eventId, form) {
       renderEvents();
     }
     addOwnSignupId(eventId, newId);
+    rememberPartyIcon(icon);
     form.reset();
+    const iconInput = form.querySelector('input[name="icon"]');
+    if (iconInput) iconInput.value = icon;
+    const current = form.querySelector(".icon-picker-current");
+    if (current) current.textContent = icon;
     showToast("Anmeldung gespeichert 🎉", "success");
   } catch (err) {
     console.error(err);

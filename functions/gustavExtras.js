@@ -24,7 +24,9 @@ function formatBringItemText(entry) {
   const struck = Array.isArray(entry.struckItems) ? entry.struckItems : [];
   const struckPart = struck.map((s) => `~${s}~`).join(" ");
   const cur = entry.item || "";
-  return struckPart ? `${struckPart} ${cur}` : cur;
+  const body = struckPart ? `${struckPart} ${cur}` : cur;
+  const icon = entry.icon ? `${entry.icon} ` : "";
+  return `${icon}${body}`;
 }
 
 async function addBringItem(db, { eventId, eventTitle, who, item }) {
