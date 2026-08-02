@@ -10099,6 +10099,72 @@ $("kontaktForm")?.addEventListener("submit", async (e) => {
    ========================================================================== */
 
 let roomOfferCache = null;
+let zimmerfotosCache = [];
+let roomPhotosMigrating = false;
+
+function dataUrlByteSize(dataUrl) {
+  return Math.ceil((String(dataUrl || "").length * 3) / 4);
+}
+
+/** Zimmerfotos: eigene Docs (nicht im config/roomOffer – sonst 1-MB-Limit). */
+function getRoomPhotosList() {
+  if (zimmerfotosCache.length) {
+    return zimmerfotosCache
+      .slice()
+      .sort((a, b) => {
+        const ta = a.createdAt?.toMillis?.() ?? a.createdAt ?? 0;
+        const tb = b.createdAt?.toMillis?.() ?? b.createdAt ?? 0;
+        return ta - tb;
+      })
+      .map((p) => ({ id: p.id, src: p.src }));
+  }
+  const legacy = roomOfferCache?.photos;
+  if (Array.isArray(legacy) && legacy.length) {
+    return legacy
+      .filter((src) => typeof src === "string" && src)
+      .map((src, i) => ({ id: `legacy_${i}`, src, legacy: true }));
+  }
+  return [];
+}
+
+async function migrateLegacyRoomPhotosIfNeeded() {
+  if (!firebaseReady || roomPhotosMigrating) return;
+  const legacy = roomOfferCache?.photos;
+  if (!Array.isArray(legacy) || !legacy.length) return;
+  if (zimmerfotosCache.length) {
+    // Schon neue Fotos da – alte Inline-Felder entfernen, damit roomOffer wieder klein wird
+    try {
+      await updateDoc(doc(db, "config", "roomOffer"), { photos: deleteField() });
+    } catch (e) {
+      console.warn("roomOffer photos clear", e);
+    }
+    return;
+  }
+  const dataUrls = legacy.filter((p) => typeof p === "string" && p.startsWith("data:"));
+  if (!dataUrls.length) return;
+  roomPhotosMigrating = true;
+  try {
+    for (const src of dataUrls) {
+      const size = dataUrlByteSize(src);
+      if (size > MAX_IMAGE_BYTES) {
+        console.warn("Legacy-Zimmerfoto zu gross, übersprungen", Math.round(size / 1024), "KB");
+        continue;
+      }
+      await addDoc(collection(db, "zimmerfotos"), {
+        src,
+        createdAt: serverTimestamp(),
+        migrated: true,
+        addedBy: auth.member || "migrate",
+      });
+    }
+    await updateDoc(doc(db, "config", "roomOffer"), { photos: deleteField() });
+    showToast("Alte Zimmerfotos wurden migriert.", "success");
+  } catch (e) {
+    console.error("Zimmerfoto-Migration", e);
+  } finally {
+    roomPhotosMigrating = false;
+  }
+}
 
 function getRoomShareUrl() {
   let p = window.location.pathname || "/";
@@ -10226,18 +10292,18 @@ function renderRoomOffer() {
     .map(f => `<li><span>${f.icon}</span><strong>${escapeHtml(f.label)}:</strong> ${escapeHtml(f.value)}</li>`)
     .join("");
 
-  const photos = Array.isArray(ro.photos) ? ro.photos : [];
+  const photos = getRoomPhotosList();
   const photoEl = $("roomOfferPhotos");
   if (!photos.length) {
     photoEl.innerHTML = `<div class="room-offer-photo-placeholder">📸 Noch keine Fotos hinzugefügt</div>`;
   } else {
-    photoEl.innerHTML = photos.map((src, i) => `
-      <div class="room-offer-photo" data-idx="${i}"><img src="${escapeHtml(src)}" alt="Zimmer-Foto ${i + 1}" loading="lazy" /></div>
+    photoEl.innerHTML = photos.map((p, i) => `
+      <div class="room-offer-photo" data-id="${escapeHtml(p.id)}" data-idx="${i}"><img src="${escapeHtml(p.src)}" alt="Zimmer-Foto ${i + 1}" loading="lazy" /></div>
     `).join("");
     photoEl.querySelectorAll(".room-offer-photo").forEach(el => {
       el.addEventListener("click", () => {
         const idx = Number(el.dataset.idx);
-        openLightbox({ src: photos[idx], caption: "Zimmer-Foto" });
+        openLightbox({ src: photos[idx]?.src, caption: "Zimmer-Foto" });
       });
     });
   }
@@ -10245,6 +10311,7 @@ function renderRoomOffer() {
   syncRoomOfferShareBackground(ro);
   renderRoomAdminPhotos();
   populateRoomForm();
+  void migrateLegacyRoomPhotosIfNeeded();
 }
 
 function populateRoomForm() {
@@ -10260,19 +10327,21 @@ function populateRoomForm() {
 function renderRoomAdminPhotos() {
   const wrap = $("roomAdminPhotos");
   if (!wrap) return;
-  const photos = Array.isArray(roomOfferCache?.photos) ? roomOfferCache.photos : [];
+  const photos = getRoomPhotosList();
   if (!photos.length) {
-    wrap.innerHTML = `<p class="form-note">Noch keine Fotos hochgeladen.</p>`;
+    wrap.innerHTML = `<p class="form-note">Noch keine Fotos hochgeladen – so viele wie du willst.</p>`;
     return;
   }
-  wrap.innerHTML = photos.map((src, i) => `
+  wrap.innerHTML = `
+    <p class="form-note">${photos.length} Foto${photos.length === 1 ? "" : "s"}</p>
+    ${photos.map((p, i) => `
     <div class="room-admin-photo">
-      <img src="${escapeHtml(src)}" alt="Zimmer-Foto ${i + 1}" loading="lazy" />
-      <button type="button" class="mini-btn danger" data-idx="${i}" data-action="remove-room-photo">Entfernen</button>
+      <img src="${escapeHtml(p.src)}" alt="Zimmer-Foto ${i + 1}" loading="lazy" />
+      <button type="button" class="mini-btn danger" data-id="${escapeHtml(p.id)}" data-legacy="${p.legacy ? "1" : "0"}" data-idx="${i}" data-action="remove-room-photo">Entfernen</button>
     </div>
-  `).join("");
+  `).join("")}`;
   wrap.querySelectorAll("[data-action='remove-room-photo']").forEach(btn => {
-    btn.addEventListener("click", () => removeRoomPhoto(Number(btn.dataset.idx)));
+    btn.addEventListener("click", () => removeRoomPhoto(btn.dataset.id, Number(btn.dataset.idx), btn.dataset.legacy === "1"));
   });
 }
 
@@ -10291,12 +10360,26 @@ async function saveRoomOffer(partial) {
   return true;
 }
 
-async function removeRoomPhoto(idx) {
+async function removeRoomPhoto(id, idx, isLegacy) {
   if (!requireMember("Fotos verwalten")) return;
-  const photos = [...(roomOfferCache?.photos || [])];
-  if (idx < 0 || idx >= photos.length) return;
-  photos.splice(idx, 1);
-  if (await saveRoomOffer({ photos })) showToast("Foto entfernt.", "success");
+  try {
+    if (isLegacy || String(id).startsWith("legacy_")) {
+      const photos = [...(roomOfferCache?.photos || [])];
+      if (idx < 0 || idx >= photos.length) return;
+      photos.splice(idx, 1);
+      if (await saveRoomOffer({ photos })) showToast("Foto entfernt.", "success");
+      return;
+    }
+    if (firebaseReady) {
+      await deleteDoc(doc(db, "zimmerfotos", id));
+      showToast("Foto entfernt.", "success");
+    } else {
+      showToast("Nur mit Firebase-Verbindung möglich.", "error");
+    }
+  } catch (e) {
+    console.error(e);
+    showToast("Entfernen fehlgeschlagen.", "error");
+  }
 }
 
 $("roomForm")?.addEventListener("submit", async (e) => {
@@ -10315,21 +10398,55 @@ $("roomForm")?.addEventListener("submit", async (e) => {
 
 $("roomPhotos")?.addEventListener("change", async (e) => {
   if (!requireMember("Fotos hochladen")) return;
-  const files = Array.from(e.target.files || []);
+  const files = Array.from(e.target.files || []).filter((f) => f.type.startsWith("image/"));
   if (!files.length) return;
-  const current = [...(roomOfferCache?.photos || [])];
+  if (!firebaseReady) {
+    showToast("Nur mit Firebase-Verbindung möglich.", "error");
+    e.target.value = "";
+    return;
+  }
+
+  const progress = document.createElement("div");
+  progress.className = "upload-progress";
+  progress.innerHTML = `<span class="spinner"></span><span>Lade 0 / ${files.length} …</span>`;
+  document.body.appendChild(progress);
+
+  let success = 0;
   try {
-    for (const file of files) {
-      const dataUrl = await resizeImage(file, 1200);
-      current.push(dataUrl);
+    for (let i = 0; i < files.length; i++) {
+      const file = files[i];
+      progress.querySelector("span:last-child").textContent = `Lade ${i + 1} / ${files.length} …`;
+      const dataUrl = await resizeImage(file, 1100, 0.72);
+      const sizeBytes = dataUrlByteSize(dataUrl);
+      if (sizeBytes > MAX_IMAGE_BYTES) {
+        showToast(`„${file.name}" zu gross (${Math.round(sizeBytes / 1024)} KB).`, "error");
+        continue;
+      }
+      await addDoc(collection(db, "zimmerfotos"), {
+        src: dataUrl,
+        createdAt: serverTimestamp(),
+        addedBy: auth.member || "",
+        fileName: String(file.name || "").slice(0, 120),
+      });
+      success += 1;
     }
-    await saveRoomOffer({ photos: current });
-    showToast(`${files.length} Foto${files.length > 1 ? "s" : ""} hinzugefügt.`, "success");
+    if (success) {
+      showToast(`${success} Foto${success > 1 ? "s" : ""} hinzugefügt.`, "success");
+    } else {
+      showToast("Kein Foto konnte gespeichert werden.", "error");
+    }
   } catch (err) {
     console.error(err);
-    showToast("Upload fehlgeschlagen.", "error");
+    const msg = String(err?.message || err || "");
+    if (/exceeds|too large|invalid-argument|ResourceExhausted/i.test(msg)) {
+      showToast("Foto zu gross für die Datenbank – bitte kleineres Bild wählen.", "error");
+    } else {
+      showToast("Upload fehlgeschlagen.", "error");
+    }
+  } finally {
+    progress.remove();
+    e.target.value = "";
   }
-  e.target.value = "";
 });
 
 /* --- Bewerbungs-Modus im Kontaktformular --- */
@@ -11202,6 +11319,11 @@ function setupListeners() {
     renderRoomOffer();
     syncBewerbungToggleVisibility();
   }, (err) => console.warn("roomOffer listener:", err.message));
+
+  onSnapshot(collection(db, "zimmerfotos"), (snap) => {
+    zimmerfotosCache = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
+    renderRoomOffer();
+  }, (err) => console.warn("zimmerfotos listener:", err.message));
 
   onSnapshot(doc(db, "config", "gartenPlan"), (snap) => {
     gartenPlanCache = normalizeGartenPlan(snap.exists() ? snap.data() : null);

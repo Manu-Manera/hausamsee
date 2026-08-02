@@ -98,6 +98,9 @@ service cloud.firestore {
     match /eventBring/{document=**} {
       allow read, write: if true;
     }
+    match /zimmerfotos/{document=**} {
+      allow read, write: if true;
+    }
     match /gustavRemindPending/{document=**} {
       allow read, write: if false;
     }
