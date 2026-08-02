@@ -2207,13 +2207,18 @@ function renderEvents() {
       const panel = li?.querySelector(".bring-change-panel");
       if (!panel) return;
       panel.hidden = !panel.hidden;
-      if (!panel.hidden) panel.querySelector("input")?.focus();
+      if (!panel.hidden) panel.querySelector('input[name="item"]')?.focus();
     });
   });
   list.querySelectorAll(".bring-change-form").forEach((form) => {
     form.addEventListener("submit", (e) => {
       e.preventDefault();
       void changeEventBring(form.dataset.id, form);
+    });
+  });
+  list.querySelectorAll(".bring-delete-btn").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      void deleteEventBring(btn.dataset.id);
     });
   });
 
@@ -2248,14 +2253,19 @@ function renderEventBringBlock(ev) {
         `<li class="bring-item" data-id="${escapeHtml(x.id)}">
           <div class="bring-item-main">
             <span class="bring-line"><strong>${escapeHtml(x.who || "?")}</strong>: ${formatBringItemHtml(x)}</span>
-            <button type="button" class="bring-change-btn" title="Planänderung – altes durchstreichen">↻</button>
+            <button type="button" class="bring-change-btn" title="Eintrag bearbeiten">Ändern</button>
+            <button type="button" class="bring-delete-btn" data-id="${escapeHtml(x.id)}" title="Eintrag löschen">×</button>
           </div>
           <div class="bring-change-panel" hidden>
             <form class="bring-change-form" data-id="${escapeHtml(x.id)}">
-              <input name="item" placeholder="Neues Mitbringsel…" maxlength="120" required />
-              <button type="submit" class="btn btn-ghost small">So ändern</button>
+              <input name="who" value="${escapeHtml(x.who || "")}" placeholder="Name" maxlength="60" required />
+              <input name="item" value="${escapeHtml(x.item || "")}" placeholder="Mitbringsel…" maxlength="120" required />
+              <label class="bring-strike-opt">
+                <input type="checkbox" name="strike" />
+                <span>Altes durchstreichen</span>
+              </label>
+              <button type="submit" class="btn btn-ghost small">Ändern</button>
             </form>
-            <p class="form-note small">Altes wird handschriftlich durchgestrichen.</p>
           </div>
         </li>`
       ).join("")}</ul>`
@@ -2272,7 +2282,7 @@ function renderEventBringBlock(ev) {
         <input name="item" placeholder="z. B. Salat" maxlength="120" required />
         <button type="submit" class="btn btn-ghost small">Eintragen</button>
       </form>
-      <p class="form-note small">Planänderung? Nochmal mit gleichem Namen eintragen oder ↻ tippen. WhatsApp: <em>Mitbringen ${escapeHtml(ev.title)}: Salat</em></p>
+      <p class="form-note small">Planänderung mit Durchstreichen: Häkchen bei „Altes durchstreichen“ oder nochmal mit gleichem Namen eintragen. WhatsApp: <em>Mitbringen ${escapeHtml(ev.title)}: Salat</em></p>
     </details>`;
 }
 
@@ -2338,18 +2348,58 @@ async function submitEventBring(eventId, form) {
 }
 
 async function changeEventBring(entryId, form) {
-  const itemInput = form.querySelector('input[name="item"]');
-  const item = String(itemInput?.value || "").trim().slice(0, 120);
+  const who = String(form.querySelector('input[name="who"]')?.value || "").trim().slice(0, 60);
+  const item = String(form.querySelector('input[name="item"]')?.value || "").trim().slice(0, 120);
+  const strike = !!form.querySelector('input[name="strike"]')?.checked;
+  if (!who) {
+    showToast("Bitte Namen eintragen.", "error");
+    return;
+  }
+  if (!item) {
+    showToast("Bitte Mitbringsel angeben.", "error");
+    return;
+  }
   if (!firebaseReady) {
     showToast("Nur mit Firebase-Verbindung möglich.", "error");
     return;
   }
   try {
-    await applyBringPlanChange(entryId, item);
-    showToast("Planänderung notiert ✏️", "success");
+    const entry = eventBringCache.find((x) => x.id === entryId);
+    if (!entry) throw new Error("Eintrag nicht gefunden");
+    const itemChanged = normalizeBringWho(item) !== normalizeBringWho(entry.item);
+    if (strike && itemChanged) {
+      await applyBringPlanChange(entryId, item);
+      if (normalizeBringWho(who) !== normalizeBringWho(entry.who)) {
+        await updateDoc(doc(db, "eventBring", entryId), { who });
+      }
+      showToast("Planänderung notiert ✏️", "success");
+      return;
+    }
+    await updateDoc(doc(db, "eventBring", entryId), {
+      who,
+      item,
+      updatedAt: serverTimestamp(),
+    });
+    showToast("Eintrag geändert.", "success");
   } catch (err) {
     console.error(err);
     showToast(err.message || "Ändern fehlgeschlagen.", "error");
+  }
+}
+
+async function deleteEventBring(entryId) {
+  if (!entryId) return;
+  if (!confirm("Diesen Mitbringen-Eintrag wirklich löschen?")) return;
+  if (!firebaseReady) {
+    showToast("Nur mit Firebase-Verbindung möglich.", "error");
+    return;
+  }
+  try {
+    await deleteDoc(doc(db, "eventBring", entryId));
+    showToast("Eintrag gelöscht.", "success");
+  } catch (err) {
+    console.error(err);
+    showToast("Löschen fehlgeschlagen.", "error");
   }
 }
 
