@@ -6716,7 +6716,7 @@ const WHATSAPP_PERSONAL_SETTINGS = [
     prefKey: "whatsappGiessplan",
     emoji: "🌱",
     title: "Gießplan-Erinnerungen",
-    description: "Täglich 8:00, wenn deine Zimmerpflanzen fällig sind (pro Pflanze zusätzlich schaltbar).",
+    description: "Täglich 8:00, wenn deine Zimmerpflanzen fällig sind (pro Pflanze zusätzlich schaltbar). Inklusive Regen-Info, wenn die automatische Garten-Bewässerung wegen Regenprognose aussetzt (max. 1× pro Tag).",
     defaultOn: true,
   },
   {
@@ -6742,7 +6742,7 @@ const WHATSAPP_PERSONAL_SETTINGS = [
 const WHATSAPP_WG_BROADCASTS = [
   { emoji: "🎂", title: "Geburtstags-Erinnerung", description: "Heute/morgen hat jemand Geburtstag – an die WG-Gruppe, 8:00." },
   { emoji: "📋", title: "Montags-Update", description: "Events, Putzplan, Anwesenheit und offene Schäden – montags 8:00 an alle." },
-  { emoji: "🌧️", title: "Garten & Bewässerung", description: "Regen-Alerts, Bewässerung gestartet/gestoppt – an die WG-Gruppe." },
+  { emoji: "🌧️", title: "Garten & Bewässerung", description: "Bewässerung gestartet/gestoppt – an die WG-Gruppe. Regen-Pausen-Info nur an Gießplan-Abonnenten (siehe oben)." },
   { emoji: "⏰", title: "Umfrage geschlossen", description: "Zusammenfassung an die Person, die die Umfrage erstellt hat." },
 ];
 

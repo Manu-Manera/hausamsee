@@ -510,15 +510,40 @@ async function notifyGartenPlanStarted(zoneLabel, minutes, onT, offT, opts = {})
   );
 }
 
+/** Regen-Skip-Info nur an Mitglieder mit aktivierten Gießplan-Benachrichtigungen (Website-Schalter). */
 async function notifyGartenRainSkippedZones(zoneLabels) {
   const unique = [...new Set((zoneLabels || []).map((l) => String(l || "").trim()).filter(Boolean))];
-  if (!unique.length) return;
+  if (!unique.length) return { sent: 0 };
   const list = unique.map((l) => `• *${l}*`).join("\n");
-  await broadcastToWG(
-    `🌧️ *Garten-Zeitplan übersprungen*\n\n` +
+  const text =
+    `🌧️ *Regen in Sicht – Bewässerung pausiert*\n\n` +
     `${list}\n\n` +
-    `Regen im ±6h-Fenster um die geplante Zeit – heute nicht gegossen.`
-  );
+    `Regen im ±6h-Fenster um die geplante Startzeit – die heutige automatische Bewässerung wird übersprungen.\n\n` +
+    `Manuell trotzdem giessen: Website oder «giesse salat / tomaten / beet».`;
+
+  const allPrefs = await getMemberPrefs();
+  const okList = [];
+  const failList = [];
+  for (const name of ADULTS) {
+    if (!isMemberWhatsappEnabled(allPrefs, name, "whatsappGiessplan")) continue;
+    let phone = null;
+    try {
+      phone = await getBewohnerPhone(name);
+    } catch (e) {
+      logger.warn(`notifyGartenRainSkippedZones: Telefon für ${name}`, e?.message || e);
+    }
+    if (!phone) continue;
+    try {
+      await sendWhatsApp(phone, text);
+      okList.push(name);
+    } catch (e) {
+      failList.push(name);
+      logger.warn(`notifyGartenRainSkippedZones: Send an ${name} fehlgeschlagen`, e?.message || e);
+    }
+  }
+  await debugLog("garten_rain_skip_notified", { zones: unique, ok: okList, fail: failList });
+  logger.info(`Regen-Skip-Info: ${okList.length} WhatsApp gesendet (${unique.join(", ")})`);
+  return { sent: okList.length };
 }
 
 /** Max. eine WhatsApp pro Kalendertag (Wetter gilt für alle Zonen gemeinsam). */
@@ -6565,17 +6590,15 @@ async function runGartenPlanTick() {
   const ymd = gartenYmdZurichNow();
   const sk = data.slotSkips && typeof data.slotSkips === "object" ? data.slotSkips : {};
   const dayLog = normalizeGartenWaterLogDay(data.waterLog?.[ymd]);
-  const zonesSkippingRainToday = [];
-  let anyZoneNewlySkippedRain = false;
 
   for (const zone of zones) {
     const slots = Array.isArray(zone.days?.[dayKey]) ? zone.days[dayKey] : [];
     if (!slots.length) continue;
 
+    // Silent: nur Log/Wasser-Log markieren – Benachrichtigung übernimmt der
+    // stündliche Regen-Check (checkGartenRegenVorhersage) an die Gießplan-Abonnenten.
     if (await gartenDayShouldSkipDueToRain(slots, ymd)) {
-      zonesSkippingRainToday.push(zone.label);
       if (dayLog[zone.id]?.status !== "skipped_rain") {
-        anyZoneNewlySkippedRain = true;
         await debugLog("garten_plan_skip_rain", { ymd, dayKey, zoneId: zone.id });
         await setGartenWaterLog(ymd, zone.id, { status: "skipped_rain", source: "plan", dayKey }, { noOverwriteDone: true });
         logger.info(`Garten: ${zone.label} heute (${dayKey}) wegen Niederschlag übersprungen.`);
@@ -6675,10 +6698,6 @@ async function runGartenPlanTick() {
       }
       idx += 1;
     }
-  }
-
-  if (anyZoneNewlySkippedRain && zonesSkippingRainToday.length) {
-    await notifyGartenRainSkipOncePerDay(ymd, zonesSkippingRainToday);
   }
 
   try {
@@ -6834,16 +6853,21 @@ exports.checkBewaesserung = onSchedule(
           await debugLog("garten_seq_step", { sequenzId: d.sequenzId, step: d.step, device: d.device, action: d.action, deviceKind: d.deviceKind });
           logger.info(`Sequenz ${d.sequenzId} Step ${d.step}: ${d.device} ${d.action}`);
           
-          if (d.sendSuccessMessage && d.requestedBy) {
-            await sendWhatsApp(d.requestedBy, formatGartenCompletionWhatsApp(d));
-            await debugLog("garten_seq_success_msg", { sequenzId: d.sequenzId, minutes: mins });
-            await setGartenWaterLog(gartenYmdZurichNow(), d.zoneId || "wh2-wintergarten", {
+          if (d.sendSuccessMessage) {
+            const doneMinutes = d.bewässerungsMinuten ?? null;
+            const doneZoneName = d.zoneLabel || d.device || "Zone";
+            if (d.requestedBy) {
+              await sendWhatsApp(d.requestedBy, formatGartenCompletionWhatsApp(d));
+            }
+            await debugLog("garten_seq_success_msg", { sequenzId: d.sequenzId, minutes: doneMinutes });
+            const donePatch = {
               status: "done",
               source: d.waterLogSource || (d.requestedBy ? "whatsapp" : "plan"),
-              minutes: mins,
               sequenzId: d.sequenzId,
-              zoneLabel: zoneName,
-            });
+              zoneLabel: doneZoneName,
+            };
+            if (doneMinutes != null) donePatch.minutes = doneMinutes;
+            await setGartenWaterLog(gartenYmdZurichNow(), d.zoneId || "wh2-wintergarten", donePatch);
           }
 
           if (d.step === 4) {
@@ -7121,6 +7145,42 @@ exports.checkGartenRegenPolster = onSchedule(
         targets,
       });
     }
+  }
+);
+
+/* ==========================================================================
+   Scheduler: Regen-Vorhersage für Garten-Zeitplan – stündlich, silent
+   Prüft die Prognose für die heutigen Bewässerungs-Slots. Nur bei aktiver
+   Regenvorhersage: max. 1 WhatsApp pro Tag an Gießplan-Abonnenten.
+   ========================================================================== */
+
+exports.checkGartenRegenVorhersage = onSchedule(
+  { schedule: "0 * * * *", timeZone: "Europe/Zurich" },
+  async () => {
+    let planSnap;
+    try {
+      planSnap = await db.doc("config/gartenPlan").get();
+    } catch (e) {
+      logger.warn("checkGartenRegenVorhersage: gartenPlan read", e?.message || e);
+      return;
+    }
+    if (!planSnap.exists) return;
+    const data = planSnap.data();
+    if (!data?.enabled) return;
+
+    const zones = normalizeGartenPlanZones(data).filter((z) => z.enabled);
+    const { dayKey } = zurichWeekdayKeyAndHM();
+    const ymd = gartenYmdZurichNow();
+
+    const affected = [];
+    for (const zone of zones) {
+      const slots = Array.isArray(zone.days?.[dayKey]) ? zone.days[dayKey] : [];
+      if (!slots.length) continue;
+      if (await gartenDayShouldSkipDueToRain(slots, ymd)) affected.push(zone.label);
+    }
+    if (!affected.length) return; // Kein Regen in Sicht – still bleiben
+
+    await notifyGartenRainSkipOncePerDay(ymd, affected);
   }
 );
 
