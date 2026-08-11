@@ -12727,18 +12727,40 @@ function setupListeners() {
    ========================================================================== */
 
 function setupScrollAnim() {
-  const io = new IntersectionObserver((entries) => {
-    entries.forEach(e => {
-      if (e.isIntersecting) {
-        e.target.classList.add("visible");
-        io.unobserve(e.target);
-      }
-    });
-  }, { threshold: 0.1 });
-  document.querySelectorAll(".section").forEach(s => {
+  const sections = Array.from(document.querySelectorAll(".section"));
+  const revealAll = () => sections.forEach((s) => s.classList.add("visible"));
+
+  // Ohne IntersectionObserver (alte Browser/WebViews): gar nicht erst ausblenden.
+  if (typeof IntersectionObserver !== "function") return;
+
+  let io;
+  try {
+    io = new IntersectionObserver((entries) => {
+      entries.forEach((e) => {
+        if (e.isIntersecting) {
+          e.target.classList.add("visible");
+          io.unobserve(e.target);
+        }
+      });
+      // threshold 0: schon der erste sichtbare Pixel blendet ein. Ein fester
+      // Prozent-Schwellwert (früher 0.1) wird von sehr hohen Sektionen auf
+      // Mobile nie erreicht – sie blieben dauerhaft unsichtbar (blaue Lücken).
+    }, { threshold: 0, rootMargin: "0px 0px 10% 0px" });
+  } catch (_) {
+    return; // Observer kaputt → Sektionen bleiben sichtbar
+  }
+
+  sections.forEach((s) => {
     s.classList.add("fade-up");
     io.observe(s);
   });
+
+  // Sicherheitsnetz: Falls der Observer nicht (mehr) feuert – z. B. In-App-
+  // Browser, Energiesparmodus – nach 6 s alles einblenden.
+  setTimeout(() => {
+    revealAll();
+    io.disconnect();
+  }, 6000);
 }
 
 /* ==========================================================================

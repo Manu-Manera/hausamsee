@@ -4107,11 +4107,29 @@ body.wg-authed a[data-wg-only] {
   opacity: 0;
   transform: translateY(20px);
   transition: opacity 0.8s var(--ease), transform 0.8s var(--ease);
+  /* CSS-Failsafe: falls JS/Observer ausfallen, nach 8 s trotzdem einblenden */
+  animation: fade-up-failsafe 0.8s var(--ease) 8s forwards;
 }
 
 .fade-up.visible {
   opacity: 1;
   transform: translateY(0);
+}
+
+@keyframes fade-up-failsafe {
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .fade-up {
+    opacity: 1;
+    transform: none;
+    transition: none;
+    animation: none;
+  }
 }
 
 /* Upload progress */
