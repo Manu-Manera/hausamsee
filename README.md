@@ -5,6 +5,27 @@ Eine vollständige WG-Management-Lösung mit:
 - **WhatsApp-Bot "Gustav"** 🦆 mit KI (OpenAI) und Smart-Home-Steuerung
 - **Firebase Backend** (Firestore + Cloud Functions)
 
+## Repos & Cursor vom Handy
+
+| | URL | Sichtbarkeit |
+|---|-----|----------------|
+| **Arbeitsrepo** (Cursor Mac + Handy) | https://github.com/Manu-Manera/haus-am-see | privat |
+| **Live-Website** (GitHub Pages) | https://manu-manera.github.io/hausamsee/ | öffentlich |
+| Öffentliches Pages-Repo | https://github.com/Manu-Manera/hausamsee | öffentlich |
+
+Ordnerkarte: [docs/ORDNERSTRUKTUR.md](docs/ORDNERSTRUKTUR.md) · Dokumentation: [docs/README.md](docs/README.md) · **Handy:** [docs/CURSOR-HANDY.md](docs/CURSOR-HANDY.md)
+
+```
+Haus am See/
+├── index.html · app.js · styles.css     Website (Root = Pages)
+├── functions/                           Gustav + Cloud Functions
+├── docs/                                Anleitungen
+├── shortcuts/ · scripts/ · secrets/     Kurzbefehle, Publish, Vorlagen
+└── firebase.json · firestore.rules
+```
+
+Website nach privaten Änderungen live schalten: `./scripts/publish-website.sh`
+
 ---
 
 ## 📋 Inhaltsverzeichnis

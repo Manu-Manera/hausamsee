@@ -4,5 +4,9 @@ node_modules/
 .env
 **/.env
 .vscode/
+.idea/
 # Nur diese Datei mit echtem Key niemals committen (Vorlage: *.TEMPLATE.txt)
 secrets/openai-key-fuer-copilot.txt
+secrets/*
+!secrets/README.md
+!secrets/*.TEMPLATE.txt

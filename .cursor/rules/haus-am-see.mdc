@@ -1,0 +1,13 @@
+---
+description: Haus am See – privates WG-Repo, Website, Gustav, Firebase
+alwaysApply: true
+---
+
+# Haus am See
+
+- Antworten an den User auf Deutsch.
+- Arbeitsrepo ist privat: `Manu-Manera/haus-am-see` (Remote `origin`). Öffentliche GitHub Pages: `Manu-Manera/hausamsee` (Remote `website`).
+- Website-Dateien bleiben im Root: `index.html`, `app.js`, `styles.css`. Nach Frontend-Änderungen Cache-Buster `?v=` in `index.html` erhöhen.
+- Keine Secrets committen (`functions/.env`, `secrets/openai-key-fuer-copilot.txt`).
+- Firebase: Projekt `haus-am-see-d91ef`, Region `europe-west1`.
+- Ordnerkarte: `docs/ORDNERSTRUKTUR.md`. Cursor vom Handy: `docs/CURSOR-HANDY.md`. Agent-Kontext: `AGENTS.md`.
